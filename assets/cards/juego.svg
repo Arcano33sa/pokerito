@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Juego">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="currentColor" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="currentColor" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="28" width="232" height="200" rx="28" fill="url(#g)" stroke="currentColor" stroke-opacity="0.22" stroke-width="8"/>
+  <!-- table -->
+  <path d="M44 132c0-44 40-76 84-76s84 32 84 76-40 76-84 76-84-32-84-76Z" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round"/>
+  <path d="M64 132c0-34 30-58 64-58s64 24 64 58-30 58-64 58-64-24-64-58Z" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="8"/>
+  <!-- cards -->
+  <g fill="none" stroke="currentColor" stroke-width="8" stroke-linejoin="round">
+    <path d="M84 104h44v58H84z" />
+    <path d="M128 96h44v66h-44z" opacity="0.75"/>
+  </g>
+  <!-- chips -->
+  <g fill="none" stroke="currentColor" stroke-width="8">
+    <circle cx="92" cy="172" r="16"/>
+    <circle cx="128" cy="176" r="16" opacity="0.85"/>
+    <circle cx="164" cy="172" r="16" opacity="0.7"/>
+  </g>
+</svg>
