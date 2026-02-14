@@ -357,6 +357,73 @@ body{
 .delta-pill.ok{ border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); }
 .delta-pill.pos{ border-color: color-mix(in oklab, #33d17a 55%, var(--border)); }
 .delta-pill.neg{ border-color: color-mix(in oklab, #ff4d6d 55%, var(--border)); }
+
+/* Etapa 7: tablas (historial detalle) */
+.table-wrap{ width: 100%; overflow: hidden; border-radius: 18px; border: 1px solid var(--border); background: color-mix(in oklab, var(--panel) 96%, transparent); }
+.table{ width: 100%; border-collapse: collapse; }
+.table thead th{
+  text-align: left;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 950;
+  letter-spacing: 0.02em;
+  padding: 12px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel) 92%, transparent);
+}
+.table td{
+  padding: 12px 12px;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  font-size: 14px;
+  font-weight: 850;
+}
+.table tr:last-child td{ border-bottom: none; }
+.table .num{ text-align: right; font-variant-numeric: tabular-nums; }
+.table .pos{ width: 46px; text-align: right; color: var(--muted); font-weight: 950; }
+.table .who{ max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table td.net.ok{ color: color-mix(in oklab, var(--accent) 80%, white); }
+.table td.net.pos{ color: color-mix(in oklab, #33d17a 85%, white); }
+.table td.net.neg{ color: color-mix(in oklab, #ff4d6d 85%, white); }
+
+/* Etapa 7: ranking */
+.rank-list{ display: grid; gap: 10px; }
+.rank-item{
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel) 96%, transparent);
+  border-radius: 20px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.08);
+}
+.rank-left{ display: flex; align-items: center; gap: 12px; min-width: 0; }
+.rank-pos{ font-weight: 1000; font-size: 16px; width: 46px; text-align: center; padding: 8px 10px; border-radius: 16px; border: 1px solid var(--border); background: color-mix(in oklab, var(--panel) 92%, transparent); }
+.rank-who{ min-width: 0; }
+.rank-name{ font-size: 16px; font-weight: 1000; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rank-sub{ font-size: 12px; color: var(--muted); font-weight: 850; margin-top: 2px; }
+.rank-right{ text-align: right; }
+.rank-net{ font-size: 18px; font-weight: 1050; font-variant-numeric: tabular-nums; }
+.rank-mini{ font-size: 12px; color: var(--muted); font-weight: 850; margin-top: 2px; }
+.rank-right .net.ok{ color: color-mix(in oklab, var(--accent) 80%, white); }
+.rank-right .net.pos{ color: color-mix(in oklab, #33d17a 85%, white); }
+.rank-right .net.neg{ color: color-mix(in oklab, #ff4d6d 85%, white); }
+
+.rank-mini-list{ display: grid; gap: 8px; }
+.rank-mini-row{ display: grid; grid-template-columns: 48px 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 18px; border: 1px solid var(--border); background: color-mix(in oklab, var(--panel) 96%, transparent); }
+.rank-mini-pos{ font-weight: 1000; color: var(--muted); text-align: center; }
+.rank-mini-name{ font-weight: 950; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-mini-net{ font-weight: 1000; font-variant-numeric: tabular-nums; }
+.rank-mini-net.ok{ color: color-mix(in oklab, var(--accent) 80%, white); }
+.rank-mini-net.pos{ color: color-mix(in oklab, #33d17a 85%, white); }
+.rank-mini-net.neg{ color: color-mix(in oklab, #ff4d6d 85%, white); }
+
+.records-grid{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.record{ border: 1px solid var(--border); background: color-mix(in oklab, var(--panel) 96%, transparent); border-radius: 20px; padding: 12px 14px; }
+.record .k{ font-size: 12px; color: var(--muted); font-weight: 950; letter-spacing: 0.02em; }
+.record .v{ font-size: 18px; font-weight: 1050; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.record .s{ font-size: 12px; color: var(--muted); font-weight: 850; margin-top: 2px; }
 .draft-meta{
   display: flex;
   flex-wrap: wrap;
@@ -963,6 +1030,10 @@ body{
   gap: 8px;
 }
 
+.stats-mini-grid.stats-extended{
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
 .stat-mini{
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -989,6 +1060,9 @@ body{
   font-weight: 950;
   white-space: nowrap;
 }
+
+.stat-mini.stack{ flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 4px; }
+.stat-mini.stack .sub{ font-size: 11px; color: var(--muted); font-weight: 900; }
 
 .player-actions{
   display: flex;

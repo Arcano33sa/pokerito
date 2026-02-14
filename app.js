@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.0 — Etapa 6: Juego — Buy-in + Rebuy + Conteo fichas + Totales + Neto + Cuadre + Cierre + Historial base */
+/* Pokerito — v0.1.0 — Etapa 7: Historial + Ranking + Stats + Excel + Respaldo */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -268,6 +268,9 @@ function setPlayerActive(id, active){
     '/juego': renderJuego,
     '/juego/mesa': renderJuegoMesa,
     '/juego/sesion': renderJuegoSesion,
+    '/historial': renderHistorial,
+    '/historial/detalle': renderHistorialDetalle,
+    '/ranking': renderRanking,
     '/configuracion': renderConfiguracion,
     '/soporte': renderSoporte,
   };
@@ -325,7 +328,7 @@ function setPlayerActive(id, active){
           <button class="card" data-go="/configuracion" type="button">
             <div class="card-left">
               <div class="card-title">Configuración <span class="badge">Jugadores</span><span class="card-arrow">→</span></div>
-              <p class="card-desc">Fichas, jugadores, estadísticas y exportación a Excel (llega en próximas etapas).</p>
+              <p class="card-desc">Fichas, jugadores, estadísticas, ranking global y exportación a Excel.</p>
             </div>
             <div class="card-art" aria-hidden="true">
               <img src="assets/cards/configuracion.svg" alt="" />
@@ -421,12 +424,15 @@ function setPlayerActive(id, active){
         <div class="panel" role="region" aria-label="Historial" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Historial</div>
-            <div class="small-note" style="margin:0">Sesiones cerradas (solo lectura).</div>
+            <div class="row" style="gap:10px">
+              <div class="small-note" style="margin:0">Sesiones cerradas (solo lectura).</div>
+              <button class="btn" type="button" id="toHistorialBtn">Ver todo</button>
+            </div>
           </div>
 
           ${closedSessions.length ? `
             <div class="hist-list" id="histList" aria-live="polite">
-              ${closedSessions.slice(0, 12).map(s => {
+              ${closedSessions.map(s => {
                 const sum = calcSessionSummary(s);
                 const delta = sum.delta;
                 const deltaClass = Math.abs(delta) < 0.0001 ? 'ok' : (delta > 0 ? 'pos' : 'neg');
@@ -444,7 +450,7 @@ function setPlayerActive(id, active){
                 `;
               }).join('')}
             </div>
-            <div class="small-note">Se muestran hasta 12 sesiones recientes. Exportación a Excel llega en Configuración (Etapa 7/7).</div>
+            <div class="small-note">Tip: el detalle rápido abre una tabla por jugador (invertido, fichas, neto, posición).</div>
           ` : `<div class="empty">Aún no hay sesiones cerradas. Tu historial está más limpio que tu conciencia (por ahora).</div>`}
         </div>
       </section>
@@ -455,6 +461,8 @@ function setPlayerActive(id, active){
 
     document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
     document.getElementById('toConfigBtn').addEventListener('click', () => navigate('/configuracion'));
+    const $toHist = document.getElementById('toHistorialBtn');
+    if ($toHist) $toHist.addEventListener('click', () => navigate('/historial'));
 
     const $grid = document.getElementById('playerPickGrid');
     const $start = document.getElementById('startSessionBtn');
@@ -552,7 +560,7 @@ function setPlayerActive(id, active){
         if (!row) return;
         const id = row.getAttribute('data-id');
         if (!id) return;
-        navigate('/juego/sesion?id=' + encodeURIComponent(id));
+        navigate('/historial/detalle?id=' + encodeURIComponent(id));
       });
     }
 
@@ -580,6 +588,229 @@ function setPlayerActive(id, active){
     }
     ensureSessionGame(s);
     renderMesaSession(s, { readOnly: (s.status === 'closed'), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : 'Draft') });
+  }
+
+  // ===== Etapa 7: Historial (navegable) =====
+  function renderHistorial(){
+    const sessions = getClosedSessions();
+    const root = el(`
+      <section class="screen" aria-label="Historial">
+        <h1 class="screen-title">Historial</h1>
+        <p class="screen-sub">Sesiones cerradas. Navega por fecha y abre el detalle. (Aquí vive la verdad.)</p>
+
+        <div class="panel" role="region" aria-label="Listado">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Sesiones</div>
+            <div class="row">
+              <button class="btn" type="button" id="toRankingBtn">Ranking</button>
+              <button class="btn" type="button" id="backBtn">Volver</button>
+            </div>
+          </div>
+
+          ${sessions.length ? `
+            <div class="hist-list" id="histList" aria-live="polite">
+              ${sessions.map(s => {
+                const sum = calcSessionSummary(s);
+                const delta = sum.delta;
+                const deltaClass = Math.abs(delta) < 0.0001 ? 'ok' : (delta > 0 ? 'pos' : 'neg');
+                return `
+                  <div class="hist-item" data-id="${escapeAttr(s.id)}">
+                    <div class="hist-main">
+                      <div class="hist-title">${escapeHtml(String(s.date || ''))}</div>
+                      <div class="hist-sub">${escapeHtml(String(sum.playersCount))} jugadores · Invertido ${escapeHtml(formatMoney(sum.totalInvested))} · Fichas ${escapeHtml(formatMoney(sum.totalChipsValue))}</div>
+                    </div>
+                    <div class="hist-right">
+                      <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
+                      <button class="btn" type="button" data-act="view">Ver</button>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `<div class="empty">Aún no hay sesiones cerradas.</div>`}
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = '';
+    $app.appendChild(root);
+
+    document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
+    document.getElementById('toRankingBtn').addEventListener('click', () => navigate('/ranking'));
+
+    const $list = document.getElementById('histList');
+    if ($list){
+      $list.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-act="view"]');
+        if (!btn) return;
+        const row = ev.target.closest('.hist-item');
+        if (!row) return;
+        const id = row.getAttribute('data-id');
+        if (!id) return;
+        navigate('/historial/detalle?id=' + encodeURIComponent(id));
+      });
+    }
+  }
+
+  function renderHistorialDetalle(){
+    const q = getHashQuery();
+    const id = (q.get('id') || '').trim();
+    const s = id ? getSessionById(id) : null;
+    if (!s || s.status !== 'closed'){
+      navigate('/historial');
+      return;
+    }
+    ensureSessionGame(s);
+
+    const analysis = analyzeSession(s);
+    const sum = analysis.summary;
+    const deltaClass = Math.abs(sum.delta) < 0.0001 ? 'ok' : (sum.delta > 0 ? 'pos' : 'neg');
+
+    const root = el(`
+      <section class="screen" aria-label="Detalle de sesión">
+        <div class="mesa-head">
+          <div class="mesa-title">
+            <div class="mesa-h1">Historial <span class="badge">${escapeHtml(String(s.date || ''))}</span></div>
+            <div class="mesa-sub">${escapeHtml(String(analysis.rows.length))} jugadores · sesión cerrada</div>
+          </div>
+          <div class="row">
+            <button class="btn" type="button" id="backBtn">Volver</button>
+            <button class="btn" type="button" id="toMesaBtn">Ver mesa</button>
+          </div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Resumen">
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="k">Total invertido</div>
+              <div class="v">${escapeHtml(formatMoney(sum.totalInvested))}</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Total fichas</div>
+              <div class="v">${escapeHtml(formatMoney(sum.totalChipsValue))}</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Delta</div>
+              <div class="v delta ${deltaClass}">${escapeHtml(formatMoney(sum.delta))}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Tabla" style="margin-top:14px">
+          <div class="panel-title">Por jugador</div>
+          <div class="table-wrap" role="region" aria-label="Tabla de jugadores">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Pos</th>
+                  <th>Jugador</th>
+                  <th class="num">Invertido</th>
+                  <th class="num">Fichas</th>
+                  <th class="num">Neto</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${analysis.rows.map(r => {
+                  const netClass = Math.abs(r.net) < 0.0001 ? 'ok' : (r.net > 0 ? 'pos' : 'neg');
+                  return `
+                    <tr>
+                      <td class="pos">${escapeHtml(String(r.pos))}</td>
+                      <td class="who">${escapeHtml(r.display)}</td>
+                      <td class="num">${escapeHtml(formatMoney(r.invested))}</td>
+                      <td class="num">${escapeHtml(formatMoney(r.chips))}</td>
+                      <td class="num net ${netClass}">${escapeHtml(formatMoney(r.net))}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div class="small-note" style="margin-top:10px">Posición ordenada por neto (desc). Empates comparten #1.</div>
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = '';
+    $app.appendChild(root);
+
+    document.getElementById('backBtn').addEventListener('click', () => navigate('/historial'));
+    document.getElementById('toMesaBtn').addEventListener('click', () => navigate('/juego/sesion?id=' + encodeURIComponent(s.id)));
+  }
+
+  // ===== Etapa 7: Ranking global (sin tiempo) =====
+  function renderRanking(){
+    const a = computeAnalytics();
+    const root = el(`
+      <section class="screen" aria-label="Ranking">
+        <h1 class="screen-title">Ranking global</h1>
+        <p class="screen-sub">Ordenado por neto acumulado. Sin fechas, sin excusas.</p>
+
+        <div class="panel" role="region" aria-label="Ranking">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Jugadores</div>
+            <div class="row">
+              <button class="btn" type="button" id="toHistBtn">Historial</button>
+              <button class="btn" type="button" id="backBtn">Volver</button>
+            </div>
+          </div>
+
+          ${a.ranking.length ? `
+            <div class="rank-list" id="rankList" aria-live="polite">
+              ${a.ranking.map((r, idx) => {
+                const netClass = Math.abs(r.netTotal) < 0.0001 ? 'ok' : (r.netTotal > 0 ? 'pos' : 'neg');
+                const best = (r.best && Number.isFinite(r.best.net)) ? formatMoney(r.best.net) : '—';
+                const bestDate = (r.best && r.best.date) ? r.best.date : '—';
+                const worst = (r.worst && Number.isFinite(r.worst.net)) ? formatMoney(r.worst.net) : '—';
+                const worstDate = (r.worst && r.worst.date) ? r.worst.date : '—';
+                return `
+                  <article class="rank-item" data-pid="${escapeAttr(r.id)}">
+                    <div class="rank-left">
+                      <div class="rank-pos">#${idx+1}</div>
+                      <div class="rank-who">
+                        <div class="rank-name">${escapeHtml(r.display)}</div>
+                        <div class="rank-sub">Partidas: ${escapeHtml(String(r.games))} · Veces #1: ${escapeHtml(String(r.wins1))}</div>
+                      </div>
+                    </div>
+                    <div class="rank-right">
+                      <div class="rank-net net ${netClass}">${escapeHtml(formatMoney(r.netTotal))}</div>
+                      <div class="rank-mini">Mejor: <b>${escapeHtml(best)}</b> · ${escapeHtml(bestDate)}</div>
+                      <div class="rank-mini">Peor: <b>${escapeHtml(worst)}</b> · ${escapeHtml(worstDate)}</div>
+                    </div>
+                  </article>
+                `;
+              }).join('')}
+            </div>
+          ` : `<div class="empty">No hay datos todavía. Cierra una sesión y aquí empieza el drama.</div>`}
+        </div>
+
+        <div class="panel" role="region" aria-label="Records" style="margin-top:14px">
+          <div class="panel-title">Records globales</div>
+          <div class="records-grid">
+            <div class="record">
+              <div class="k">Mayor inversión total</div>
+              <div class="v">${escapeHtml(a.records.maxTotalInvested ? formatMoney(a.records.maxTotalInvested.amount) : '—')}</div>
+              <div class="s">${escapeHtml(a.records.maxTotalInvested ? (a.records.maxTotalInvested.date || '—') : '—')}</div>
+            </div>
+            <div class="record">
+              <div class="k">Mayor ganancia individual</div>
+              <div class="v">${escapeHtml(a.records.maxGain ? formatMoney(a.records.maxGain.amount) : '—')}</div>
+              <div class="s">${escapeHtml(a.records.maxGain ? `${a.records.maxGain.date || '—'} · ${a.records.maxGain.player || '—'}` : '—')}</div>
+            </div>
+            <div class="record">
+              <div class="k">Mayor pérdida individual</div>
+              <div class="v">${escapeHtml(a.records.maxLoss ? formatMoney(a.records.maxLoss.amount) : '—')}</div>
+              <div class="s">${escapeHtml(a.records.maxLoss ? `${a.records.maxLoss.date || '—'} · ${a.records.maxLoss.player || '—'}` : '—')}</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = '';
+    $app.appendChild(root);
+
+    document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
+    document.getElementById('toHistBtn').addEventListener('click', () => navigate('/historial'));
   }
 
   function renderMesaSession(session, { readOnly, backPath, badge }){
@@ -842,6 +1073,26 @@ function renderConfiguracion(){
         <h1 class="screen-title">Configuración</h1>
         <p class="screen-sub">Configuras una vez y luego solo juegas. (Ok, también discutes. Pero con estilo.)</p>
 
+        <div class="panel" role="region" aria-label="Ranking global">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Ranking global</div>
+            <div class="row">
+              <button class="btn" type="button" id="toRankingBtn">Ver ranking</button>
+              <button class="btn" type="button" id="toHistorialBtn">Historial</button>
+            </div>
+          </div>
+          <div class="rank-mini-list" id="rankMini"></div>
+          <div class="small-note">Ordenado por neto acumulado (todas las sesiones cerradas).</div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Exportación" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Exportación</div>
+            <button class="btn primary" type="button" id="exportExcelBtn">Exportar Excel</button>
+          </div>
+          <div class="small-note" style="margin-top:0">Genera un archivo con 4 hojas: Jugadores, RecordsGlobales, HistorialDetallado y ResumenPartidas.</div>
+        </div>
+
         <div class="panel" role="region" aria-label="Jugadores">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Jugadores</div>
@@ -850,7 +1101,7 @@ function renderConfiguracion(){
 
           <div class="player-grid" id="playerGrid" aria-live="polite"></div>
 
-          <div class="small-note">En <b>Juego</b> se mostrará el <b>Apodo</b>. Si está vacío, se usa el nombre. Estadísticas: placeholder listo para Etapa 6/7.</div>
+          <div class="small-note">En <b>Juego</b> se mostrará el <b>Apodo</b>. Si está vacío, se usa el nombre. Estadísticas calculadas desde sesiones cerradas.</div>
         </div>
 
         <div class="panel" role="region" aria-label="Fichas" style="margin-top:14px">
@@ -873,10 +1124,40 @@ function renderConfiguracion(){
     $app.innerHTML = '';
     $app.appendChild(root);
 
+    // Ranking mini + export
+    document.getElementById('toRankingBtn').addEventListener('click', () => navigate('/ranking'));
+    document.getElementById('toHistorialBtn').addEventListener('click', () => navigate('/historial'));
+    document.getElementById('exportExcelBtn').addEventListener('click', () => exportExcel());
+
+    renderRankingMini();
+
     // Players
     const $pgrid = document.getElementById('playerGrid');
 
+    function renderRankingMini(){
+      const $mini = document.getElementById('rankMini');
+      if (!$mini) return;
+      const a = computeAnalytics();
+      if (!a.ranking.length){
+        $mini.innerHTML = `<div class="empty" style="padding:12px">Aún no hay ranking. Cierra una sesión y lo armamos.</div>`;
+        return;
+      }
+      const top = a.ranking.slice(0, 5);
+      $mini.innerHTML = top.map((r, idx) => {
+        const netClass = Math.abs(r.netTotal) < 0.0001 ? 'ok' : (r.netTotal > 0 ? 'pos' : 'neg');
+        return `
+          <div class="rank-mini-row">
+            <div class="rank-mini-pos">#${idx+1}</div>
+            <div class="rank-mini-name">${escapeHtml(r.display)}</div>
+            <div class="rank-mini-net net ${netClass}">${escapeHtml(formatMoney(r.netTotal))}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
     function renderPlayers(){
+      const a = computeAnalytics();
+      const statsMap = a.byPlayer || new Map();
       const players = getPlayers().slice().sort((a,b) => {
         if (!!a.active !== !!b.active) return (a.active ? -1 : 1);
         return playerDisplayName(a).localeCompare(playerDisplayName(b), 'es', { sensitivity: 'base' });
@@ -895,6 +1176,13 @@ function renderConfiguracion(){
         const name = (p.name || '').trim();
         const display = playerDisplayName(p);
 
+        const st = statsMap.get(p.id) || { netTotal: 0, games: 0, wins1: 0, best: null, worst: null };
+        const netClass = Math.abs(st.netTotal) < 0.0001 ? 'ok' : (st.netTotal > 0 ? 'pos' : 'neg');
+        const bestAmt = st.best ? formatMoney(st.best.net) : '—';
+        const bestDate = st.best ? (st.best.date || '—') : '—';
+        const worstAmt = st.worst ? formatMoney(st.worst.net) : '—';
+        const worstDate = st.worst ? (st.worst.date || '—') : '—';
+
         return `
           <article class="player-card ${p.active ? '' : 'inactive'}" data-id="${p.id}">
             <div class="player-top">
@@ -909,12 +1197,13 @@ function renderConfiguracion(){
 
             <div class="player-stats">
               <div class="player-stats-title">Estadísticas</div>
-              <div class="stats-mini-grid" aria-hidden="true">
-                <div class="stat-mini"><span class="k">Ganado</span><span class="v">—</span></div>
-                <div class="stat-mini"><span class="k">Perdido</span><span class="v">—</span></div>
-                <div class="stat-mini"><span class="k">Sesiones</span><span class="v">—</span></div>
+              <div class="stats-mini-grid stats-extended">
+                <div class="stat-mini"><span class="k">Neto</span><span class="v net ${netClass}">${escapeHtml(formatMoney(st.netTotal))}</span></div>
+                <div class="stat-mini"><span class="k">Partidas</span><span class="v">${escapeHtml(String(st.games||0))}</span></div>
+                <div class="stat-mini"><span class="k">Veces #1</span><span class="v">${escapeHtml(String(st.wins1||0))}</span></div>
+                <div class="stat-mini stack"><span class="k">Mejor noche</span><span class="v">${escapeHtml(bestAmt)}</span><span class="sub">${escapeHtml(bestDate)}</span></div>
+                <div class="stat-mini stack"><span class="k">Peor noche</span><span class="v">${escapeHtml(worstAmt)}</span><span class="sub">${escapeHtml(worstDate)}</span></div>
               </div>
-              <div class="hint">Placeholder — se llena en Etapa 6/7.</div>
             </div>
 
             <div class="player-actions">
@@ -1396,6 +1685,8 @@ function renderConfiguracion(){
     saveSession(s);
     if (store.draftSessionId === id) store.draftSessionId = '';
     saveStore();
+    // keep stats fresh
+    try{ recalcAndPersistStats(); }catch(e){}
   }
 
   function ensurePlayerState(session, pid){
@@ -1470,6 +1761,718 @@ function renderConfiguracion(){
     });
     const delta = totalChipsValue - totalInvested;
     return { playersCount: players.length, totalInvested, totalChipsValue, delta };
+  }
+
+  // ===== Etapa 7: Analytics (ranking/stats/records/excel) =====
+  function analyzeSession(s){
+    ensureSessionGame(s);
+    const playersSnap = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
+    const chipsSnap = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : [];
+    const chipValueMap = new Map(chipsSnap.map(c => [c.id, numOrZero(c.value)]));
+    const pStateMap = new Map((s.game && Array.isArray(s.game.players) ? s.game.players : []).map(p => [p.id, p]));
+
+    const masterPlayers = new Map(getPlayers().map(p => [p.id, p]));
+    const rows = playersSnap.map(p => {
+      const pid = p.id;
+      const st = pStateMap.get(pid) || { id: pid, buyIn: 0, rebuys: [], counts: {} };
+      const totals = calcPlayerTotals(st, chipValueMap);
+      const mp = masterPlayers.get(pid);
+      const display = mp ? playerDisplayName(mp) : (p.display || p.nick || p.name || pid);
+      return {
+        id: pid,
+        display: String(display || pid),
+        buyIn: numOrZero(st.buyIn),
+        rebuysCount: (Array.isArray(st.rebuys) ? st.rebuys.length : 0),
+        rebuysTotal: (Array.isArray(st.rebuys) ? st.rebuys.reduce((a,b) => a + numOrZero(b), 0) : 0),
+        invested: totals.totalBuyIn,
+        chips: totals.totalChipsValue,
+        net: totals.neto,
+        pos: 0,
+      };
+    });
+
+    // position: net desc, chips desc, invested asc, name
+    const eps = 0.0001;
+    rows.sort((a,b) => {
+      const dn = b.net - a.net;
+      if (Math.abs(dn) > eps) return dn;
+      const dc = b.chips - a.chips;
+      if (Math.abs(dc) > eps) return dc;
+      const di = a.invested - b.invested;
+      if (Math.abs(di) > eps) return di;
+      return a.display.localeCompare(b.display, 'es', { sensitivity: 'base' });
+    });
+
+    // assign positions (ties share the same position)
+    let curPos = 1;
+    rows.forEach((r, idx) => {
+      if (idx === 0){ r.pos = 1; return; }
+      const prev = rows[idx-1];
+      if (Math.abs(r.net - prev.net) <= eps) r.pos = prev.pos;
+      else { curPos = idx + 1; r.pos = curPos; }
+    });
+
+    return { rows, summary: calcSessionSummary(s) };
+  }
+
+  function computeAnalytics(){
+    const closed = getClosedSessions();
+    const byPlayer = new Map();
+
+    let maxTotalInvested = null; // { date, amount }
+    let maxGain = null; // { date, amount, player }
+    let maxLoss = null; // { date, amount, player }
+
+    const detailed = [];
+    const summaryRows = [];
+
+    closed.slice().reverse().forEach(s => {
+      // reverse so export can naturally be chronological
+      const date = String(s.date || '');
+      const an = analyzeSession(s);
+      const rows = an.rows;
+      const sum = an.summary;
+
+      // session records
+      if (!maxTotalInvested || sum.totalInvested > maxTotalInvested.amount){
+        maxTotalInvested = { date, amount: sum.totalInvested };
+      }
+
+      // winners: position 1 (ties allowed)
+      const winners = rows.filter(r => r.pos === 1);
+      const winnerLabel = winners.length ? winners.map(w => w.display).join(' & ') : '—';
+      const winnerNet = winners.length ? winners[0].net : 0;
+
+      summaryRows.push({
+        date,
+        playersCount: rows.length,
+        totalInvested: sum.totalInvested,
+        totalChips: sum.totalChipsValue,
+        delta: sum.delta,
+        winner: winnerLabel,
+        winnerNet,
+      });
+
+      rows.forEach(r => {
+        detailed.push({
+          date,
+          playerId: r.id,
+          player: r.display,
+          buyIn: r.buyIn,
+          rebuysTotal: r.rebuysTotal,
+          invested: r.invested,
+          chips: r.chips,
+          net: r.net,
+          pos: r.pos,
+        });
+
+        // global gain/loss
+        if (!maxGain || r.net > maxGain.amount){
+          maxGain = { date, amount: r.net, player: r.display };
+        }
+        if (!maxLoss || r.net < maxLoss.amount){
+          maxLoss = { date, amount: r.net, player: r.display };
+        }
+
+        // player aggregates
+        const cur = byPlayer.get(r.id) || {
+          id: r.id,
+          display: r.display,
+          games: 0,
+          wins1: 0,
+          netTotal: 0,
+          investedTotal: 0,
+          chipsTotal: 0,
+          best: null, // { net, date }
+          worst: null,
+        };
+
+        cur.games += 1;
+        if (r.pos === 1) cur.wins1 += 1;
+        cur.netTotal += r.net;
+        cur.investedTotal += r.invested;
+        cur.chipsTotal += r.chips;
+
+        if (!cur.best || r.net > cur.best.net) cur.best = { net: r.net, date };
+        if (!cur.worst || r.net < cur.worst.net) cur.worst = { net: r.net, date };
+
+        byPlayer.set(r.id, cur);
+      });
+    });
+
+    const ranking = Array.from(byPlayer.values()).sort((a,b) => {
+      const dn = b.netTotal - a.netTotal;
+      if (Math.abs(dn) > 0.0001) return dn;
+      const dg = b.games - a.games;
+      if (dg) return dg;
+      return String(a.display).localeCompare(String(b.display), 'es', { sensitivity: 'base' });
+    });
+
+    return {
+      byPlayer,
+      ranking,
+      records: {
+        maxTotalInvested: maxTotalInvested,
+        maxGain: maxGain,
+        maxLoss: maxLoss,
+      },
+      detailed,
+      summaryRows,
+    };
+  }
+
+  function recalcAndPersistStats(){
+    const a = computeAnalytics();
+    // persist into players.stats (for convenience) + global block
+    const players = getPlayers();
+    players.forEach(p => {
+      const st = a.byPlayer.get(p.id) || null;
+      p.stats = st ? {
+        netTotal: st.netTotal,
+        games: st.games,
+        wins1: st.wins1,
+        best: st.best,
+        worst: st.worst,
+        investedTotal: st.investedTotal,
+        chipsTotal: st.chipsTotal,
+        avgNet: (st.games ? (st.netTotal / st.games) : 0),
+      } : {
+        netTotal: 0, games: 0, wins1: 0, best: null, worst: null, investedTotal: 0, chipsTotal: 0, avgNet: 0,
+      };
+    });
+    store.players = players;
+    store.statsGlobal = {
+      updatedAt: Date.now(),
+      records: a.records,
+    };
+    saveStore();
+  }
+
+  function ymdCompact(ymd){
+    return String(ymd || '').replace(/[^0-9]/g,'').slice(0,8);
+  }
+
+  function todayYmd(){
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const da = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${da}`;
+  }
+
+  function downloadBlob(blob, filename){
+    try{
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'download';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => { try{ URL.revokeObjectURL(url); }catch(e){} }, 3000);
+    }catch(e){}
+  }
+
+  function exportExcel(){
+    const a = computeAnalytics();
+    const date = todayYmd();
+    const ymd = ymdCompact(date);
+    const filename = `POKERITO_Ranking_Global_${ymd}.xlsx`;
+
+    // Sheet 1: Jugadores
+    const jugadoresRows = [[
+      'Nombre','Apodo','Partidas','Neto acumulado','Veces #1','Mejor noche (monto)','Fecha mejor noche','Peor noche (monto)','Fecha peor noche','Total invertido histórico','Total fichas histórico','Promedio por partida'
+    ]];
+
+    const masterPlayers = new Map(getPlayers().map(p => [p.id, p]));
+    const all = a.ranking.slice();
+    all.forEach(r => {
+      const mp = masterPlayers.get(r.id);
+      const nombre = mp ? (mp.name || '') : (r.display || '');
+      const apodo = mp ? (mp.nick || '') : '';
+      const avg = r.games ? (r.netTotal / r.games) : 0;
+      jugadoresRows.push([
+        nombre,
+        apodo,
+        r.games,
+        round2(r.netTotal),
+        r.wins1,
+        r.best ? round2(r.best.net) : '',
+        r.best ? (r.best.date || '') : '',
+        r.worst ? round2(r.worst.net) : '',
+        r.worst ? (r.worst.date || '') : '',
+        round2(r.investedTotal || 0),
+        round2(r.chipsTotal || 0),
+        round2(avg),
+      ]);
+    });
+
+    // Sheet 2: RecordsGlobales
+    const rec = a.records || {};
+    const recRows = [['Record','Fecha','Monto','Jugador']];
+    recRows.push(['Fecha mayor inversión total', rec.maxTotalInvested ? (rec.maxTotalInvested.date || '') : '', rec.maxTotalInvested ? round2(rec.maxTotalInvested.amount) : '', '']);
+    recRows.push(['Mayor ganancia individual', rec.maxGain ? (rec.maxGain.date || '') : '', rec.maxGain ? round2(rec.maxGain.amount) : '', rec.maxGain ? (rec.maxGain.player || '') : '']);
+    recRows.push(['Mayor pérdida individual', rec.maxLoss ? (rec.maxLoss.date || '') : '', rec.maxLoss ? round2(rec.maxLoss.amount) : '', rec.maxLoss ? (rec.maxLoss.player || '') : '']);
+
+    // Sheet 3: HistorialDetallado
+    const detRows = [['Fecha','Jugador','Buy-in inicial','Total rebuys','Total invertido','Total fichas','Neto','Posición']];
+    a.detailed.forEach(r => {
+      detRows.push([
+        r.date,
+        r.player,
+        round2(r.buyIn),
+        round2(r.rebuysTotal),
+        round2(r.invested),
+        round2(r.chips),
+        round2(r.net),
+        r.pos,
+      ]);
+    });
+
+    // Sheet 4: ResumenPartidas
+    const sumRows = [['Fecha','Total jugadores','Total invertido global','Total fichas global','Diferencia','Ganador','Neto ganador']];
+    a.summaryRows.forEach(r => {
+      sumRows.push([
+        r.date,
+        r.playersCount,
+        round2(r.totalInvested),
+        round2(r.totalChips),
+        round2(r.delta),
+        r.winner,
+        round2(r.winnerNet),
+      ]);
+    });
+
+    const wb = buildXlsx([
+      { name: 'Jugadores', rows: jugadoresRows },
+      { name: 'RecordsGlobales', rows: recRows },
+      { name: 'HistorialDetallado', rows: detRows },
+      { name: 'ResumenPartidas', rows: sumRows },
+    ]);
+
+    downloadBlob(wb, filename);
+  }
+
+  function exportBackupJson(){
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      data: {
+        store: store,
+        themePref: themePref,
+      }
+    };
+    const ymd = ymdCompact(todayYmd());
+    const hh = String(new Date().getHours()).padStart(2,'0');
+    const mm = String(new Date().getMinutes()).padStart(2,'0');
+    const filename = `POKERITO_Respaldo_${ymd}_${hh}${mm}.json`;
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), filename);
+  }
+
+  async function importBackupJson(text, { mode }){
+    let obj = null;
+    try{ obj = JSON.parse(text); }catch(e){ obj = null; }
+    if (!obj || typeof obj !== 'object'){
+      await confirmDialog({ title: 'Respaldo inválido', body: 'El archivo no es JSON válido.', okText: 'OK', cancelText: 'Cerrar', danger: true });
+      return;
+    }
+    if (obj.schemaVersion !== 1 || !obj.data || typeof obj.data !== 'object'){
+      await confirmDialog({ title: 'Respaldo inválido', body: 'schemaVersion o estructura no reconocida.', okText: 'OK', cancelText: 'Cerrar', danger: true });
+      return;
+    }
+    const incomingStore = obj.data.store;
+    if (!incomingStore || typeof incomingStore !== 'object'){
+      await confirmDialog({ title: 'Respaldo inválido', body: 'No se encontró data.store.', okText: 'OK', cancelText: 'Cerrar', danger: true });
+      return;
+    }
+    // normalize to our store shape
+    const normalized = normalizeIncomingStore(incomingStore);
+
+    const chipsN = (Array.isArray(normalized.chips) ? normalized.chips.length : 0);
+    const playersN = (Array.isArray(normalized.players) ? normalized.players.length : 0);
+    const sessionsN = (Array.isArray(normalized.sessions) ? normalized.sessions.length : 0);
+    const closedN = (Array.isArray(normalized.sessions) ? normalized.sessions.filter(s => s && s.status === 'closed').length : 0);
+
+    const sumBody = `Resumen del respaldo:\n\n• Fichas: ${chipsN}\n• Jugadores: ${playersN}\n• Partidas: ${sessionsN} (cerradas: ${closedN})\n\nModo: ${mode === 'merge' ? 'Fusionar' : 'Reemplazar'}`;
+
+    const ok = await confirmDialog({
+      title: 'Importar respaldo',
+      body: sumBody + (mode === 'merge' ? '\n\nFusionar solo agrega IDs nuevos (no pisa datos existentes).' : '\n\nReemplazar borrará los datos actuales en este dispositivo.'),
+      okText: mode === 'merge' ? 'Fusionar' : 'Reemplazar',
+      cancelText: 'Cancelar',
+      danger: (mode !== 'merge'),
+    });
+    if (!ok) return;
+
+    const incomingTheme = (typeof obj.data.themePref === 'string') ? obj.data.themePref : null;
+    if (mode === 'merge'){
+      mergeStore(normalized);
+    } else {
+      store = normalized;
+      persistStore(store);
+    }
+    if (incomingTheme){
+      themePref = (incomingTheme === 'auto' || incomingTheme === 'light' || incomingTheme === 'dark') ? incomingTheme : themePref;
+      try{ localStorage.setItem(THEME_KEY, themePref); }catch(e){}
+      applyTheme();
+    }
+    try{ recalcAndPersistStats(); }catch(e){}
+    await confirmDialog({ title: 'Importación completa', body: 'Respaldo aplicado.', okText: 'OK', cancelText: 'Cerrar' });
+    navigate('/inicio');
+  }
+
+  function normalizeIncomingStore(obj){
+    // keep our v/version; avoid destructive migrations
+    const out = {
+      v: STORE_VERSION,
+      chips: Array.isArray(obj.chips) ? obj.chips : defaultChips(),
+      players: Array.isArray(obj.players) ? obj.players : defaultPlayers(),
+      sessions: Array.isArray(obj.sessions) ? obj.sessions : [],
+      draftSessionId: (typeof obj.draftSessionId === 'string') ? obj.draftSessionId : '',
+      ui: (obj.ui && typeof obj.ui === 'object') ? obj.ui : { juego: {} },
+      createdAt: numOrZero(obj.createdAt) || Date.now(),
+      updatedAt: Date.now(),
+    };
+    // soft migration: ensure sessions shape
+    if (Array.isArray(out.sessions)){
+      out.sessions.forEach(s => { try{ ensureSessionGame(s); }catch(e){} });
+      if (out.draftSessionId){
+        const ds = out.sessions.find(x => x && x.id === out.draftSessionId) || null;
+        if (ds && ds.status !== 'draft') out.draftSessionId = '';
+      }
+    }
+    return out;
+  }
+
+  function mergeStore(incoming){
+    // Safe merge: keep current on conflicts, only add missing IDs
+    const cur = store;
+    const byId = (arr) => {
+      const m = new Map();
+      (Array.isArray(arr) ? arr : []).forEach(x => { if (x && x.id) m.set(x.id, x); });
+      return m;
+    };
+
+    const chips = byId(cur.chips);
+    (Array.isArray(incoming.chips) ? incoming.chips : []).forEach(c => {
+      if (c && c.id && !chips.has(c.id)) chips.set(c.id, c);
+    });
+
+    const players = byId(cur.players);
+    (Array.isArray(incoming.players) ? incoming.players : []).forEach(p => {
+      if (p && p.id && !players.has(p.id)) players.set(p.id, p);
+    });
+
+    const sessions = byId(cur.sessions);
+    (Array.isArray(incoming.sessions) ? incoming.sessions : []).forEach(s => {
+      if (s && s.id && !sessions.has(s.id)) sessions.set(s.id, s);
+    });
+
+    cur.chips = Array.from(chips.values());
+    cur.players = Array.from(players.values());
+    cur.sessions = Array.from(sessions.values());
+    cur.updatedAt = Date.now();
+    persistStore(cur);
+  }
+
+  function resetAllData(){
+    try{ localStorage.removeItem(STORE_KEY); }catch(e){}
+    try{ localStorage.removeItem(THEME_KEY); }catch(e){}
+    themePref = 'auto';
+    store = initStore();
+    applyTheme();
+  }
+
+  function round2(n){
+    n = numOrZero(n);
+    return Math.round(n * 100) / 100;
+  }
+
+  // ===== Minimal XLSX builder (no deps) =====
+  function buildXlsx(sheets){
+    const safeSheets = (Array.isArray(sheets) ? sheets : []).slice(0, 20);
+    const zip = new SimpleZip();
+    const now = new Date();
+
+    // workbook + rels
+    const wbRels = [];
+    const wbSheets = [];
+    safeSheets.forEach((sh, i) => {
+      const idx = i + 1;
+      const name = String(sh.name || `Sheet${idx}`).slice(0, 31);
+      wbSheets.push(`<sheet name="${xmlEsc(name)}" sheetId="${idx}" r:id="rId${idx}"/>`);
+      wbRels.push(`<Relationship Id="rId${idx}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${idx}.xml"/>`);
+    });
+    wbRels.push(`<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`);
+    wbRels.push(`<Relationship Id="rIdTheme" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>`);
+
+    const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        <sheets>${wbSheets.join('')}</sheets>
+      </workbook>`;
+
+    const wbRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        ${wbRels.join('')}
+      </Relationships>`;
+
+    const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+        <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+        <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+      </Relationships>`;
+
+    const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+        <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+        <Default Extension="xml" ContentType="application/xml"/>
+        <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+        ${safeSheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}
+        <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+        <Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
+        <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+        <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+      </Types>`;
+
+    const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+        <dc:title>Pokerito</dc:title>
+        <dc:creator>Pokerito</dc:creator>
+        <cp:lastModifiedBy>Pokerito</cp:lastModifiedBy>
+        <dcterms:created xsi:type="dcterms:W3CDTF">${xmlEsc(now.toISOString())}</dcterms:created>
+        <dcterms:modified xsi:type="dcterms:W3CDTF">${xmlEsc(now.toISOString())}</dcterms:modified>
+      </cp:coreProperties>`;
+
+    const appXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+        <Application>Pokerito</Application>
+      </Properties>`;
+
+    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <fonts count="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font></fonts>
+        <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+        <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+        <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+        <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+        <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+      </styleSheet>`;
+
+    const themeXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme">
+        <a:themeElements>
+          <a:clrScheme name="Office">
+            <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
+            <a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+            <a:dk2><a:srgbClr val="1F497D"/></a:dk2>
+            <a:lt2><a:srgbClr val="EEECE1"/></a:lt2>
+            <a:accent1><a:srgbClr val="4F81BD"/></a:accent1>
+            <a:accent2><a:srgbClr val="C0504D"/></a:accent2>
+            <a:accent3><a:srgbClr val="9BBB59"/></a:accent3>
+            <a:accent4><a:srgbClr val="8064A2"/></a:accent4>
+            <a:accent5><a:srgbClr val="4BACC6"/></a:accent5>
+            <a:accent6><a:srgbClr val="F79646"/></a:accent6>
+            <a:hlink><a:srgbClr val="0000FF"/></a:hlink>
+            <a:folHlink><a:srgbClr val="800080"/></a:folHlink>
+          </a:clrScheme>
+          <a:fontScheme name="Office"><a:majorFont><a:latin typeface="Calibri"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme>
+          <a:fmtScheme name="Office"><a:fillStyleLst/><a:lnStyleLst/><a:effectStyleLst/><a:bgFillStyleLst/></a:fmtScheme>
+        </a:themeElements>
+      </a:theme>`;
+
+    zip.addText('[Content_Types].xml', contentTypesXml);
+    zip.addText('_rels/.rels', relsXml);
+    zip.addText('docProps/core.xml', coreXml);
+    zip.addText('docProps/app.xml', appXml);
+    zip.addText('xl/workbook.xml', workbookXml);
+    zip.addText('xl/_rels/workbook.xml.rels', wbRelsXml);
+    zip.addText('xl/styles.xml', stylesXml);
+    zip.addText('xl/theme/theme1.xml', themeXml);
+
+    safeSheets.forEach((sh, i) => {
+      const idx = i + 1;
+      const rows = Array.isArray(sh.rows) ? sh.rows : [];
+      zip.addText(`xl/worksheets/sheet${idx}.xml`, sheetXml(rows));
+    });
+
+    return new Blob([zip.build()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+
+  function sheetXml(rows){
+    const data = rowsToSheetData(rows);
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        <sheetData>${data}</sheetData>
+      </worksheet>`;
+  }
+
+  function rowsToSheetData(rows){
+    const out = [];
+    for (let r = 0; r < rows.length; r++){
+      const row = Array.isArray(rows[r]) ? rows[r] : [];
+      const cells = [];
+      for (let c = 0; c < row.length; c++){
+        const v = row[c];
+        if (v === null || typeof v === 'undefined' || v === '') continue;
+        const ref = colLetter(c+1) + String(r+1);
+        if (typeof v === 'number' && Number.isFinite(v)){
+          cells.push(`<c r="${ref}"><v>${String(v)}</v></c>`);
+        } else {
+          cells.push(`<c r="${ref}" t="inlineStr"><is><t>${xmlEsc(String(v))}</t></is></c>`);
+        }
+      }
+      out.push(`<row r="${r+1}">${cells.join('')}</row>`);
+    }
+    return out.join('');
+  }
+
+  function colLetter(n){
+    let s = '';
+    while (n > 0){
+      const m = (n - 1) % 26;
+      s = String.fromCharCode(65 + m) + s;
+      n = Math.floor((n - 1) / 26);
+    }
+    return s;
+  }
+
+  function xmlEsc(s){
+    return String(s)
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&apos;');
+  }
+
+  // ZIP (store method 0) + CRC32
+  function SimpleZip(){
+    this.files = [];
+  }
+  SimpleZip.prototype.addText = function(name, text){
+    const data = utf8Bytes(String(text || ''));
+    this.files.push({ name: String(name), data });
+  };
+  SimpleZip.prototype.build = function(){
+    const parts = [];
+    const central = [];
+    let offset = 0;
+    const dt = zipDosDateTime(new Date());
+    for (const f of this.files){
+      const nameBytes = utf8Bytes(f.name);
+      const crc = crc32(f.data);
+      const size = f.data.length;
+
+      const local = new Uint8Array(30 + nameBytes.length);
+      writeU32(local, 0, 0x04034b50);
+      writeU16(local, 4, 20);
+      writeU16(local, 6, 0);
+      writeU16(local, 8, 0);
+      writeU16(local, 10, dt.time);
+      writeU16(local, 12, dt.date);
+      writeU32(local, 14, crc);
+      writeU32(local, 18, size);
+      writeU32(local, 22, size);
+      writeU16(local, 26, nameBytes.length);
+      writeU16(local, 28, 0);
+      local.set(nameBytes, 30);
+      parts.push(local, f.data);
+
+      const cen = new Uint8Array(46 + nameBytes.length);
+      writeU32(cen, 0, 0x02014b50);
+      writeU16(cen, 4, 20);
+      writeU16(cen, 6, 20);
+      writeU16(cen, 8, 0);
+      writeU16(cen, 10, 0);
+      writeU16(cen, 12, dt.time);
+      writeU16(cen, 14, dt.date);
+      writeU32(cen, 16, crc);
+      writeU32(cen, 20, size);
+      writeU32(cen, 24, size);
+      writeU16(cen, 28, nameBytes.length);
+      writeU16(cen, 30, 0);
+      writeU16(cen, 32, 0);
+      writeU16(cen, 34, 0);
+      writeU16(cen, 36, 0);
+      writeU32(cen, 38, 0);
+      writeU32(cen, 42, offset);
+      cen.set(nameBytes, 46);
+      central.push(cen);
+
+      offset += local.length + size;
+    }
+
+    const centralStart = offset;
+    let centralSize = 0;
+    central.forEach(c => { centralSize += c.length; });
+    parts.push(...central);
+    offset += centralSize;
+
+    const eocd = new Uint8Array(22);
+    writeU32(eocd, 0, 0x06054b50);
+    writeU16(eocd, 4, 0);
+    writeU16(eocd, 6, 0);
+    writeU16(eocd, 8, this.files.length);
+    writeU16(eocd, 10, this.files.length);
+    writeU32(eocd, 12, centralSize);
+    writeU32(eocd, 16, centralStart);
+    writeU16(eocd, 20, 0);
+    parts.push(eocd);
+
+    const total = parts.reduce((a,p) => a + p.length, 0);
+    const out = new Uint8Array(total);
+    let pos = 0;
+    parts.forEach(p => { out.set(p, pos); pos += p.length; });
+    return out;
+  };
+
+  function utf8Bytes(str){
+    return new TextEncoder().encode(str);
+  }
+
+  function writeU16(buf, off, v){
+    buf[off] = v & 255;
+    buf[off+1] = (v >>> 8) & 255;
+  }
+
+  function writeU32(buf, off, v){
+    buf[off] = v & 255;
+    buf[off+1] = (v >>> 8) & 255;
+    buf[off+2] = (v >>> 16) & 255;
+    buf[off+3] = (v >>> 24) & 255;
+  }
+
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++){
+      let c = i;
+      for (let k = 0; k < 8; k++){
+        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+      t[i] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function crc32(data){
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < data.length; i++){
+      c = CRC_TABLE[(c ^ data[i]) & 255] ^ (c >>> 8);
+    }
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function zipDosDateTime(d){
+    const year = d.getFullYear();
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    const hours = d.getHours();
+    const mins = d.getMinutes();
+    const secs = Math.floor(d.getSeconds() / 2);
+    const dosTime = (hours << 11) | (mins << 5) | secs;
+    const dosDate = ((year - 1980) << 9) | (month << 5) | day;
+    return { time: dosTime, date: dosDate };
   }
 
   function lastRebuyOrBuyIn(st){
@@ -1609,6 +2612,28 @@ function renderConfiguracion(){
           </div>
         </div>
 
+        <div class="panel" role="region" aria-label="Respaldo" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Respaldo</div>
+            <button class="btn" type="button" id="exportJsonBtn">Exportar JSON</button>
+          </div>
+          <div class="row" style="margin-top:10px; gap:10px; flex-wrap:wrap">
+            <button class="btn primary" type="button" id="importJsonBtn">Importar (Reemplazar)</button>
+            <button class="btn" type="button" id="importMergeJsonBtn">Importar (Fusionar)</button>
+            <input id="importFile" type="file" accept="application/json" style="display:none" />
+          </div>
+          <div class="small-note" style="margin-top:10px">Importar muestra un resumen (fichas/jugadores/partidas) antes de aplicar. Fusionar solo agrega IDs nuevos (modo seguro).</div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Mantenimiento" style="margin-top:14px">
+          <div class="panel-title">Mantenimiento</div>
+          <div class="row" style="gap:10px; flex-wrap:wrap">
+            <button class="btn" type="button" id="recalcBtn">Recalcular estadísticas</button>
+            <button class="btn danger" type="button" id="clearBtn">Borrar datos locales</button>
+          </div>
+          <div class="small-note" style="margin-top:10px">“Borrar” elimina jugadores, fichas y sesiones guardadas en este dispositivo.</div>
+        </div>
+
         <div class="row" style="margin-top:14px">
           <button class="btn primary" type="button" id="backBtn">Volver</button>
         </div>
@@ -1623,6 +2648,58 @@ function renderConfiguracion(){
     });
     syncSupportThemeUI();
     document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
+
+    // Backup
+    const $file = document.getElementById('importFile');
+    const $import = document.getElementById('importJsonBtn');
+    const $importMerge = document.getElementById('importMergeJsonBtn');
+    let importMode = 'replace';
+
+    document.getElementById('exportJsonBtn').addEventListener('click', () => exportBackupJson());
+
+    function openPicker(mode){
+      importMode = mode;
+      if ($file) { $file.value = ''; $file.click(); }
+    }
+    if ($import) $import.addEventListener('click', () => openPicker('replace'));
+    if ($importMerge) $importMerge.addEventListener('click', () => openPicker('merge'));
+
+    if ($file){
+      $file.addEventListener('change', async () => {
+        const f = $file.files && $file.files[0];
+        if (!f) return;
+        const txt = await f.text().catch(() => '');
+        if (!txt) return;
+        await importBackupJson(txt, { mode: importMode });
+      });
+    }
+
+    // Maintenance
+    document.getElementById('recalcBtn').addEventListener('click', async () => {
+      const ok = await confirmDialog({
+        title: 'Recalcular estadísticas',
+        body: 'Reconstruye stats desde todas las sesiones cerradas.',
+        okText: 'Recalcular',
+        cancelText: 'Cancelar',
+      });
+      if (!ok) return;
+      recalcAndPersistStats();
+      await confirmDialog({ title: 'Listo', body: 'Estadísticas recalculadas.', okText: 'OK', cancelText: 'Cerrar' });
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', async () => {
+      const ok = await confirmDialog({
+        title: 'Borrar datos locales',
+        body: 'Esto elimina TODO en este dispositivo (jugadores, fichas, sesiones). No hay undo.',
+        okText: 'Borrar',
+        cancelText: 'Cancelar',
+        danger: true,
+      });
+      if (!ok) return;
+      resetAllData();
+      await confirmDialog({ title: 'Hecho', body: 'Datos locales borrados.', okText: 'OK', cancelText: 'Cerrar' });
+      navigate('/inicio');
+    });
   }
 
   function renderPlaceholder(title){
@@ -1714,7 +2791,7 @@ function renderConfiguracion(){
 
   function updateHeaderControls(path){
     if (!$themeToggle) return;
-    const show = (path === '/juego' || path === '/juego/mesa' || path === '/juego/sesion');
+    const show = (path === '/juego' || path === '/juego/mesa' || path === '/juego/sesion' || path.startsWith('/historial') || path === '/ranking');
     $themeToggle.classList.toggle('hide', !show);
     if (show) updateThemeToggleIcon();
   }

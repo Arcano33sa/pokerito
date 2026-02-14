@@ -1,5 +1,5 @@
 /* Pokerito SW — offline mínimo (cache core) — Etapa 6 */
-const CACHE_NAME = 'pokerito-v0.1.0-etapa6';
+const CACHE_NAME = 'pokerito-v0.1.0-etapa7';
 const CORE_ASSETS = [
   './',
   './index.html',
