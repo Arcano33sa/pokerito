@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — Etapa 6 */
-const CACHE_NAME = 'pokerito-v0.1.0-etapa7';
+/* Pokerito SW — offline mínimo (cache core) — Etapa 3 */
+const CACHE_NAME = 'pokerito-v0.1.1-etapa3';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -17,7 +17,10 @@ const CORE_ASSETS = [
   './assets/icons/icon-512.png',
   './assets/cards/juego.svg',
   './assets/cards/configuracion.svg',
-  './assets/cards/soporte.svg'
+  './assets/cards/soporte.svg',
+  './assets/hero/juego.svg',
+  './assets/hero/configuracion.svg',
+  './assets/hero/soporte.svg'
 ];
 
 self.addEventListener('install', (event) => {

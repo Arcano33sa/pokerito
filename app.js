@@ -314,34 +314,40 @@ function setPlayerActive(id, active){
         <h1 class="screen-title">Inicio</h1>
         <p class="screen-sub">Toca una tarjeta para entrar. (Sí, es grande a propósito. Tus dedos no son agujas.)</p>
 
-        <div class="cards">
-          <button class="card" data-go="/juego" type="button">
-            <div class="card-left">
-              <div class="card-title">Juego <span class="badge">Mesa</span><span class="card-arrow">→</span></div>
-              <p class="card-desc">Entrar al juego. Aquí vive el poker, las fichas y las decisiones cuestionables.</p>
+        <div class="cards home-grid" aria-label="Navegación principal">
+          <button class="card home-card home-card--juego" data-go="/juego" type="button">
+            <div class="home-hero" aria-hidden="true">
+              <div class="home-hero-slot">
+                <img src="assets/hero/juego.svg" alt="" />
+              </div>
             </div>
-            <div class="card-art" aria-hidden="true">
-              <img src="assets/cards/juego.svg" alt="" />
-            </div>
-          </button>
-
-          <button class="card" data-go="/configuracion" type="button">
-            <div class="card-left">
-              <div class="card-title">Configuración <span class="badge">Jugadores</span><span class="card-arrow">→</span></div>
-              <p class="card-desc">Fichas, jugadores, estadísticas, ranking global y exportación a Excel.</p>
-            </div>
-            <div class="card-art" aria-hidden="true">
-              <img src="assets/cards/configuracion.svg" alt="" />
+            <div class="home-body">
+              <div class="home-title">Juego</div>
+              <p class="home-desc">Entrar al juego. Aquí viven las fichas y las decisiones cuestionables.</p>
             </div>
           </button>
 
-          <button class="card" data-go="/soporte" type="button">
-            <div class="card-left">
-              <div class="card-title">Soporte <span class="badge">Herramientas</span><span class="card-arrow">→</span></div>
-              <p class="card-desc">Modo oscuro, exportar/importar y mantenimiento general. El “cajón de sastre” elegante.</p>
+          <button class="card home-card home-card--config" data-go="/configuracion" type="button">
+            <div class="home-hero" aria-hidden="true">
+              <div class="home-hero-slot">
+                <img src="assets/hero/configuracion.svg" alt="" />
+              </div>
             </div>
-            <div class="card-art" aria-hidden="true">
-              <img src="assets/cards/soporte.svg" alt="" />
+            <div class="home-body">
+              <div class="home-title">Configuración</div>
+              <p class="home-desc">Fichas, jugadores, estadísticas, ranking global y exportación a Excel.</p>
+            </div>
+          </button>
+
+          <button class="card home-card home-card--soporte" data-go="/soporte" type="button">
+            <div class="home-hero" aria-hidden="true">
+              <div class="home-hero-slot">
+                <img src="assets/hero/soporte.svg" alt="" />
+              </div>
+            </div>
+            <div class="home-body">
+              <div class="home-title">Soporte</div>
+              <p class="home-desc">Modo oscuro, exportar/importar y mantenimiento general.</p>
             </div>
           </button>
         </div>
