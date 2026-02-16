@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.0 — Etapa 7: Historial + Ranking + Stats + Excel + Respaldo */
+/* Pokerito — v0.1.5 — Etapa 2/2: Reportes usan NOMBRE (no nick) + smoke final */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -245,6 +245,37 @@ function playerDisplayName(p){
   const name = (p && p.name ? String(p.name).trim() : '');
   return nick || name || 'Sin nombre';
 }
+
+
+// Reportes/documentos: usar NOMBRE real con prioridad:
+// 1) playersSnapshot de la sesión
+// 2) maestro (store.players)
+// 3) fallback (display/nick/id)
+function makeReportNameResolver(session){
+  const s = session || {};
+  const snapsArr = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
+  const snapMap = new Map(snapsArr.filter(p => p && p.id).map(p => [String(p.id), p]));
+  const masterMap = new Map(getPlayers().filter(p => p && p.id).map(p => [String(p.id), p]));
+
+  return function reportName(pid, fallbackDisplay){
+    const key = String(pid || '').trim();
+    const sp = snapMap.get(key);
+    const mp = masterMap.get(key);
+
+    const snapName = (sp && typeof sp.name === 'string') ? sp.name.trim() : '';
+    const masterName = (mp && typeof mp.name === 'string') ? mp.name.trim() : '';
+    if (snapName) return snapName;
+    if (masterName) return masterName;
+
+    const fb = (fallbackDisplay != null ? String(fallbackDisplay).trim() : '')
+      || (sp && (String(sp.display || sp.name || sp.nick || '').trim()))
+      || (mp && (String(mp.name || mp.nick || '').trim()))
+      || key;
+
+    return fb || 'Sin nombre';
+  };
+}
+
 
 function upsertPlayer(player){
   if (!store.players) store.players = [];
@@ -708,11 +739,14 @@ function setPlayerActive(id, active){
             const t = calcPlayerTotals(st, chipValueMap);
             const mp = masterMap.get(p.id);
             const display = mp ? playerDisplayName(mp) : (p.display || p.nick || p.name || p.id);
+            const name = (mp && typeof mp.name === 'string') ? mp.name.trim() : (typeof p.name === 'string' ? p.name.trim() : '');
+            const nick = (mp && typeof mp.nick === 'string') ? mp.nick.trim() : (typeof p.nick === 'string' ? p.nick.trim() : '');
+            const bits = [display, name, nick].filter(Boolean).join(' ');
             const net = numOrZero(t.neto);
-            tmp.push({ display, net });
+            tmp.push({ bits, net });
             if (net > maxNet) maxNet = net;
           });
-          return tmp.filter(x => Math.abs(x.net - maxNet) <= eps).map(x => x.display);
+          return tmp.filter(x => Math.abs(x.net - maxNet) <= eps).map(x => x.bits);
         }catch(e){
           return [];
         }
@@ -868,6 +902,8 @@ function renderHistorialDetalle(){
     }
     ensureSessionGame(s);
 
+    const reportName = makeReportNameResolver(s);
+
     const analysis = analyzeSession(s);
     const sum = analysis.summary;
     const deltaClass = Math.abs(sum.delta) < 0.0001 ? 'ok' : (sum.delta > 0 ? 'pos' : 'neg');
@@ -918,10 +954,11 @@ function renderHistorialDetalle(){
               <tbody>
                 ${analysis.rows.map(r => {
                   const netClass = Math.abs(r.net) < 0.0001 ? 'ok' : (r.net > 0 ? 'pos' : 'neg');
+                  const who = reportName(r.id, r.display);
                   return `
                     <tr>
                       <td class="pos">${escapeHtml(String(r.pos))}</td>
-                      <td class="who">${escapeHtml(r.display)}</td>
+                      <td class="who">${escapeHtml(String(who))}</td>
                       <td class="num">${escapeHtml(formatMoney(r.invested))}</td>
                       <td class="num">${escapeHtml(formatMoney(r.chips))}</td>
                       <td class="num net ${netClass}">${escapeHtml(formatMoney(r.net))}</td>
@@ -971,9 +1008,11 @@ function renderHistorialDetalle(){
 
     const eps = 0.0001;
 
+    const reportName = makeReportNameResolver(s);
+
     // Ganadores: pos === 1 (empates permitidos)
     const winners = rows.filter(r => r.pos === 1);
-    const winnersLabel = winners.length ? winners.map(r => r.display).join(', ') : '—';
+    const winnersLabel = winners.length ? winners.map(r => reportName(r.id, r.display)).join(', ') : '—';
 
     // Perdedores: chips === 0 si existen; si no, net mínimo (empates permitidos)
     const zeroChips = rows.filter(r => Math.abs(numOrZero(r.chips)) <= eps);
@@ -984,7 +1023,7 @@ function renderHistorialDetalle(){
       const minNet = rows.reduce((m, r) => Math.min(m, numOrZero(r.net)), Infinity);
       losers = rows.filter(r => Math.abs(numOrZero(r.net) - minNet) <= eps);
     }
-    const losersLabel = losers.length ? losers.map(r => r.display).join(', ') : '—';
+    const losersLabel = losers.length ? losers.map(r => reportName(r.id, r.display)).join(', ') : '—';
 
     // Rebuys totales
     const rebuysCount = rows.reduce((a, r) => a + Math.max(0, Math.floor(numOrZero(r.rebuysCount))), 0);
@@ -995,27 +1034,9 @@ function renderHistorialDetalle(){
     const d = new Date(ts);
     const closeTime = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 
-    // Jugador (solo Nombre + Apellido): maestro → snapshot → fallback
-    const snapMap = new Map((Array.isArray(s.playersSnapshot) ? s.playersSnapshot : []).map(p => [p.id, p]));
-    const masterMap = new Map(getPlayers().map(p => [p.id, p]));
-
-    function firstLast(full){
-      const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
-      if (!parts.length) return '—';
-      if (parts.length === 1) return parts[0];
-      return parts[0] + ' ' + parts[parts.length - 1];
-    }
-
-    function playerNameOnly(pid){
-      const mp = masterMap.get(pid);
-      const sp = snapMap.get(pid);
-      const full = (mp && mp.name) ? mp.name : ((sp && sp.name) ? sp.name : '');
-      return firstLast(full || pid);
-    }
-
     // Table
     const tbody = rows.map(r => {
-      const name = playerNameOnly(r.id);
+      const name = reportName(r.id, r.display);
       const invested = numOrZero(r.invested);
       const net = numOrZero(r.net);
       const ganado = Math.max(0, net);
@@ -2188,6 +2209,8 @@ function renderConfiguracion(){
       const rows = an.rows;
       const sum = an.summary;
 
+      const reportName = makeReportNameResolver(s);
+
       // session records
       if (!maxTotalInvested || sum.totalInvested > maxTotalInvested.amount){
         maxTotalInvested = { date, amount: sum.totalInvested };
@@ -2195,10 +2218,12 @@ function renderConfiguracion(){
 
       // winners: position 1 (ties allowed)
       const winners = rows.filter(r => r.pos === 1);
-      const winnerLabel = winners.length ? winners.map(w => w.display).join(' & ') : '—';
+      const winnerIds = winners.map(w => w.id);
+      const winnerLabel = winners.length ? winners.map(w => reportName(w.id, w.display)).join(' & ') : '—';
       const winnerNet = winners.length ? winners[0].net : 0;
 
       summaryRows.push({
+        sessionId: s.id,
         date,
         playersCount: rows.length,
         totalInvested: sum.totalInvested,
@@ -2206,13 +2231,16 @@ function renderConfiguracion(){
         delta: sum.delta,
         winner: winnerLabel,
         winnerNet,
+        winnerIds,
       });
 
       rows.forEach(r => {
+                const pname = reportName(r.id, r.display);
         detailed.push({
+          sessionId: s.id,
           date,
           playerId: r.id,
-          player: r.display,
+          player: pname,
           buyIn: r.buyIn,
           rebuysTotal: r.rebuysTotal,
           invested: r.invested,
@@ -2222,17 +2250,17 @@ function renderConfiguracion(){
         });
 
         // global gain/loss
-        if (!maxGain || r.net > maxGain.amount){
-          maxGain = { date, amount: r.net, player: r.display };
+                if (!maxGain || r.net > maxGain.amount){
+          maxGain = { date, amount: r.net, sessionId: s.id, playerId: r.id, player: pname };
         }
         if (!maxLoss || r.net < maxLoss.amount){
-          maxLoss = { date, amount: r.net, player: r.display };
+          maxLoss = { date, amount: r.net, sessionId: s.id, playerId: r.id, player: pname };
         }
 
         // player aggregates
         const cur = byPlayer.get(r.id) || {
           id: r.id,
-          display: r.display,
+          display: pname,
           games: 0,
           wins1: 0,
           netTotal: 0,
@@ -2241,6 +2269,7 @@ function renderConfiguracion(){
           best: null, // { net, date }
           worst: null,
         };
+        cur.display = pname;
 
         cur.games += 1;
         if (r.pos === 1) cur.wins1 += 1;

@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.3 Etapa 3 (Histórico: búsqueda + smoke final) */
-const CACHE_NAME = 'pokerito-v0.1.3-etapa3-historico-busqueda-smokefinal';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.5 Etapa 2 (Reportes: nombre no nick) */
+const CACHE_NAME = 'pokerito-v0.1.5-etapa2-report-names';
 const CORE_ASSETS = [
   './',
   './index.html',
