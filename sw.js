@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — Etapa 3 */
-const CACHE_NAME = 'pokerito-v0.1.1-etapa3';
+/* Pokerito SW — offline mínimo (cache core) — Etapa 3 (HERO images) */
+const CACHE_NAME = 'pokerito-v0.1.2-etapa3';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -20,7 +20,10 @@ const CORE_ASSETS = [
   './assets/cards/soporte.svg',
   './assets/hero/juego.svg',
   './assets/hero/configuracion.svg',
-  './assets/hero/soporte.svg'
+  './assets/hero/soporte.svg',
+  './assets/hero/hero_juego.webp',
+  './assets/hero/hero_config.webp',
+  './assets/hero/hero_soporte.webp'
 ];
 
 self.addEventListener('install', (event) => {
@@ -49,7 +52,15 @@ self.addEventListener('fetch', (event) => {
       return fetch(req).then(res => {
         // runtime cache for same-origin assets
         const url = new URL(req.url);
-        if (url.origin === location.origin && (url.pathname.endsWith('.js') || url.pathname.endsWith('.css') || url.pathname.endsWith('.svg') || url.pathname.endsWith('.png'))) {
+        if (url.origin === location.origin && (
+          url.pathname.endsWith('.js') ||
+          url.pathname.endsWith('.css') ||
+          url.pathname.endsWith('.svg') ||
+          url.pathname.endsWith('.png') ||
+          url.pathname.endsWith('.webp') ||
+          url.pathname.endsWith('.jpg') ||
+          url.pathname.endsWith('.jpeg')
+        )) {
           const copy = res.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(req, copy));
         }

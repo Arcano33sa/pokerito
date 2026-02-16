@@ -205,7 +205,8 @@ body{
 /* Home fallback: short viewports */
 @media (max-height: 650px){
   .card.home-card{ min-height: 280px; }
-  .home-hero{ height: clamp(120px, 18vh, 190px); }
+  .home-hero,
+  .card-hero{ height: clamp(120px, 18vh, 190px); }
 }
 
 @media (max-width: 520px){
@@ -293,7 +294,8 @@ body{
   filter: brightness(0.98);
 }
 
-.home-hero{
+.home-hero,
+.card-hero{
   height: clamp(140px, 20vh, 210px);
   border-radius: calc(var(--radius) - 6px);
   border: 1px solid rgba(255,255,255,0.10);
@@ -307,15 +309,18 @@ body{
   overflow: hidden;
 }
 
-.home-hero-slot{
+.home-hero-slot,
+.card-hero-slot{
   width: 100%;
   height: 100%;
   display: grid;
   place-items: center;
   padding: 10px 14px 12px;
+  position: relative;
 }
 
-.home-hero-slot img{
+.home-hero-slot img,
+.card-hero-slot img{
   width: 100%;
   height: 100%;
   max-width: 100%;
@@ -323,7 +328,29 @@ body{
   object-fit: contain;
   opacity: 0.92;
   filter: drop-shadow(0 18px 36px rgba(0,0,0,0.22));
+  grid-area: 1 / 1;
 }
+
+/* HERO image plumbing: primary hidden until loaded, fallback visible */
+.card-hero-img{
+  opacity: 0;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: none;
+  transition: opacity 220ms ease;
+  will-change: opacity;
+}
+
+.card-hero-fallback{
+  position: relative;
+  z-index: 0;
+}
+
+.card-hero.is-loaded .card-hero-img{ opacity: 0.96; }
+.card-hero.is-loaded .card-hero-fallback{ opacity: 0; }
 
 .home-body{
   padding: 12px 12px 14px;

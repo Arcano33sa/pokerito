@@ -316,9 +316,10 @@ function setPlayerActive(id, active){
 
         <div class="cards home-grid" aria-label="Navegación principal">
           <button class="card home-card home-card--juego" data-go="/juego" type="button">
-            <div class="home-hero" aria-hidden="true">
-              <div class="home-hero-slot">
-                <img src="assets/hero/juego.svg" alt="" />
+            <div class="card-hero" aria-hidden="true">
+              <div class="card-hero-slot">
+                <img class="card-hero-img" data-hero="juego" alt="" decoding="async" loading="lazy" />
+                <img class="card-hero-fallback" src="assets/hero/juego.svg" alt="" decoding="async" loading="lazy" />
               </div>
             </div>
             <div class="home-body">
@@ -328,9 +329,10 @@ function setPlayerActive(id, active){
           </button>
 
           <button class="card home-card home-card--config" data-go="/configuracion" type="button">
-            <div class="home-hero" aria-hidden="true">
-              <div class="home-hero-slot">
-                <img src="assets/hero/configuracion.svg" alt="" />
+            <div class="card-hero" aria-hidden="true">
+              <div class="card-hero-slot">
+                <img class="card-hero-img" data-hero="config" alt="" decoding="async" loading="lazy" />
+                <img class="card-hero-fallback" src="assets/hero/configuracion.svg" alt="" decoding="async" loading="lazy" />
               </div>
             </div>
             <div class="home-body">
@@ -340,9 +342,10 @@ function setPlayerActive(id, active){
           </button>
 
           <button class="card home-card home-card--soporte" data-go="/soporte" type="button">
-            <div class="home-hero" aria-hidden="true">
-              <div class="home-hero-slot">
-                <img src="assets/hero/soporte.svg" alt="" />
+            <div class="card-hero" aria-hidden="true">
+              <div class="card-hero-slot">
+                <img class="card-hero-img" data-hero="soporte" alt="" decoding="async" loading="lazy" />
+                <img class="card-hero-fallback" src="assets/hero/soporte.svg" alt="" decoding="async" loading="lazy" />
               </div>
             </div>
             <div class="home-body">
@@ -362,6 +365,59 @@ function setPlayerActive(id, active){
     // tap handlers
     $app.querySelectorAll('[data-go]').forEach(btn => {
       btn.addEventListener('click', () => navigate(btn.getAttribute('data-go')));
+    });
+
+    // HERO slots (robust fallback): try assets/hero/hero_<key>.(webp|png|jpg|jpeg|svg)
+    setupHomeHeroSlots(root);
+  }
+
+  function setupHomeHeroSlots(root){
+    const list = Array.from(root.querySelectorAll('.card-hero'));
+    if (!list.length) return;
+
+    const exts = ['webp','png','jpg','jpeg','svg'];
+    const base = 'assets/hero/hero_';
+
+    list.forEach(heroEl => {
+      const img = heroEl.querySelector('.card-hero-img');
+      if (!img) return;
+
+      const key = (img.dataset && img.dataset.hero) ? String(img.dataset.hero) : '';
+      if (!key) return;
+
+      let i = 0;
+      let done = false;
+
+      const cleanup = () => {
+        img.onload = null;
+        img.onerror = null;
+      };
+
+      const tryNext = () => {
+        if (done) return;
+        if (i >= exts.length) {
+          // keep fallback visible and prevent broken-image chrome
+          try { img.removeAttribute('src'); } catch(e){}
+          cleanup();
+          return;
+        }
+        const src = `${base}${key}.${exts[i++]}`;
+        img.src = src;
+      };
+
+      img.onload = () => {
+        if (done) return;
+        done = true;
+        heroEl.classList.add('is-loaded');
+        cleanup();
+      };
+
+      img.onerror = () => {
+        if (done) return;
+        tryNext();
+      };
+
+      tryNext();
     });
   }
 
