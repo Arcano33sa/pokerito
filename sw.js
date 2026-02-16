@@ -1,5 +1,6 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.6 Etapa 2 (Conteo input UX + cache bump PWA) */
-const CACHE_NAME = 'pokerito-v0.1.6-etapa2-conteo-input-ux';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.7 Etapa 2 (PWA cache bump) */
+// Etapa 2: bump explícito para forzar refresh en iPad PWA (app.js / styles.css / assets)
+const CACHE_NAME = 'pokerito-v0.1.7-etapa2-pdf-nombre-consecutivo-pwa';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -28,7 +29,7 @@ const CORE_ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(CORE_ASSETS))
+    caches.open(CACHE_NAME).then(cache => cache.addAll(CORE_ASSETS.map(u => new Request(u, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });

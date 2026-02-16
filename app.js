@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.6 — Etapa 1/2: Conteo fichas input blanco primera vez + autoselect reingreso (iPad) */
+/* Pokerito — v0.1.7 — Etapa 1/2: PDF nombre con consecutivo persistente */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -102,11 +102,35 @@ function loadStore(){
       obj.updatedAt = Date.now();
       persistStore(obj);
     }
-    if (typeof obj.draftSessionId !== 'string'){
+        if (typeof obj.draftSessionId !== 'string'){
       obj.draftSessionId = '';
       obj.updatedAt = Date.now();
       persistStore(obj);
     }
+
+    // Etapa 1: PDF consecutivo global (pdfSeqNext) — migración suave
+    try{
+      let next = obj.pdfSeqNext;
+      let changedPdf = false;
+
+      if (!Number.isFinite(next) || next < 1){ next = 1; changedPdf = true; }
+      next = Math.floor(next);
+
+      let maxSeq = 0;
+      (Array.isArray(obj.sessions) ? obj.sessions : []).forEach(s => {
+        const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
+        if (n > maxSeq) maxSeq = n;
+      });
+      if (next <= maxSeq){ next = maxSeq + 1; changedPdf = true; }
+
+      if (obj.pdfSeqNext !== next){ obj.pdfSeqNext = next; changedPdf = true; }
+
+      if (changedPdf){
+        obj.updatedAt = Date.now();
+        persistStore(obj);
+      }
+    }catch(e){}
+
     return obj;
   }catch(e){
     return initStore();
@@ -119,6 +143,7 @@ function initStore(){
     chips: defaultChips(),
     players: defaultPlayers(),
     sessions: defaultSessions(),
+    pdfSeqNext: 1,
     draftSessionId: '',
     ui: { juego: {} },
     createdAt: Date.now(),
@@ -1002,6 +1027,32 @@ function renderHistorialDetalle(){
     }
 
     ensureSessionGame(s);
+
+    // Etapa 1: asegurar consecutivo PDF persistente (backfill suave)
+    try{
+      if (s.status === 'closed'){
+        const changed = assignPdfSeqIfNeeded(s);
+        if (changed) saveSession(s);
+      }
+    }catch(e){}
+
+    const prevTitle = document.title;
+    const ddmmyyyy = sessionDDMMYYYY(s);
+    const seqNum = (Number.isFinite(s.pdfSeq) && Math.floor(s.pdfSeq) >= 1) ? Math.floor(s.pdfSeq) : 0;
+    const printTitle = `${pad3(seqNum)}- Pokerito ${ddmmyyyy}`;
+
+    function setPrintTitle(){
+      try{ document.title = printTitle; }catch(e){}
+    }
+    function restoreTitle(){
+      try{ document.title = prevTitle; }catch(e){}
+    }
+
+    // setear title antes de imprimir para sugerir nombre de archivo
+    setPrintTitle();
+    try{ window.addEventListener('afterprint', restoreTitle, { once: true }); }catch(e){}
+    try{ window.addEventListener('focus', restoreTitle, { once: true }); }catch(e){}
+
     const an = analyzeSession(s);
     const sum = an.summary;
     const rows = an.rows.slice();
@@ -1099,16 +1150,18 @@ function renderHistorialDetalle(){
     $app.appendChild(root);
 
     document.getElementById('printBtn').addEventListener('click', () => {
+      try{ setPrintTitle(); }catch(e){}
       try{ window.print(); }catch(e){}
     });
     document.getElementById('backBtn').addEventListener('click', () => {
+      try{ restoreTitle(); }catch(e){}
       // si el tab fue abierto por script, intentamos cerrarlo
       try{ if (window.opener) window.close(); }catch(e){}
       navigate('/historial');
     });
 
     // opcional: intentar auto-print (si el browser lo permite)
-    try{ setTimeout(() => { try{ window.print(); }catch(e){} }, 350); }catch(e){}
+    try{ setTimeout(() => { try{ setPrintTitle(); }catch(e){}; try{ window.print(); }catch(e){}; }, 350); }catch(e){}
   }
 
 // ===== Etapa 7: Ranking global (sin tiempo) =====
@@ -1975,6 +2028,38 @@ function renderConfiguracion(){
 
   // ===== Etapa 6 helpers: Sesiones (draft/closed) =====
   function pad2(n){ return String(n).padStart(2,'0'); }
+  function pad3(n){ return String(n).padStart(3,'0'); }
+
+  function ymdToDDMMYYYY(ymd){
+    const str = String(ymd || '').trim();
+    const m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m){
+      const yyyy = m[1];
+      const mm = pad2(m[2]);
+      const dd = pad2(m[3]);
+      return dd + mm + yyyy;
+    }
+    // si ya viene como DDMMYYYY
+    if (/^\d{8}$/.test(str)) return str;
+    return '';
+  }
+
+  function dateToDDMMYYYY(ts){
+    const d = new Date(numOrZero(ts) || Date.now());
+    return pad2(d.getDate()) + pad2(d.getMonth()+1) + String(d.getFullYear());
+  }
+
+  function sessionDDMMYYYY(s){
+    const v = ymdToDDMMYYYY(s && s.date);
+    if (v) return v;
+    if (s){
+      if (s.closedAt) return dateToDDMMYYYY(s.closedAt);
+      if (s.createdAt) return dateToDDMMYYYY(s.createdAt);
+      if (s.updatedAt) return dateToDDMMYYYY(s.updatedAt);
+    }
+    return dateToDDMMYYYY(Date.now());
+  }
+
 
   function todayYMD(){
     const d = new Date();
@@ -2053,16 +2138,58 @@ function renderConfiguracion(){
       .sort((a,b) => numOrZero(b.closedAt || b.updatedAt) - numOrZero(a.closedAt || a.updatedAt));
   }
 
+
+  // ===== Etapa 1: PDF consecutivo persistente (por sesión cerrada) =====
+  function ensurePdfSeqNext(){
+    let next = store.pdfSeqNext;
+    if (!Number.isFinite(next) || next < 1) next = 1;
+    next = Math.floor(next);
+
+    let maxSeq = 0;
+    const sessions = Array.isArray(store.sessions) ? store.sessions : [];
+    sessions.forEach(s => {
+      const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
+      if (n > maxSeq) maxSeq = n;
+    });
+
+    if (next <= maxSeq) next = maxSeq + 1;
+    store.pdfSeqNext = next;
+  }
+
+  function assignPdfSeqIfNeeded(s){
+    if (!s || typeof s !== 'object') return false;
+    if (s.status !== 'closed') return false;
+
+    const cur = s.pdfSeq;
+    if (Number.isFinite(cur) && Math.floor(cur) >= 1){
+      s.pdfSeq = Math.floor(cur);
+      return false;
+    }
+
+    ensurePdfSeqNext();
+    const n = Math.floor(store.pdfSeqNext);
+    s.pdfSeq = n;
+    store.pdfSeqNext = n + 1;
+    touchSession(s);
+    return true;
+  }
+
+
   function closeSession(id){
     const s = getSessionById(id);
     if (!s) return;
     if (s.status === 'closed') return;
+
     s.status = 'closed';
     s.closedAt = Date.now();
     touchSession(s);
-    saveSession(s);
+
+    // asignar consecutivo PDF una sola vez
+    try{ assignPdfSeqIfNeeded(s); }catch(e){}
+
     if (store.draftSessionId === id) store.draftSessionId = '';
-    saveStore();
+    saveSession(s);
+
     // keep stats fresh
     try{ recalcAndPersistStats(); }catch(e){}
   }
