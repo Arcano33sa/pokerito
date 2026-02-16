@@ -2650,9 +2650,21 @@ function renderConfiguracion(){
 
       document.body.appendChild(overlay);
       try{ document.body.style.overflow = 'hidden'; }catch(e){}
-      setTimeout(() => {
-        try{ $inp.focus(); $inp.select(); }catch(e){}
-      }, 0);
+
+      // iPad Safari: el teclado SOLO se abre si el focus ocurre dentro del mismo gesto (tap/click).
+      // Evitar setTimeout/requestAnimationFrame aquí.
+      try{
+        // preventScroll no existe en todos los browsers
+        $inp.focus({ preventScroll: true });
+      }catch(e){
+        try{ $inp.focus(); }catch(e2){}
+      }
+      try{
+        // select() a veces falla en type=number; setSelectionRange es más consistente
+        const len = ($inp.value || '').length;
+        if (typeof $inp.setSelectionRange === 'function') $inp.setSelectionRange(0, len);
+        else if (typeof $inp.select === 'function') $inp.select();
+      }catch(e){}
     });
   }
 
