@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.5 Etapa 2 (Reportes: nombre no nick) */
-const CACHE_NAME = 'pokerito-v0.1.5-etapa2-report-names';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.6 Etapa 2 (Conteo input UX + cache bump PWA) */
+const CACHE_NAME = 'pokerito-v0.1.6-etapa2-conteo-input-ux';
 const CORE_ASSETS = [
   './',
   './index.html',

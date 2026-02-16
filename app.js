@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.5 — Etapa 2/2: Reportes usan NOMBRE (no nick) + smoke final */
+/* Pokerito — v0.1.6 — Etapa 1/2: Conteo fichas input blanco primera vez + autoselect reingreso (iPad) */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -1376,7 +1376,9 @@ function renderHistorialDetalle(){
         if (!cid) return;
         const st = ensurePlayerState(s, pid);
         if (!st.counts || typeof st.counts !== 'object') st.counts = {};
-        const cur = numOrZero(st.counts[cid]);
+        const raw = Object.prototype.hasOwnProperty.call(st.counts, cid) ? st.counts[cid] : undefined;
+        const exists = (raw !== undefined && raw !== null);
+        const cur = exists ? numOrZero(raw) : 0;
 
         if (act === 'inc' || act === 'dec'){
           const next = (act === 'inc') ? (cur + 1) : Math.max(0, cur - 1);
@@ -1394,7 +1396,7 @@ function renderHistorialDetalle(){
           const amt = await numberInputDialog({
             title: 'Cantidad de fichas',
             body: 'Escribe la cantidad exacta',
-            value: String(cur),
+            value: (exists ? String(cur) : ''),
             placeholder: '0',
             okText: 'OK',
             cancelText: 'Cancelar'
@@ -2930,6 +2932,7 @@ function renderConfiguracion(){
 
   function numberInputDialog({ title, body, value, placeholder, okText, cancelText }){
     return new Promise(resolve => {
+      const safeValue = (value === undefined || value === null) ? '' : String(value);
       const overlay = el(`
         <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Número">
           <div class="modal">
@@ -2941,7 +2944,7 @@ function renderConfiguracion(){
               ${body ? `<div class="small-note" style="margin-top:0">${escapeHtml(body)}</div>` : ''}
               <label class="field" style="margin-top:10px">
                 <span>Cantidad</span>
-                <input id="numInput" type="number" inputmode="numeric" pattern="[0-9]*" placeholder="${escapeAttr(placeholder || '')}" value="${escapeAttr(String(value || ''))}" />
+                <input id="numInput" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="${escapeAttr(placeholder || '')}" value="${escapeAttr(safeValue)}" />
               </label>
             </div>
             <div class="modal-foot">
@@ -2981,12 +2984,19 @@ function renderConfiguracion(){
       }catch(e){
         try{ $inp.focus(); }catch(e2){}
       }
-      try{
-        // select() a veces falla en type=number; setSelectionRange es más consistente
-        const len = ($inp.value || '').length;
-        if (typeof $inp.setSelectionRange === 'function') $inp.setSelectionRange(0, len);
-        else if (typeof $inp.select === 'function') $inp.select();
-      }catch(e){}
+      const shouldSelect = (($inp.value || '').length > 0);
+      const reselect = () => {
+        try{
+          const len = ($inp.value || '').length;
+          if (typeof $inp.setSelectionRange === 'function') $inp.setSelectionRange(0, len);
+          else if (typeof $inp.select === 'function') $inp.select();
+        }catch(e){}
+      };
+      if (shouldSelect){
+        reselect();
+        // Safari iPad PWA: segundo intento leve para que quede seleccionado “de verdad”
+        setTimeout(reselect, 60);
+      }
     });
   }
 
