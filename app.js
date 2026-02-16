@@ -273,6 +273,7 @@ function setPlayerActive(id, active){
     '/ranking': renderRanking,
     '/configuracion': renderConfiguracion,
     '/soporte': renderSoporte,
+    '/pdf': renderPdf,
   };
 
   function getRoute(){
@@ -293,8 +294,27 @@ function setPlayerActive(id, active){
     window.location.hash = '#' + path;
   }
 
+  // ===== Etapa 2: Export PDF (sin dependencias) =====
+  function exportSessionPDF(sessionId){
+    const id = String(sessionId || '').trim();
+    if (!id) return;
+    const base = (window.location.href || '').split('#')[0] || './';
+    const url = base + '#/pdf?id=' + encodeURIComponent(id);
+    let w = null;
+    try{ w = window.open(url, '_blank'); }catch(e){ w = null; }
+    if (!w){
+      // Fallback: mismo tab (por si el navegador bloquea popups)
+      navigate('/pdf?id=' + encodeURIComponent(id));
+      return;
+    }
+    try{ w.focus(); }catch(e){}
+  }
+
+
   function onRoute(){
     const path = getRoute();
+    const isPrint = (path === '/pdf');
+    try{ document.body.classList.toggle('print-mode', isPrint); }catch(e){}
     const fn = routes[path] || routes['/inicio'];
     fn();
     updateHeaderControls(path);
@@ -488,13 +508,13 @@ function setPlayerActive(id, active){
             <div class="panel-title" style="margin:0">Historial</div>
             <div class="row" style="gap:10px">
               <div class="small-note" style="margin:0">Sesiones cerradas (solo lectura).</div>
-              <button class="btn" type="button" id="toHistorialBtn">Ver todo</button>
+              <button class="btn" type="button" id="toHistorialBtn">Histórico</button>
             </div>
           </div>
 
           ${closedSessions.length ? `
             <div class="hist-list" id="histList" aria-live="polite">
-              ${closedSessions.map(s => {
+              ${[closedSessions[0]].map(s => {
                 const sum = calcSessionSummary(s);
                 const delta = sum.delta;
                 const deltaClass = Math.abs(delta) < 0.0001 ? 'ok' : (delta > 0 ? 'pos' : 'neg');
@@ -507,11 +527,13 @@ function setPlayerActive(id, active){
                     <div class="hist-right">
                       <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
                       <button class="btn" type="button" data-act="view">Ver</button>
+                      <button class="btn" type="button" data-act="pdf">PDF</button>
                     </div>
                   </div>
                 `;
               }).join('')}
             </div>
+            ${closedSessions.length > 1 ? `<div class="small-note">Hay ${escapeHtml(String(closedSessions.length))} sesiones cerradas. Mira <b>Histórico</b> para ver todas.</div>` : ''}
             <div class="small-note">Tip: el detalle rápido abre una tabla por jugador (invertido, fichas, neto, posición).</div>
           ` : `<div class="empty">Aún no hay sesiones cerradas. Tu historial está más limpio que tu conciencia (por ahora).</div>`}
         </div>
@@ -616,13 +638,18 @@ function setPlayerActive(id, active){
     const $hist = document.getElementById('histList');
     if ($hist){
       $hist.addEventListener('click', (ev) => {
-        const btn = ev.target.closest('button[data-act="view"]');
+        const btn = ev.target.closest('button[data-act]');
         if (!btn) return;
+        const act = btn.getAttribute('data-act');
         const row = ev.target.closest('.hist-item');
         if (!row) return;
         const id = row.getAttribute('data-id');
         if (!id) return;
-        navigate('/historial/detalle?id=' + encodeURIComponent(id));
+        if (act === 'view'){
+          navigate('/historial/detalle?id=' + encodeURIComponent(id));
+        } else if (act === 'pdf'){
+          exportSessionPDF(id);
+        }
       });
     }
 
@@ -652,69 +679,186 @@ function setPlayerActive(id, active){
     renderMesaSession(s, { readOnly: (s.status === 'closed'), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : 'Draft') });
   }
 
-  // ===== Etapa 7: Historial (navegable) =====
-  function renderHistorial(){
-    const sessions = getClosedSessions();
-    const root = el(`
-      <section class="screen" aria-label="Historial">
-        <h1 class="screen-title">Historial</h1>
-        <p class="screen-sub">Sesiones cerradas. Navega por fecha y abre el detalle. (Aquí vive la verdad.)</p>
+    // ===== Etapa 7: Historial (navegable) =====
+    function renderHistorial(){
+      const sessions = getClosedSessions();
+      const masterMap = new Map(getPlayers().map(p => [p.id, p]));
 
-        <div class="panel" role="region" aria-label="Listado">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Sesiones</div>
-            <div class="row">
-              <button class="btn" type="button" id="toRankingBtn">Ranking</button>
-              <button class="btn" type="button" id="backBtn">Volver</button>
-            </div>
-          </div>
+      function stripAccents(s){
+        s = String(s || '');
+        try{ return s.normalize('NFD').replace(/[̀-ͯ]/g, ''); }catch(e){ return s; }
+      }
 
-          ${sessions.length ? `
-            <div class="hist-list" id="histList" aria-live="polite">
-              ${sessions.map(s => {
-                const sum = calcSessionSummary(s);
-                const delta = sum.delta;
-                const deltaClass = Math.abs(delta) < 0.0001 ? 'ok' : (delta > 0 ? 'pos' : 'neg');
-                return `
-                  <div class="hist-item" data-id="${escapeAttr(s.id)}">
-                    <div class="hist-main">
-                      <div class="hist-title">${escapeHtml(String(s.date || ''))}</div>
-                      <div class="hist-sub">${escapeHtml(String(sum.playersCount))} jugadores · Invertido ${escapeHtml(formatMoney(sum.totalInvested))} · Fichas ${escapeHtml(formatMoney(sum.totalChipsValue))}</div>
-                    </div>
-                    <div class="hist-right">
-                      <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
-                      <button class="btn" type="button" data-act="view">Ver</button>
-                    </div>
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          ` : `<div class="empty">Aún no hay sesiones cerradas.</div>`}
-        </div>
-      </section>
-    `);
+      function normSearch(s){
+        return stripAccents(String(s || '')).toLowerCase();
+      }
 
-    $app.innerHTML = '';
-    $app.appendChild(root);
+      function winnersForSearch(s){
+        try{
+          ensureSessionGame(s);
+          const players = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
+          const chips = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : [];
+          const chipValueMap = new Map(chips.map(c => [c.id, numOrZero(c.value)]));
+          const pStateMap = new Map((s.game && Array.isArray(s.game.players) ? s.game.players : []).map(p => [p.id, p]));
+          const eps = 0.0001;
+          let maxNet = -Infinity;
+          const tmp = [];
+          players.forEach(p => {
+            const st = pStateMap.get(p.id) || { id: p.id, buyIn: 0, rebuys: [], counts: {} };
+            const t = calcPlayerTotals(st, chipValueMap);
+            const mp = masterMap.get(p.id);
+            const display = mp ? playerDisplayName(mp) : (p.display || p.nick || p.name || p.id);
+            const net = numOrZero(t.neto);
+            tmp.push({ display, net });
+            if (net > maxNet) maxNet = net;
+          });
+          return tmp.filter(x => Math.abs(x.net - maxNet) <= eps).map(x => x.display);
+        }catch(e){
+          return [];
+        }
+      }
 
-    document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
-    document.getElementById('toRankingBtn').addEventListener('click', () => navigate('/ranking'));
+      const items = sessions.map(s => {
+        const sum = calcSessionSummary(s);
+        const winners = winnersForSearch(s);
+        const winnersText = winners.join(' ');
 
-    const $list = document.getElementById('histList');
-    if ($list){
-      $list.addEventListener('click', (ev) => {
-        const btn = ev.target.closest('button[data-act="view"]');
-        if (!btn) return;
-        const row = ev.target.closest('.hist-item');
-        if (!row) return;
-        const id = row.getAttribute('data-id');
-        if (!id) return;
-        navigate('/historial/detalle?id=' + encodeURIComponent(id));
+        const snaps = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
+        const playersBits = [];
+        snaps.forEach(p => {
+          playersBits.push(p.name || '');
+          playersBits.push(p.nick || '');
+          const mp = masterMap.get(p.id);
+          if (mp){
+            playersBits.push(mp.name || '');
+            playersBits.push(mp.nick || '');
+          }
+        });
+
+        const blob = normSearch([s.date || '', playersBits.join(' '), winnersText].join(' '));
+        return { id: s.id, s, sum, blob };
       });
-    }
-  }
 
-  function renderHistorialDetalle(){
+      const root = el(`
+        <section class="screen" aria-label="Histórico">
+          <h1 class="screen-title">Histórico</h1>
+          <p class="screen-sub">Sesiones cerradas. Más reciente arriba.</p>
+
+          <div class="panel" role="region" aria-label="Listado">
+            <div class="panel-head">
+              <div class="panel-title" style="margin:0">Sesiones</div>
+              <div class="row">
+                <button class="btn" type="button" id="toRankingBtn">Ranking</button>
+                <button class="btn" type="button" id="backBtn">Volver</button>
+              </div>
+            </div>
+
+            <div class="hist-search" aria-label="Búsqueda">
+              <div class="search-wrap">
+                <input class="search-input" id="histSearch" type="search" placeholder="Buscar por fecha, jugador o ganador…" ${sessions.length ? '' : 'disabled'} autocomplete="off" spellcheck="false" />
+                <button class="btn small" type="button" id="histClearBtn" ${sessions.length ? '' : 'disabled'} aria-label="Limpiar">✕</button>
+              </div>
+            </div>
+
+            <div class="hist-list" id="histList" aria-live="polite"></div>
+          </div>
+        </section>
+      `);
+
+      $app.innerHTML = '';
+      $app.appendChild(root);
+
+      document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
+      document.getElementById('toRankingBtn').addEventListener('click', () => navigate('/ranking'));
+
+      const $list = document.getElementById('histList');
+      const $search = document.getElementById('histSearch');
+      const $clear = document.getElementById('histClearBtn');
+
+      function renderList(list, emptyLabel){
+        if (!$list) return;
+        if (!list.length){
+          const msg = emptyLabel || (sessions.length ? 'Sin resultados.' : 'Aún no hay sesiones cerradas.');
+          $list.innerHTML = `<div class="empty">${escapeHtml(msg)}</div>`;
+          return;
+        }
+
+        $list.innerHTML = list.map(it => {
+          const s = it.s;
+          const sum = it.sum;
+          const delta = sum.delta;
+          const deltaClass = Math.abs(delta) < 0.0001 ? 'ok' : (delta > 0 ? 'pos' : 'neg');
+          return `
+            <div class="hist-item" data-id="${escapeAttr(s.id)}">
+              <div class="hist-main">
+                <div class="hist-title">${escapeHtml(String(s.date || ''))}</div>
+                <div class="hist-sub">${escapeHtml(String(sum.playersCount))} jugadores · Invertido ${escapeHtml(formatMoney(sum.totalInvested))} · Fichas ${escapeHtml(formatMoney(sum.totalChipsValue))}</div>
+              </div>
+              <div class="hist-right">
+                <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
+                <button class="btn" type="button" data-act="view">Ver</button>
+                <button class="btn" type="button" data-act="pdf">PDF</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      renderList(items);
+
+      if ($list){
+        $list.addEventListener('click', (ev) => {
+          const btn = ev.target.closest('button[data-act]');
+          if (!btn) return;
+          const act = btn.getAttribute('data-act');
+          const row = ev.target.closest('.hist-item');
+          if (!row) return;
+          const id = row.getAttribute('data-id');
+          if (!id) return;
+          if (act === 'view'){
+            navigate('/historial/detalle?id=' + encodeURIComponent(id));
+          } else if (act === 'pdf'){
+            exportSessionPDF(id);
+          }
+        });
+      }
+
+      function applyFilter(){
+        if (!$search){
+          renderList(items);
+          return;
+        }
+        const q = normSearch($search.value).trim();
+        if (!q){
+          renderList(items);
+          return;
+        }
+        const filtered = items.filter(it => it.blob.includes(q));
+        renderList(filtered, 'Sin resultados');
+      }
+
+      if ($search){
+        $search.addEventListener('input', applyFilter);
+        $search.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Escape'){
+            ev.preventDefault();
+            $search.value = '';
+            applyFilter();
+          }
+        });
+      }
+
+      if ($clear){
+        $clear.addEventListener('click', () => {
+          if (!$search) return;
+          $search.value = '';
+          applyFilter();
+          try{ $search.focus(); }catch(e){}
+        });
+      }
+    }
+
+function renderHistorialDetalle(){
     const q = getHashQuery();
     const id = (q.get('id') || '').trim();
     const s = id ? getSessionById(id) : null;
@@ -799,7 +943,154 @@ function setPlayerActive(id, active){
     document.getElementById('toMesaBtn').addEventListener('click', () => navigate('/juego/sesion?id=' + encodeURIComponent(s.id)));
   }
 
-  // ===== Etapa 7: Ranking global (sin tiempo) =====
+  
+  // ===== Etapa 2: Reporte PDF (imprimible, landscape) =====
+  function renderPdf(){
+    const q = getHashQuery();
+    const id = (q.get('id') || '').trim();
+    const s = id ? getSessionById(id) : null;
+    if (!s){
+      const root = el(`
+        <section class="print-screen" aria-label="Reporte PDF">
+          <div class="print-actions">
+            <button class="btn" type="button" id="backBtn">Volver</button>
+          </div>
+          <div class="empty">Sesión no encontrada.</div>
+        </section>
+      `);
+      $app.innerHTML = '';
+      $app.appendChild(root);
+      document.getElementById('backBtn').addEventListener('click', () => navigate('/historial'));
+      return;
+    }
+
+    ensureSessionGame(s);
+    const an = analyzeSession(s);
+    const sum = an.summary;
+    const rows = an.rows.slice();
+
+    const eps = 0.0001;
+
+    // Ganadores: pos === 1 (empates permitidos)
+    const winners = rows.filter(r => r.pos === 1);
+    const winnersLabel = winners.length ? winners.map(r => r.display).join(', ') : '—';
+
+    // Perdedores: chips === 0 si existen; si no, net mínimo (empates permitidos)
+    const zeroChips = rows.filter(r => Math.abs(numOrZero(r.chips)) <= eps);
+    let losers = [];
+    if (zeroChips.length){
+      losers = zeroChips;
+    } else if (rows.length){
+      const minNet = rows.reduce((m, r) => Math.min(m, numOrZero(r.net)), Infinity);
+      losers = rows.filter(r => Math.abs(numOrZero(r.net) - minNet) <= eps);
+    }
+    const losersLabel = losers.length ? losers.map(r => r.display).join(', ') : '—';
+
+    // Rebuys totales
+    const rebuysCount = rows.reduce((a, r) => a + Math.max(0, Math.floor(numOrZero(r.rebuysCount))), 0);
+    const rebuysTotal = rows.reduce((a, r) => a + numOrZero(r.rebuysTotal), 0);
+
+    // Hora de cierre
+    const ts = numOrZero(s.closedAt || s.updatedAt) || Date.now();
+    const d = new Date(ts);
+    const closeTime = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+
+    // Jugador (solo Nombre + Apellido): maestro → snapshot → fallback
+    const snapMap = new Map((Array.isArray(s.playersSnapshot) ? s.playersSnapshot : []).map(p => [p.id, p]));
+    const masterMap = new Map(getPlayers().map(p => [p.id, p]));
+
+    function firstLast(full){
+      const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
+      if (!parts.length) return '—';
+      if (parts.length === 1) return parts[0];
+      return parts[0] + ' ' + parts[parts.length - 1];
+    }
+
+    function playerNameOnly(pid){
+      const mp = masterMap.get(pid);
+      const sp = snapMap.get(pid);
+      const full = (mp && mp.name) ? mp.name : ((sp && sp.name) ? sp.name : '');
+      return firstLast(full || pid);
+    }
+
+    // Table
+    const tbody = rows.map(r => {
+      const name = playerNameOnly(r.id);
+      const invested = numOrZero(r.invested);
+      const net = numOrZero(r.net);
+      const ganado = Math.max(0, net);
+      const perdido = Math.max(0, -net);
+      return `
+        <tr>
+          <td class="who">${escapeHtml(String(name))}</td>
+          <td class="num">${escapeHtml(formatMoney(invested))}</td>
+          <td class="num">${escapeHtml(formatMoney(ganado))}</td>
+          <td class="num">${escapeHtml(formatMoney(perdido))}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const root = el(`
+      <section class="print-screen" aria-label="Reporte PDF">
+        <div class="print-actions">
+          <button class="btn primary" type="button" id="printBtn">Imprimir / Guardar PDF</button>
+          <button class="btn" type="button" id="backBtn">Volver</button>
+        </div>
+
+        <div class="print-head">
+          <div class="print-brand">
+            <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
+            <span>POKERITO</span>
+          </div>
+        </div>
+
+        <div class="print-meta">
+          <div class="print-line"><span class="k">Fecha de juego</span><span class="v">${escapeHtml(String(s.date || ''))}</span></div>
+          <div class="print-line"><span class="k">Monto total jugado</span><span class="v">${escapeHtml(formatMoney(sum.totalInvested))}</span></div>
+          <div class="print-line"><span class="k">Jugador ganador</span><span class="v">${escapeHtml(String(winnersLabel))}</span></div>
+          <div class="print-line"><span class="k">Perdedores</span><span class="v">${escapeHtml(String(losersLabel))}</span></div>
+          <div class="print-line"><span class="k">Total fichas</span><span class="v">${escapeHtml(formatMoney(sum.totalChipsValue))}</span></div>
+          <div class="print-line"><span class="k">Δ</span><span class="v">${escapeHtml(formatMoney(sum.delta))}</span></div>
+          <div class="print-line"><span class="k">Cantidad de jugadores</span><span class="v">${escapeHtml(String(sum.playersCount))}</span></div>
+          <div class="print-line"><span class="k">Rebuys totales</span><span class="v">${escapeHtml(String(rebuysCount))} · ${escapeHtml(formatMoney(rebuysTotal))}</span></div>
+          <div class="print-line"><span class="k">Hora de cierre</span><span class="v">${escapeHtml(String(closeTime))}</span></div>
+        </div>
+
+        <div class="print-table-wrap" role="region" aria-label="Tabla por jugador">
+          <table class="print-table">
+            <thead>
+              <tr>
+                <th>Jugador</th>
+                <th class="num">Jugado</th>
+                <th class="num">Ganado</th>
+                <th class="num">Perdido</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tbody}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = '';
+    $app.appendChild(root);
+
+    document.getElementById('printBtn').addEventListener('click', () => {
+      try{ window.print(); }catch(e){}
+    });
+    document.getElementById('backBtn').addEventListener('click', () => {
+      // si el tab fue abierto por script, intentamos cerrarlo
+      try{ if (window.opener) window.close(); }catch(e){}
+      navigate('/historial');
+    });
+
+    // opcional: intentar auto-print (si el browser lo permite)
+    try{ setTimeout(() => { try{ window.print(); }catch(e){} }, 350); }catch(e){}
+  }
+
+// ===== Etapa 7: Ranking global (sin tiempo) =====
   function renderRanking(){
     const a = computeAnalytics();
     const root = el(`
@@ -811,7 +1102,7 @@ function setPlayerActive(id, active){
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Jugadores</div>
             <div class="row">
-              <button class="btn" type="button" id="toHistBtn">Historial</button>
+              <button class="btn" type="button" id="toHistBtn">Histórico</button>
               <button class="btn" type="button" id="backBtn">Volver</button>
             </div>
           </div>

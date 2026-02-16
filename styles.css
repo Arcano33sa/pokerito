@@ -504,12 +504,60 @@ body{
   margin-top: 12px;
 }
 
+
+.hist-search{
+  margin-top: 12px;
+}
+
+.search-wrap{
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+}
+
+.search-input{
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel) 96%, transparent);
+  color: var(--text);
+  font-weight: 850;
+  letter-spacing: 0.01em;
+  outline: none;
+}
+
+.search-input::placeholder{
+  color: color-mix(in oklab, var(--muted) 92%, var(--text));
+  font-weight: 850;
+}
+
+.search-input:focus{
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.search-input:disabled{
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#histClearBtn{
+  width: 44px;
+  padding: 0;
+  justify-content: center;
+}
+
 .hist-item{
   border: 1px solid var(--border);
   border-radius: 18px;
   padding: 12px 12px;
   background: color-mix(in oklab, var(--panel) 94%, transparent);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -532,6 +580,8 @@ body{
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .delta-pill{
@@ -1451,3 +1501,106 @@ body{
   font-weight: 900;
 }
 
+
+
+/* ===== Etapa 2: PDF print view (landscape) ===== */
+body.print-mode{
+  background: #fff;
+  color: #111;
+}
+body.print-mode .app-header{ display: none; }
+body.print-mode .app-main{
+  height: 100vh;
+  margin-top: 0;
+  overflow: auto;
+}
+
+.print-screen{
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 18px 22px 26px;
+  color: #111;
+}
+.print-actions{
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.print-head{
+  display: flex;
+  justify-content: center;
+  margin: 8px 0 14px;
+}
+.print-brand{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 950;
+  letter-spacing: -0.02em;
+  font-size: 20px;
+}
+.print-logo{
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.print-meta{
+  border: 1px solid rgba(0,0,0,0.14);
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: #fff;
+}
+.print-line{
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.10);
+}
+.print-line:last-child{ border-bottom: none; }
+.print-line .k{ font-size: 12px; font-weight: 900; color: rgba(0,0,0,0.62); }
+.print-line .v{ font-size: 13px; font-weight: 950; font-variant-numeric: tabular-nums; }
+
+.print-table-wrap{
+  margin-top: 14px;
+  border: 1px solid rgba(0,0,0,0.14);
+  border-radius: 18px;
+  overflow: hidden;
+  background: #fff;
+}
+.print-table{
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.print-table thead th{
+  text-align: left;
+  font-size: 12px;
+  font-weight: 950;
+  color: rgba(0,0,0,0.62);
+  padding: 12px 12px;
+  border-bottom: 1px solid rgba(0,0,0,0.12);
+  background: rgba(0,0,0,0.03);
+}
+.print-table td{
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+  font-size: 14px;
+  font-weight: 850;
+}
+.print-table tr:last-child td{ border-bottom: none; }
+.print-table .num{ text-align: right; font-variant-numeric: tabular-nums; }
+
+@media print{
+  @page { size: landscape; margin: 12mm; }
+
+  body{ background: #fff !important; }
+  .print-actions{ display: none !important; }
+  .app-header{ display: none !important; }
+  .app-main{ height: auto !important; margin-top: 0 !important; overflow: visible !important; }
+  .print-screen{ max-width: none; padding: 0 !important; }
+  .btn, .icon-btn{ display: none !important; }
+}

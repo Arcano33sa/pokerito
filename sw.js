@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — Etapa 3C (Rebuy en header, sin solape) */
-const CACHE_NAME = 'pokerito-v0.1.2-etapa3c-rebuyhdr';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.3 Etapa 3 (Histórico: búsqueda + smoke final) */
+const CACHE_NAME = 'pokerito-v0.1.3-etapa3-historico-busqueda-smokefinal';
 const CORE_ASSETS = [
   './',
   './index.html',
