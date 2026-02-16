@@ -926,8 +926,14 @@ function setPlayerActive(id, active){
             return `
               <article class="mesa-player" data-pid="${escapeAttr(p.id)}">
                 <div class="mesa-player-top">
-                  <div class="mesa-player-nick">${escapeHtml(disp || 'Sin nombre')}</div>
-                  <div class="mesa-player-name">${escapeHtml((name || '').trim())}</div>
+                  <div class="mesa-player-ident">
+                    <div class="mesa-player-nick">${escapeHtml(disp || 'Sin nombre')}</div>
+                    <div class="mesa-player-name">${escapeHtml((name || '').trim())}</div>
+                  </div>
+                  <div class="rebuy-box">
+                    <button class="btn small" type="button" data-act="rebuy" ${readOnly ? 'disabled' : ''}>+ Rebuy</button>
+                    <div class="rebuy-meta"><span class="k">Rebuys</span><span class="v" data-role="rebuyCount">${escapeHtml(String((st.rebuys||[]).length))}</span></div>
+                  </div>
                 </div>
 
                 <div class="buyin-block">
@@ -935,10 +941,6 @@ function setPlayerActive(id, active){
                     <span>Buy-in</span>
                     <input class="buyin" type="number" inputmode="numeric" pattern="[0-9]*" placeholder="0" value="${escapeAttr(String(numOrZero(st.buyIn) || ''))}" ${readOnly ? 'disabled' : ''} />
                   </label>
-                  <div class="rebuy-box">
-                    <button class="btn small" type="button" data-act="rebuy" ${readOnly ? 'disabled' : ''}>+ Rebuy</button>
-                    <div class="rebuy-meta"><span class="k">Rebuys</span><span class="v" data-role="rebuyCount">${escapeHtml(String((st.rebuys||[]).length))}</span></div>
-                  </div>
                 </div>
 
                 <div class="chips-block">

@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — Etapa 3B (autofocus teclado iPad) */
-const CACHE_NAME = 'pokerito-v0.1.2-etapa3b-kbd';
+/* Pokerito SW — offline mínimo (cache core) — Etapa 3C (Rebuy en header, sin solape) */
+const CACHE_NAME = 'pokerito-v0.1.2-etapa3c-rebuyhdr';
 const CORE_ASSETS = [
   './',
   './index.html',

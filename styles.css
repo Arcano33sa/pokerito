@@ -787,6 +787,18 @@ body{
   min-width: 0;
 }
 
+.mesa-player-top{
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+}
+
+.mesa-player-ident{ min-width: 0; }
+
+.rebuy-box .btn.small{ white-space: nowrap; }
+
 .kpi-row{
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -821,7 +833,7 @@ body{
 
 .buyin-block{
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
   gap: 10px;
   align-items: end;
   margin-top: 10px;
