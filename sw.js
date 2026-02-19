@@ -22,9 +22,11 @@ const CORE_ASSETS = [
   './assets/hero/juego.svg',
   './assets/hero/configuracion.svg',
   './assets/hero/soporte.svg',
+  './assets/hero/usuarios.svg',
   './assets/hero/hero_juego.webp',
   './assets/hero/hero_config.webp',
-  './assets/hero/hero_soporte.webp'
+  './assets/hero/hero_soporte.webp',
+  './assets/hero/hero_usuarios.webp'
 ];
 
 self.addEventListener('install', (event) => {

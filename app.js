@@ -328,6 +328,7 @@ function setPlayerActive(id, active){
     '/historial/detalle': renderHistorialDetalle,
     '/ranking': renderRanking,
     '/configuracion': renderConfiguracion,
+    '/usuarios': renderUsuarios,
     '/soporte': renderSoporte,
     '/pdf': renderPdf,
   };
@@ -414,6 +415,19 @@ function setPlayerActive(id, active){
             <div class="home-body">
               <div class="home-title">Configuración</div>
               <p class="home-desc">Fichas, jugadores, estadísticas, ranking global y exportación a Excel.</p>
+            </div>
+          </button>
+
+          <button class="card home-card home-card--usuarios" data-go="/usuarios" type="button">
+            <div class="card-hero" aria-hidden="true">
+              <div class="card-hero-slot">
+                <img class="card-hero-img" data-hero="usuarios" alt="" decoding="async" loading="lazy" />
+                <img class="card-hero-fallback" src="assets/hero/usuarios.svg" alt="" decoding="async" loading="lazy" />
+              </div>
+            </div>
+            <div class="home-body">
+              <div class="home-title">Usuarios</div>
+              <p class="home-desc">Acceso, mesa, miembros e invitaciones. (La puerta del club.)</p>
             </div>
           </button>
 
@@ -3125,6 +3139,44 @@ function renderConfiguracion(){
         setTimeout(reselect, 60);
       }
     });
+  }
+
+  function renderUsuarios(){
+    const root = el(`
+      <section class="screen" aria-label="Usuarios">
+        <h1 class="screen-title">Usuarios</h1>
+        <p class="screen-sub">Aquí se gestiona el acceso, tu mesa y los usuarios.</p>
+
+        <div class="panel" role="region" aria-label="Acceso">
+          <div class="panel-title">ACCESO</div>
+          <div class="small-note">Placeholder — aquí vivirá el control de acceso (roles y autenticación) en próximas etapas.</div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Mesa" style="margin-top:14px">
+          <div class="panel-title">MESA</div>
+          <div class="small-note">Placeholder — datos de tu mesa y ajustes compartidos.</div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Miembros" style="margin-top:14px">
+          <div class="panel-title">MIEMBROS</div>
+          <div class="small-note">Placeholder — lista de miembros, roles y permisos.</div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Invitaciones" style="margin-top:14px">
+          <div class="panel-title">INVITACIONES</div>
+          <div class="small-note">Placeholder — invitación por código/link y gestión de invitaciones.</div>
+        </div>
+
+        <div class="row" style="margin-top:14px">
+          <button class="btn" type="button" id="backBtn">Volver</button>
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = "";
+    $app.appendChild(root);
+
+    document.getElementById("backBtn").addEventListener("click", () => navigate("/inicio"));
   }
 
   function renderSoporte(){
