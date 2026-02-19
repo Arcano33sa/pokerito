@@ -1528,6 +1528,16 @@ body.print-mode .app-main{
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
+
+.print-warn{
+  border: 1px solid rgba(0,0,0,0.16);
+  border-radius: 14px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 900;
+  background: rgba(0,0,0,0.03);
+}
 .print-head{
   display: flex;
   justify-content: center;

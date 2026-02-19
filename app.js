@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.7 — Etapa 1/2: PDF nombre con consecutivo persistente */
+/* Pokerito — v0.2.0 — Etapa 5/5: Store Firestore compartido + Permisos ADMIN/MIEMBRO + Export sin escrituras + SW bump */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -24,11 +24,496 @@
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
 
+  // ===== Etapa 3/5: Auth (Firebase Google) =====
+  // Estado global en memoria
+  let currentUser = null; // { uid, displayName, email }
+  let authReady = false;
+  let lastAuthError = '';
+  let lastAuthInfo = '';
 
-// Storage (versioned) — local only for now
-const STORE_KEY = 'pokerito_store_v1';
-const STORE_VERSION = 1;
-let store = loadStore();
+  // ===== Etapa 4/5: MESA (multiusuario) =====
+  const MESA_KEY = 'pokerito_mesaId';
+  const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
+  const INVITE_RE = /^PK-[A-Z0-9]{4}$/;
+
+  let mesaId = '';
+  let mesaRole = ''; // ADMIN | MIEMBRO
+  let mesaNombre = '';
+  let mesaReady = false; // validación completada
+  let mesaValid = false; // tiene mesaId y member doc existe
+  let mesaLastError = '';
+
+  function getDb(){ return (window.PK_FB && window.PK_FB.db) ? window.PK_FB.db : null; }
+  function getFs(){ return (window.PK_FB && window.PK_FB.fs) ? window.PK_FB.fs : null; }
+
+  function loadMesaId(){
+    try{ return String(localStorage.getItem(MESA_KEY) || '').trim(); }catch(e){ return ''; }
+  }
+  function persistMesaId(id){
+    try{ localStorage.setItem(MESA_KEY, String(id || '').trim()); }catch(e){}
+  }
+  function clearMesaId(){
+    try{ localStorage.removeItem(MESA_KEY); }catch(e){}
+  }
+
+  function shortMesaLabel(id){
+    const s = String(id || '').trim();
+    if (!s) return '';
+    return s.slice(0, 6);
+  }
+
+  function msFromAnyTs(v){
+    if (!v) return 0;
+    // Firestore Timestamp
+    if (typeof v.toMillis === 'function') return v.toMillis();
+    if (typeof v.seconds === 'number') return Math.floor(v.seconds * 1000);
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.floor(n) : 0;
+  }
+
+  function formatDateShort(ms){
+    const d = new Date(ms);
+    if (!Number.isFinite(d.getTime())) return '';
+    const dd = String(d.getDate()).padStart(2,'0');
+    const mm = String(d.getMonth()+1).padStart(2,'0');
+    const yy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2,'0');
+    const mi = String(d.getMinutes()).padStart(2,'0');
+    return `${dd}/${mm}/${yy} ${hh}:${mi}`;
+  }
+
+  function clearMesaState(){
+    mesaId = '';
+    mesaRole = '';
+    mesaNombre = '';
+    mesaReady = true;
+    mesaValid = false;
+    mesaLastError = '';
+    // Shared store sync teardown
+    try{ detachSharedStore(); }catch(e){}
+    try{ store = initSharedStore(); }catch(e){}
+    try{ lastSharedStr = ''; }catch(e){}
+  }
+
+  async function validateMesaFromLocal(){
+    mesaLastError = '';
+    mesaReady = false;
+    mesaValid = false;
+    mesaRole = '';
+    mesaNombre = '';
+
+    if (!currentUser){
+      mesaId = '';
+      mesaReady = true;
+      mesaValid = false;
+      try{ detachSharedStore(); }catch(e){}
+      try{ store = initSharedStore(); }catch(e){}
+      try{ lastSharedStr = ''; }catch(e){}
+      return;
+    }
+
+    const id = loadMesaId();
+    mesaId = id;
+    if (!id){
+      mesaReady = true;
+      mesaValid = false;
+      try{ detachSharedStore(); }catch(e){}
+      try{ store = initSharedStore(); }catch(e){}
+      try{ lastSharedStr = ''; }catch(e){}
+      return;
+    }
+
+    const db = getDb();
+    const fs = getFs();
+    if (!db || !fs){
+      mesaLastError = 'Firestore no está disponible.';
+      mesaReady = true;
+      mesaValid = false;
+      return;
+    }
+
+    try{
+      const memberRef = fs.doc(db, 'mesas', id, 'members', currentUser.uid);
+      const memberSnap = await fs.getDoc(memberRef);
+      if (!memberSnap.exists()){
+        clearMesaId();
+        mesaId = '';
+        mesaReady = true;
+        mesaValid = false;
+        try{ detachSharedStore(); }catch(e){}
+        try{ store = initSharedStore(); }catch(e){}
+        try{ lastSharedStr = ''; }catch(e){}
+        return;
+      }
+      const md = memberSnap.data() || {};
+      mesaRole = String(md.rol || '').toUpperCase();
+      if (mesaRole !== 'ADMIN' && mesaRole !== 'MIEMBRO') mesaRole = 'MIEMBRO';
+
+      // cargar nombreMesa si existe
+      const mesaRef = fs.doc(db, 'mesas', id);
+      const mesaSnap = await fs.getDoc(mesaRef);
+      if (mesaSnap.exists()){
+        const m = mesaSnap.data() || {};
+        mesaNombre = String(m.nombreMesa || '').trim();
+      }
+
+      mesaValid = true;
+      mesaReady = true;
+      // Start listening shared store/main for this MESA
+      try{ attachSharedStore(); }catch(e){}
+    }catch(e){
+      mesaLastError = 'No se pudo validar tu mesa. Intenta de nuevo.';
+      mesaReady = true;
+      mesaValid = false;
+      try{ detachSharedStore(); }catch(e){}
+      try{ store = initSharedStore(); }catch(e){}
+      try{ lastSharedStr = ''; }catch(e){}
+    }
+  }
+
+  function randomInviteSuffix(){
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let out = '';
+    for (let i=0;i<4;i++) out += chars[Math.floor(Math.random()*chars.length)];
+    return out;
+  }
+
+  async function createMesa(){
+    if (!currentUser) throw new Error('no-auth');
+    const db = getDb();
+    const fs = getFs();
+    if (!db || !fs) throw new Error('no-fs');
+
+    // mesaId auto
+    const mesaRef = fs.doc(fs.collection(db, 'mesas'));
+    const id = mesaRef.id;
+    const nowTs = fs.serverTimestamp();
+
+    await fs.setDoc(mesaRef, {
+      createdAt: nowTs,
+      createdBy: currentUser.uid,
+      nombreMesa: '',
+    }, { merge: true });
+
+    const memberRef = fs.doc(db, 'mesas', id, 'members', currentUser.uid);
+    await fs.setDoc(memberRef, {
+      uid: currentUser.uid,
+      nombre: currentUser.displayName || '',
+      email: currentUser.email || '',
+      rol: 'ADMIN',
+      joinedAt: nowTs,
+    }, { merge: true });
+
+    // Importante para Etapa 5: inicializar store base
+    const storeRef = fs.doc(db, 'mesas', id, 'store', 'main');
+    await fs.setDoc(storeRef, {
+      v: SHARED_STORE_VERSION,
+      chips: defaultChips(),
+      players: defaultPlayers(),
+      sessions: defaultSessions(),
+      pdfSeqNext: 1,
+      draftSessionId: '',
+      createdAt: nowTs,
+      updatedAt: nowTs,
+      updatedBy: (currentUser.email || currentUser.uid),
+    }, { merge: true });
+
+    persistMesaId(id);
+    await validateMesaFromLocal();
+    return id;
+  }
+
+  async function joinMesaByCode(rawCode){
+    if (!currentUser) throw new Error('no-auth');
+    const db = getDb();
+    const fs = getFs();
+    if (!db || !fs) throw new Error('no-fs');
+
+    const code = String(rawCode || '').trim().toUpperCase();
+    if (!INVITE_RE.test(code)) throw new Error('bad-code');
+
+    const inviteRef = fs.doc(db, 'invitaciones', code);
+    const nowMs = Date.now();
+
+    const mesaIdFromInvite = await fs.runTransaction(db, async (tx) => {
+      const snap = await tx.get(inviteRef);
+      if (!snap.exists()) throw new Error('no-invite');
+      const inv = snap.data() || {};
+      if (inv.usado) throw new Error('used');
+      const exp = msFromAnyTs(inv.expiraEn);
+      if (exp && exp < nowMs) throw new Error('expired');
+      const mid = String(inv.mesaId || '').trim();
+      if (!mid) throw new Error('no-mesa');
+
+      // marcar usado + crear member
+      tx.update(inviteRef, {
+        usado: true,
+        usadoPor: currentUser.uid,
+        usadoEn: fs.serverTimestamp(),
+      });
+
+      const memberRef = fs.doc(db, 'mesas', mid, 'members', currentUser.uid);
+      tx.set(memberRef, {
+        uid: currentUser.uid,
+        nombre: currentUser.displayName || '',
+        email: currentUser.email || '',
+        rol: 'MIEMBRO',
+        joinedAt: fs.serverTimestamp(),
+      }, { merge: true });
+
+      return mid;
+    });
+
+    persistMesaId(mesaIdFromInvite);
+    await validateMesaFromLocal();
+    return mesaIdFromInvite;
+  }
+
+  async function fetchMesaMembers(){
+    if (!mesaValid || !mesaId) return [];
+    const db = getDb();
+    const fs = getFs();
+    if (!db || !fs) return [];
+    const col = fs.collection(db, 'mesas', mesaId, 'members');
+    const snap = await fs.getDocs(col);
+    const out = [];
+    snap.forEach(d => {
+      const x = d.data() || {};
+      out.push({
+        uid: String(x.uid || d.id || ''),
+        nombre: String(x.nombre || ''),
+        email: String(x.email || ''),
+        rol: String(x.rol || '').toUpperCase(),
+        joinedAt: x.joinedAt || null,
+      });
+    });
+    // admins primero
+    out.sort((a,b) => {
+      const ar = (a.rol === 'ADMIN') ? 0 : 1;
+      const br = (b.rol === 'ADMIN') ? 0 : 1;
+      if (ar !== br) return ar - br;
+      return (a.nombre || a.email || a.uid).localeCompare(b.nombre || b.email || b.uid);
+    });
+    return out;
+  }
+
+  async function adminToggleRole(targetUid, members){
+    if (!mesaValid || mesaRole !== 'ADMIN') throw new Error('no-admin');
+    const uid = String(targetUid || '').trim();
+    if (!uid) return;
+    const db = getDb();
+    const fs = getFs();
+    if (!db || !fs) throw new Error('no-fs');
+
+    const m = (members || []).find(x => x && x.uid === uid) || null;
+    if (!m) return;
+    const cur = String(m.rol || '').toUpperCase();
+    const next = (cur === 'ADMIN') ? 'MIEMBRO' : 'ADMIN';
+
+    // anti-caos: no dejar sin admins
+    const admins = (members || []).filter(x => x && String(x.rol || '').toUpperCase() === 'ADMIN');
+    if (cur === 'ADMIN' && admins.length <= 1){
+      throw new Error('last-admin');
+    }
+
+    const ref = fs.doc(db, 'mesas', mesaId, 'members', uid);
+    await fs.updateDoc(ref, { rol: next });
+
+    // si me cambian a mí, revalidar
+    if (uid === currentUser.uid) await validateMesaFromLocal();
+    return next;
+  }
+
+  async function adminRemoveMember(targetUid, members){
+    if (!mesaValid || mesaRole !== 'ADMIN') throw new Error('no-admin');
+    const uid = String(targetUid || '').trim();
+    if (!uid) return;
+    const db = getDb();
+    const fs = getFs();
+    if (!db || !fs) throw new Error('no-fs');
+
+    const m = (members || []).find(x => x && x.uid === uid) || null;
+    if (!m) return;
+    const cur = String(m.rol || '').toUpperCase();
+
+    const admins = (members || []).filter(x => x && String(x.rol || '').toUpperCase() === 'ADMIN');
+    if (cur === 'ADMIN' && admins.length <= 1){
+      throw new Error('last-admin');
+    }
+
+    const ref = fs.doc(db, 'mesas', mesaId, 'members', uid);
+    await fs.deleteDoc(ref);
+
+    // si removieron al usuario actual (raro), limpiar mesa
+    if (uid === currentUser.uid){
+      clearMesaId();
+      await validateMesaFromLocal();
+    }
+    return true;
+  }
+
+  async function adminGenerateInviteCode(){
+    if (!mesaValid || mesaRole !== 'ADMIN') throw new Error('no-admin');
+    const db = getDb();
+    const fs = getFs();
+    if (!db || !fs) throw new Error('no-fs');
+
+    for (let i=0;i<12;i++){
+      const code = 'PK-' + randomInviteSuffix();
+      const ref = fs.doc(db, 'invitaciones', code);
+      const snap = await fs.getDoc(ref);
+      if (snap.exists()) continue;
+
+      const expMs = Date.now() + INVITE_TTL_MS;
+      const expTs = (fs.Timestamp && typeof fs.Timestamp.fromMillis === 'function')
+        ? fs.Timestamp.fromMillis(expMs)
+        : expMs;
+
+      await fs.setDoc(ref, {
+        mesaId: mesaId,
+        expiraEn: expTs,
+        usado: false,
+        creadoPor: currentUser.uid,
+        createdAt: fs.serverTimestamp(),
+      }, { merge: false });
+
+      return { code, expMs };
+    }
+    throw new Error('no-code');
+  }
+
+  async function fetchInvitesForMesa(){
+    if (!mesaValid || mesaRole !== 'ADMIN') return [];
+    const db = getDb();
+    const fs = getFs();
+    if (!db || !fs) return [];
+    // Intento: filtrar por mesaId (puede requerir índice, pero normalmente no)
+    try{
+      const q = fs.query(
+        fs.collection(db, 'invitaciones'),
+        fs.where('mesaId', '==', mesaId),
+        fs.orderBy('createdAt', 'desc'),
+        fs.limit(10)
+      );
+      const snap = await fs.getDocs(q);
+      const out = [];
+      snap.forEach(d => {
+        const x = d.data() || {};
+        out.push({
+          code: d.id,
+          mesaId: String(x.mesaId || ''),
+          usado: !!x.usado,
+          expiraEnMs: msFromAnyTs(x.expiraEn),
+          createdAtMs: msFromAnyTs(x.createdAt),
+          creadoPor: String(x.creadoPor || ''),
+        });
+      });
+      return out;
+    }catch(e){
+      return [];
+    }
+  }
+
+  async function copyToClipboard(text){
+    const t = String(text || '');
+    if (!t) return false;
+    try{
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
+        await navigator.clipboard.writeText(t);
+        return true;
+      }
+    }catch(e){}
+    // fallback
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = t;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      return true;
+    }catch(e){
+      return false;
+    }
+  }
+
+  function normUser(u){
+    if (!u) return null;
+    return {
+      uid: String(u.uid || ''),
+      displayName: String(u.displayName || ''),
+      email: String(u.email || ''),
+    };
+  }
+
+  function authErrText(err){
+    const code = (err && err.code) ? String(err.code) : '';
+    if (code === 'auth/popup-blocked') return 'El popup fue bloqueado. Probando redirección…';
+    if (code === 'auth/popup-closed-by-user') return 'Cerraste el popup antes de terminar.';
+    if (code === 'auth/cancelled-popup-request') return 'Se canceló la solicitud de popup. Intenta de nuevo.';
+    if (code === 'auth/unauthorized-domain') return 'Dominio no autorizado en Firebase Auth (revisar Dominios autorizados).';
+    if (code === 'auth/network-request-failed') return 'Falló la red. Revisa conexión.';
+    if (code) return `Error de login (${code}).`;
+    if (err && err.message) return String(err.message);
+    return 'Error de login.';
+  }
+
+  function getAuthApi(){
+    return (window.PK_FB && window.PK_FB.authApi) ? window.PK_FB.authApi : null;
+  }
+
+  function initAuthState(){
+    const fb = window.PK_FB;
+    const api = getAuthApi();
+    if (!fb || !fb.auth || !api || typeof api.onAuth !== 'function') {
+      authReady = true;
+      currentUser = null;
+      return;
+    }
+
+    // Resultado de redirect (si el login cayó a redirect)
+    const rr = api.redirectResultPromise || (typeof api.handleRedirect === 'function' ? api.handleRedirect() : null);
+    Promise.resolve(rr).then(res => {
+      if (res && res.__error) lastAuthError = authErrText(res.__error);
+    }).catch(() => {});
+
+    api.onAuth((u) => {
+      authReady = true;
+      currentUser = normUser(u);
+
+      if (currentUser) { lastAuthError = ''; lastAuthInfo = ''; }
+
+      // Si no hay sesión: limpiar estado de mesa
+      if (!currentUser){
+        clearMesaState();
+      } else {
+        // Validar mesa local (async) y re-render al terminar
+        validateMesaFromLocal().then(() => {
+          // Si el usuario cambió de ruta mientras validábamos, el gate se encargará.
+          onRoute();
+        });
+      }
+
+      // Gate: si no hay sesión, forzar /usuarios
+      const path = getRoute();
+      if (!currentUser && path !== '/usuarios') {
+        navigate('/usuarios');
+        return;
+      }
+      // Re-render para reflejar estado (por ejemplo en /usuarios)
+      onRoute();
+    });
+  }
+
+
+// ===== Etapa 5/5: Local prefs + Shared store (Firestore) =====
+const LOCAL_STORE_KEY = 'pokerito_local_v1';
+const LOCAL_STORE_VERSION = 1;
+const SHARED_STORE_VERSION = 1;
+const LEGACY_STORE_KEY = 'pokerito_store_v1';
 
 // Chips defaults (Etapa 3)
 function defaultChips(){
@@ -41,7 +526,6 @@ function defaultChips(){
   ];
 }
 
-
 // Players defaults (Etapa 4)
 function defaultPlayers(){
   return [];
@@ -52,114 +536,334 @@ function defaultSessions(){
   return [];
 }
 
-function loadStore(){
+let localState = loadLocalState();
+let store = initSharedStore();
+
+// Shared store/main sync state
+let sharedReady = false;
+let sharedLastError = '';
+let storeUnsub = null;
+let lastSharedStr = '';
+let saveTimer = null;
+let savingShared = false;
+
+// Tiny toast (no deps)
+let __toastEl = null;
+let __toastTimer = null;
+function toast(msg){
+  const m = String(msg || '').trim();
+  if (!m) return;
   try{
-    const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return initStore();
-    const obj = JSON.parse(raw);
-    if (!obj || obj.v !== STORE_VERSION) return initStore();
-    if (!Array.isArray(obj.chips) || !obj.chips.length){
-      obj.chips = defaultChips();
-      obj.updatedAt = Date.now();
-      persistStore(obj);
+    if (!__toastEl){
+      __toastEl = document.createElement('div');
+      __toastEl.id = 'pk-toast';
+      __toastEl.className = 'toast';
+      __toastEl.style.display = 'none';
+      document.body.appendChild(__toastEl);
     }
-    if (!Array.isArray(obj.players)){
-      obj.players = defaultPlayers();
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-    if (!Array.isArray(obj.sessions)){
-      obj.sessions = defaultSessions();
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-
-    // Etapa 6: asegurar forma de sesiones existentes (migración suave)
-    if (Array.isArray(obj.sessions)){
-      let changed = false;
-      obj.sessions.forEach(s => {
-        const before = JSON.stringify(s);
-        try{ ensureSessionGame(s); }catch(e){}
-        if (JSON.stringify(s) !== before) changed = true;
-      });
-      // si el draft apuntado ya no es draft, limpiar
-      if (obj.draftSessionId){
-        const ds = obj.sessions.find(x => x && x.id === obj.draftSessionId) || null;
-        if (ds && ds.status !== 'draft') { obj.draftSessionId = ''; changed = true; }
-      }
-      if (changed){
-        obj.updatedAt = Date.now();
-        persistStore(obj);
-      }
-    }
-    if (!obj.ui || typeof obj.ui !== 'object'){
-      obj.ui = {};
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-    if (!obj.ui.juego || typeof obj.ui.juego !== 'object'){
-      obj.ui.juego = {};
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-        if (typeof obj.draftSessionId !== 'string'){
-      obj.draftSessionId = '';
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-
-    // Etapa 1: PDF consecutivo global (pdfSeqNext) — migración suave
-    try{
-      let next = obj.pdfSeqNext;
-      let changedPdf = false;
-
-      if (!Number.isFinite(next) || next < 1){ next = 1; changedPdf = true; }
-      next = Math.floor(next);
-
-      let maxSeq = 0;
-      (Array.isArray(obj.sessions) ? obj.sessions : []).forEach(s => {
-        const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
-        if (n > maxSeq) maxSeq = n;
-      });
-      if (next <= maxSeq){ next = maxSeq + 1; changedPdf = true; }
-
-      if (obj.pdfSeqNext !== next){ obj.pdfSeqNext = next; changedPdf = true; }
-
-      if (changedPdf){
-        obj.updatedAt = Date.now();
-        persistStore(obj);
-      }
-    }catch(e){}
-
-    return obj;
-  }catch(e){
-    return initStore();
-  }
+    __toastEl.textContent = m;
+    __toastEl.style.display = 'block';
+    if (__toastTimer) clearTimeout(__toastTimer);
+    __toastTimer = setTimeout(() => {
+      try{ if (__toastEl) __toastEl.style.display = 'none'; }catch(e){}
+    }, 1800);
+  }catch(e){}
 }
 
-function initStore(){
-  const obj = {
-    v: STORE_VERSION,
+function isAdmin(){ return mesaRole === 'ADMIN'; }
+function requireAdmin(){
+  if (!isAdmin()){
+    toast('Solo ADMIN puede editar.');
+    return false;
+  }
+  return true;
+}
+
+function loadLocalState(){
+  // New local-only preferences store
+  try{
+    const raw = localStorage.getItem(LOCAL_STORE_KEY);
+    if (raw){
+      const obj = JSON.parse(raw);
+      if (obj && obj.v === LOCAL_STORE_VERSION){
+        if (!obj.ui || typeof obj.ui !== 'object') obj.ui = { juego: {} };
+        if (!obj.ui.juego || typeof obj.ui.juego !== 'object') obj.ui.juego = {};
+        return obj;
+      }
+    }
+  }catch(e){}
+
+  // Soft migration from legacy full store (pre-Firestore)
+  try{
+    const raw = localStorage.getItem(LEGACY_STORE_KEY);
+    if (raw){
+      const old = JSON.parse(raw);
+      const ui = (old && old.ui && typeof old.ui === 'object') ? old.ui : { juego: {} };
+      if (!ui.juego || typeof ui.juego !== 'object') ui.juego = {};
+      const obj = { v: LOCAL_STORE_VERSION, ui, updatedAt: Date.now() };
+      try{ localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(obj)); }catch(e){}
+      return obj;
+    }
+  }catch(e){}
+
+  const fresh = { v: LOCAL_STORE_VERSION, ui: { juego: {} }, updatedAt: Date.now() };
+  try{ localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(fresh)); }catch(e){}
+  return fresh;
+}
+
+function persistLocalState(){
+  try{ localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(localState)); }catch(e){}
+}
+
+function initSharedStore(){
+  const ui = (localState && localState.ui && typeof localState.ui === 'object') ? localState.ui : { juego: {} };
+  if (!ui.juego || typeof ui.juego !== 'object') ui.juego = {};
+  return {
+    v: SHARED_STORE_VERSION,
     chips: defaultChips(),
     players: defaultPlayers(),
     sessions: defaultSessions(),
     pdfSeqNext: 1,
     draftSessionId: '',
-    ui: { juego: {} },
+    ui,
     createdAt: Date.now(),
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
   };
-  persistStore(obj);
+}
+
+function normalizeSharedStore(data){
+  const d = (data && typeof data === 'object') ? data : {};
+  const obj = {
+    v: SHARED_STORE_VERSION,
+    chips: Array.isArray(d.chips) ? d.chips : defaultChips(),
+    players: Array.isArray(d.players) ? d.players : defaultPlayers(),
+    sessions: Array.isArray(d.sessions) ? d.sessions : defaultSessions(),
+    pdfSeqNext: Number.isFinite(d.pdfSeqNext) ? Math.floor(d.pdfSeqNext) : 1,
+    draftSessionId: (typeof d.draftSessionId === 'string') ? d.draftSessionId : '',
+  };
+
+  // Ensure minimal invariants
+  try{
+    (Array.isArray(obj.sessions) ? obj.sessions : []).forEach(s => { try{ ensureSessionGame(s); }catch(e){} });
+  }catch(e){}
+
+  // Draft pointer hygiene
+  try{
+    if (obj.draftSessionId){
+      const s = (obj.sessions || []).find(x => x && x.id === obj.draftSessionId) || null;
+      if (!s || s.status !== 'draft') obj.draftSessionId = '';
+    }
+  }catch(e){}
+
+  // pdfSeqNext migration: always above max(pdfSeq)
+
+  try{
+    let next = obj.pdfSeqNext;
+    if (!Number.isFinite(next) || next < 1) next = 1;
+    next = Math.floor(next);
+    let maxSeq = 0;
+    (obj.sessions || []).forEach(s => {
+      const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
+      if (n > maxSeq) maxSeq = n;
+    });
+    if (next <= maxSeq) next = maxSeq + 1;
+    obj.pdfSeqNext = next;
+  }catch(e){}
+
   return obj;
 }
 
-function persistStore(obj){
-  try{ localStorage.setItem(STORE_KEY, JSON.stringify(obj)); }catch(e){}
+function getSharedSubset(){
+  const subset = {
+    v: SHARED_STORE_VERSION,
+    chips: Array.isArray(store.chips) ? store.chips : defaultChips(),
+    players: Array.isArray(store.players) ? store.players : defaultPlayers(),
+    sessions: Array.isArray(store.sessions) ? store.sessions : defaultSessions(),
+    pdfSeqNext: Number.isFinite(store.pdfSeqNext) ? Math.floor(store.pdfSeqNext) : 1,
+    draftSessionId: (typeof store.draftSessionId === 'string') ? store.draftSessionId : '',
+  };
+
+  // Keep pdfSeqNext sane
+  try{
+    let next = subset.pdfSeqNext;
+    let maxSeq = 0;
+    (subset.sessions || []).forEach(s => {
+      const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
+      if (n > maxSeq) maxSeq = n;
+    });
+    if (!Number.isFinite(next) || next < 1) next = 1;
+    next = Math.floor(next);
+    if (next <= maxSeq) next = maxSeq + 1;
+    subset.pdfSeqNext = next;
+  }catch(e){}
+
+  return subset;
 }
 
+function detachSharedStore(){
+  if (storeUnsub){
+    try{ storeUnsub(); }catch(e){}
+    storeUnsub = null;
+  }
+  sharedReady = false;
+  sharedLastError = '';
+}
+
+function attachSharedStore(){
+  detachSharedStore();
+  sharedReady = false;
+  sharedLastError = '';
+
+  if (!mesaValid || !mesaId){
+    sharedReady = true;
+    return;
+  }
+
+  const db = getDb();
+  const fs = getFs();
+  if (!db || !fs){
+    sharedReady = true;
+    sharedLastError = 'Firestore no está disponible.';
+    return;
+  }
+
+  const ref = fs.doc(db, 'mesas', mesaId, 'store', 'main');
+
+  storeUnsub = fs.onSnapshot(ref, async (snap) => {
+    try{
+      if (!snap.exists()){
+        if (isAdmin()){
+          // initialize if missing
+          const nowTs = fs.serverTimestamp();
+          await fs.setDoc(ref, {
+            v: SHARED_STORE_VERSION,
+            chips: defaultChips(),
+            players: defaultPlayers(),
+            sessions: defaultSessions(),
+            pdfSeqNext: 1,
+            draftSessionId: '',
+            createdAt: nowTs,
+            updatedAt: nowTs,
+            updatedBy: (currentUser && (currentUser.email || currentUser.uid)) ? (currentUser.email || currentUser.uid) : '',
+          }, { merge: true });
+          return;
+        }
+        sharedLastError = 'Store de MESA no encontrado.';
+        sharedReady = true;
+        onRoute();
+        return;
+      }
+
+      const data = snap.data() || {};
+      const shared = normalizeSharedStore(data);
+
+      // Hydrate in-memory store, preserving local-only UI
+      store.v = SHARED_STORE_VERSION;
+      store.chips = shared.chips;
+      store.players = shared.players;
+      store.sessions = shared.sessions;
+      store.pdfSeqNext = shared.pdfSeqNext;
+      store.draftSessionId = shared.draftSessionId;
+      if (!store.ui || typeof store.ui !== 'object') store.ui = (localState && localState.ui) ? localState.ui : { juego: {} };
+      if (!store.ui.juego || typeof store.ui.juego !== 'object') store.ui.juego = {};
+
+      // Baseline for change detection (avoid re-writing the same snapshot)
+      try{ lastSharedStr = JSON.stringify(getSharedSubset()); }catch(e){ lastSharedStr = ''; }
+
+      sharedReady = true;
+      sharedLastError = '';
+      onRoute();
+    }catch(e){
+      sharedReady = true;
+      sharedLastError = 'Error al sincronizar store de MESA.';
+      onRoute();
+    }
+  }, (err) => {
+    sharedReady = true;
+    sharedLastError = 'Error al sincronizar store de MESA.';
+    onRoute();
+  });
+}
+
+function queueSharedSave(){
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    doSharedSave();
+  }, 650);
+}
+
+async function doSharedSave(){
+  if (!mesaValid || !mesaId || !isAdmin()) return;
+  if (savingShared) return;
+
+  const db = getDb();
+  const fs = getFs();
+  if (!db || !fs) return;
+
+  const subset = getSharedSubset();
+  let str = '';
+  try{ str = JSON.stringify(subset); }catch(e){ str = ''; }
+  if (!str || str === lastSharedStr) return;
+
+  savingShared = true;
+  try{
+    const ref = fs.doc(db, 'mesas', mesaId, 'store', 'main');
+    const payload = {
+      ...subset,
+      updatedAt: fs.serverTimestamp(),
+      updatedBy: (currentUser && (currentUser.email || currentUser.uid)) ? (currentUser.email || currentUser.uid) : '',
+    };
+    await fs.setDoc(ref, payload, { merge: true });
+    lastSharedStr = str;
+  }catch(e){
+    // non-fatal; keep local UI alive
+    sharedLastError = 'No se pudo guardar en Firestore. Revisa conexión.';
+  }finally{
+    savingShared = false;
+  }
+}
+
+async function wipeSharedStoreInFirestore(){
+  if (!mesaValid || !mesaId || !isAdmin()) return;
+  const db = getDb();
+  const fs = getFs();
+  if (!db || !fs) return;
+  const ref = fs.doc(db, 'mesas', mesaId, 'store', 'main');
+  const nowTs = fs.serverTimestamp();
+  const payload = {
+    v: SHARED_STORE_VERSION,
+    chips: defaultChips(),
+    players: defaultPlayers(),
+    sessions: defaultSessions(),
+    pdfSeqNext: 1,
+    draftSessionId: '',
+    updatedAt: nowTs,
+    updatedBy: (currentUser && (currentUser.email || currentUser.uid)) ? (currentUser.email || currentUser.uid) : '',
+  };
+  await fs.setDoc(ref, payload, { merge: true });
+}
+
+
 function saveStore(){
-  store.updatedAt = Date.now();
-  persistStore(store);
+  // Always persist local-only preferences
+  try{
+    if (!store.ui || typeof store.ui !== 'object') store.ui = { juego: {} };
+    if (!store.ui.juego || typeof store.ui.juego !== 'object') store.ui.juego = {};
+    localState.ui = store.ui;
+    localState.updatedAt = Date.now();
+    persistLocalState();
+  }catch(e){}
+
+  // Shared store writes: ADMIN only, debounced, only when changed
+  if (mesaValid && mesaId && isAdmin()){
+    try{
+      const subset = getSharedSubset();
+      const str = JSON.stringify(subset);
+      if (!lastSharedStr) lastSharedStr = str; // baseline if needed
+      if (str !== lastSharedStr) queueSharedSave();
+    }catch(e){}
+  }
 }
 
 function uid(prefix){
@@ -167,6 +871,13 @@ function uid(prefix){
 }
 
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
+function deepClone(obj){
+  try{
+    if (typeof structuredClone === 'function') return structuredClone(obj);
+  }catch(e){}
+  try{ return JSON.parse(JSON.stringify(obj)); }catch(e){ return null; }
+}
 
 function normHex(hex){
   if (!hex) return null;
@@ -246,6 +957,7 @@ function getChips(){
 }
 
 function upsertChip(chip){
+  if (!requireAdmin()) return;
   const idx = store.chips.findIndex(c => c.id === chip.id);
   if (idx >= 0) store.chips[idx] = chip;
   else store.chips.push(chip);
@@ -253,6 +965,7 @@ function upsertChip(chip){
 }
 
 function setChipActive(id, active){
+  if (!requireAdmin()) return;
   const c = store.chips.find(x => x.id === id);
   if (!c) return;
   c.active = !!active;
@@ -303,6 +1016,7 @@ function makeReportNameResolver(session){
 
 
 function upsertPlayer(player){
+  if (!requireAdmin()) return;
   if (!store.players) store.players = [];
   const idx = store.players.findIndex(p => p.id === player.id);
   if (idx >= 0) store.players[idx] = player;
@@ -311,6 +1025,7 @@ function upsertPlayer(player){
 }
 
 function setPlayerActive(id, active){
+  if (!requireAdmin()) return;
   const p = (store.players || []).find(x => x.id === id);
   if (!p) return;
   p.active = !!active;
@@ -372,6 +1087,49 @@ function setPlayerActive(id, active){
     const path = getRoute();
     const isPrint = (path === '/pdf');
     try{ document.body.classList.toggle('print-mode', isPrint); }catch(e){}
+
+    // ===== Etapa 3/5: Gate por sesión =====
+    // /usuarios siempre puede cargar. Todo lo demás queda bloqueado sin sesión.
+    if (path !== '/usuarios') {
+      if (!authReady) {
+        renderAuthGateLoading();
+        updateHeaderControls(path);
+        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
+        return;
+      }
+      if (authReady && !currentUser) {
+        navigate('/usuarios');
+        return;
+      }
+
+      // ===== Etapa 4/5: Gate por MESA =====
+      // Si hay sesión pero NO hay mesa válida, forzar /usuarios.
+      if (!mesaReady) {
+        renderMesaGateLoading();
+        updateHeaderControls(path);
+        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
+        return;
+      }
+      if (mesaReady && !mesaValid) {
+        navigate('/usuarios');
+        return;
+      }
+
+      // ===== Etapa 5/5: Gate por store compartido (mesas/{mesaId}/store/main) =====
+      if (!sharedReady) {
+        renderSharedStoreGateLoading();
+        updateHeaderControls(path);
+        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
+        return;
+      }
+      if (sharedReady && sharedLastError) {
+        renderSharedStoreGateError(sharedLastError);
+        updateHeaderControls(path);
+        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
+        return;
+      }
+    }
+
     const fn = routes[path] || routes['/inicio'];
     fn();
     updateHeaderControls(path);
@@ -519,6 +1277,7 @@ function setPlayerActive(id, active){
     const defaultDate = (store.ui && store.ui.juego && typeof store.ui.juego.lastDate === 'string' && store.ui.juego.lastDate) ? store.ui.juego.lastDate : todayYMD();
 
     const closedSessions = getClosedSessions();
+    const canEdit = isAdmin();
 
     const root = el(`
       <section class="screen" aria-label="Crear/Continuar Partida">
@@ -531,7 +1290,7 @@ function setPlayerActive(id, active){
               <div class="panel-title" style="margin:0">Partida en borrador</div>
               <div class="row">
                 <button class="btn primary" type="button" id="continueDraftBtn">Continuar</button>
-                <button class="btn danger" type="button" id="discardDraftBtn">Descartar</button>
+                <button class="btn danger" type="button" id="discardDraftBtn" ${canEdit ? '' : 'disabled'}>Descartar</button>
               </div>
             </div>
 
@@ -636,7 +1395,7 @@ function setPlayerActive(id, active){
           const name = (p.name || '').trim();
           const sel = selected.has(p.id);
           return `
-            <button class="pick ${sel ? 'selected' : ''}" type="button" data-id="${p.id}" ${draft ? 'disabled' : ''}>
+            <button class="pick ${sel ? 'selected' : ''}" type="button" data-id="${p.id}" ${(draft || !canEdit) ? 'disabled' : ''}>
               <div class="pick-nick">${escapeHtml(disp)}</div>
               <div class="pick-name">${escapeHtml(name || '')}</div>
             </button>
@@ -645,7 +1404,7 @@ function setPlayerActive(id, active){
     }
 
     function syncStartDisabled(){
-      const can = !draft && selected.size > 0 && activePlayers.length > 0;
+      const can = canEdit && !draft && selected.size > 0 && activePlayers.length > 0;
       $start.disabled = !can;
     }
 
@@ -669,6 +1428,7 @@ function setPlayerActive(id, active){
     });
 
     $start.addEventListener('click', () => {
+      if (!requireAdmin()) return;
       if (draft) return;
       const date = ($date.value || '').trim() || todayYMD();
       const ids = Array.from(selected);
@@ -691,6 +1451,7 @@ function setPlayerActive(id, active){
       const $discard = document.getElementById('discardDraftBtn');
       if ($continue) $continue.addEventListener('click', () => navigate('/juego/mesa'));
       if ($discard) $discard.addEventListener('click', async () => {
+        if (!requireAdmin()) return;
         const ok = await confirmDialog({
           title: 'Descartar borrador',
           body: 'Esto eliminará la sesión en borrador. No hay “Ctrl+Z” (aún).',
@@ -734,7 +1495,7 @@ function setPlayerActive(id, active){
       return;
     }
     ensureSessionGame(s);
-    renderMesaSession(s, { readOnly: false, backPath: '/juego', badge: 'Draft' });
+    renderMesaSession(s, { readOnly: (!isAdmin()), backPath: '/juego', badge: (isAdmin() ? 'Draft' : 'Solo lectura') });
   }
 
   function renderJuegoSesion(){
@@ -746,7 +1507,7 @@ function setPlayerActive(id, active){
       return;
     }
     ensureSessionGame(s);
-    renderMesaSession(s, { readOnly: (s.status === 'closed'), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : 'Draft') });
+    renderMesaSession(s, { readOnly: (!isAdmin() || s.status === 'closed'), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : (isAdmin() ? 'Draft' : 'Solo lectura')) });
   }
 
     // ===== Etapa 7: Historial (navegable) =====
@@ -1040,13 +1801,25 @@ function renderHistorialDetalle(){
       return;
     }
 
-    ensureSessionGame(s);
+    // Nota: export/view no debe mutar el store por accidente.
+    const sView = deepClone(s) || s;
+    try{ ensureSessionGame(sView); }catch(e){}
 
-    // Etapa 1: asegurar consecutivo PDF persistente (backfill suave)
+    // Etapa 5: Export sin escrituras para MIEMBRO
+    // - ADMIN puede backfill de consecutivo si falta (solo en sesión cerrada)
+    // - MIEMBRO NO debe mutar sesión/store al exportar
+    let missingSeqForMember = false;
     try{
       if (s.status === 'closed'){
-        const changed = assignPdfSeqIfNeeded(s);
-        if (changed) saveSession(s);
+        const hasSeq = (Number.isFinite(s.pdfSeq) && Math.floor(s.pdfSeq) >= 1);
+        if (!hasSeq){
+          if (isAdmin()){
+            const changed = assignPdfSeqIfNeeded(s);
+            if (changed) saveSession(s);
+          } else {
+            missingSeqForMember = true;
+          }
+        }
       }
     }catch(e){}
 
@@ -1067,7 +1840,7 @@ function renderHistorialDetalle(){
     try{ window.addEventListener('afterprint', restoreTitle, { once: true }); }catch(e){}
     try{ window.addEventListener('focus', restoreTitle, { once: true }); }catch(e){}
 
-    const an = analyzeSession(s);
+    const an = analyzeSession(sView);
     const sum = an.summary;
     const rows = an.rows.slice();
 
@@ -1122,6 +1895,10 @@ function renderHistorialDetalle(){
           <button class="btn primary" type="button" id="printBtn">Imprimir / Guardar PDF</button>
           <button class="btn" type="button" id="backBtn">Volver</button>
         </div>
+
+        ${missingSeqForMember ? `
+          <div class="print-warn">⚠️ Falta consecutivo: solo ADMIN puede asignarlo.</div>
+        ` : ''}
 
         <div class="print-head">
           <div class="print-brand">
@@ -1513,6 +2290,7 @@ function renderHistorialDetalle(){
 
   
 function renderConfiguracion(){
+    const canEdit = isAdmin();
     const root = el(`
       <section class="screen" aria-label="Configuración">
         <h1 class="screen-title">Configuración</h1>
@@ -1541,7 +2319,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Jugadores">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Jugadores</div>
-            <button class="btn primary" type="button" id="addPlayerBtn">Agregar jugador</button>
+            <button class="btn primary" type="button" id="addPlayerBtn" ${canEdit ? '' : 'disabled'}>Agregar jugador</button>
           </div>
 
           <div class="player-grid" id="playerGrid" aria-live="polite"></div>
@@ -1552,7 +2330,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Fichas" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Fichas</div>
-            <button class="btn primary" type="button" id="addChipBtn">Agregar ficha</button>
+            <button class="btn primary" type="button" id="addChipBtn" ${canEdit ? '' : 'disabled'}>Agregar ficha</button>
           </div>
 
           <div class="chip-grid" id="chipGrid" aria-live="polite"></div>
@@ -1652,8 +2430,8 @@ function renderConfiguracion(){
             </div>
 
             <div class="player-actions">
-              <button class="btn" type="button" data-act="edit">Editar</button>
-              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
+              <button class="btn" type="button" data-act="edit" ${canEdit ? '' : 'disabled'}>Editar</button>
+              <button class="btn" type="button" data-act="toggle" ${canEdit ? '' : 'disabled'}>${actionLabel}</button>
             </div>
           </article>
         `;
@@ -1663,6 +2441,7 @@ function renderConfiguracion(){
     $pgrid.addEventListener('click', (ev) => {
       const btn = ev.target.closest('button[data-act]');
       if (!btn) return;
+      if (!requireAdmin()) return;
       const card = ev.target.closest('.player-card');
       if (!card) return;
       const id = card.getAttribute('data-id');
@@ -1683,6 +2462,7 @@ function renderConfiguracion(){
     });
 
     document.getElementById('addPlayerBtn').addEventListener('click', () => {
+      if (!requireAdmin()) return;
       openPlayerModal({ mode: 'add', onSave: renderPlayers });
     });
 
@@ -1729,8 +2509,8 @@ function renderConfiguracion(){
             </div>
 
             <div class="chip-actions">
-              <button class="btn" type="button" data-act="edit">Editar</button>
-              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
+              <button class="btn" type="button" data-act="edit" ${canEdit ? '' : 'disabled'}>Editar</button>
+              <button class="btn" type="button" data-act="toggle" ${canEdit ? '' : 'disabled'}>${actionLabel}</button>
             </div>
           </article>
         `;
@@ -1740,6 +2520,7 @@ function renderConfiguracion(){
     $cgrid.addEventListener('click', (ev) => {
       const btn = ev.target.closest('button[data-act]');
       if (!btn) return;
+      if (!requireAdmin()) return;
       const card = ev.target.closest('.chip-card');
       if (!card) return;
       const id = card.getAttribute('data-id');
@@ -1760,6 +2541,7 @@ function renderConfiguracion(){
     });
 
     document.getElementById('addChipBtn').addEventListener('click', () => {
+      if (!requireAdmin()) return;
       openChipModal({ mode: 'add', onSave: renderChips });
     });
 
@@ -1770,6 +2552,7 @@ function renderConfiguracion(){
   }
 
   function openChipModal({ mode, chip, onSave }){
+    if (!requireAdmin()) return;
     const isEdit = (mode === 'edit');
     const base = chip || { id: uid('chip'), name: '', value: '', color: '#808080', active: true };
 
@@ -1915,6 +2698,7 @@ function renderConfiguracion(){
 
   
   function openPlayerModal({ mode, player, onSave }){
+  if (!requireAdmin()) return;
     const isEdit = (mode === 'edit');
     const base = player || { id: uid('player'), name: '', nick: '', active: true, stats: {} };
 
@@ -2131,6 +2915,7 @@ function renderConfiguracion(){
   }
 
   function saveSession(s){
+  if (!requireAdmin()) return;
     if (!s || !s.id) return;
     if (!Array.isArray(store.sessions)) store.sessions = [];
     const idx = store.sessions.findIndex(x => x && x.id === s.id);
@@ -2190,6 +2975,7 @@ function renderConfiguracion(){
 
 
   function closeSession(id){
+  if (!requireAdmin()) return;
     const s = getSessionById(id);
     if (!s) return;
     if (s.status === 'closed') return;
@@ -2284,11 +3070,13 @@ function renderConfiguracion(){
 
   // ===== Etapa 7: Analytics (ranking/stats/records/excel) =====
   function analyzeSession(s){
-    ensureSessionGame(s);
-    const playersSnap = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
-    const chipsSnap = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : [];
+    // Analítica debe ser "pure": no mutar el store/sesiones al calcular.
+    const sView = deepClone(s) || s;
+    ensureSessionGame(sView);
+    const playersSnap = Array.isArray(sView.playersSnapshot) ? sView.playersSnapshot : [];
+    const chipsSnap = Array.isArray(sView.chipsSnapshot) ? sView.chipsSnapshot : [];
     const chipValueMap = new Map(chipsSnap.map(c => [c.id, numOrZero(c.value)]));
-    const pStateMap = new Map((s.game && Array.isArray(s.game.players) ? s.game.players : []).map(p => [p.id, p]));
+    const pStateMap = new Map((sView.game && Array.isArray(sView.game.players) ? sView.game.players : []).map(p => [p.id, p]));
 
     const masterPlayers = new Map(getPlayers().map(p => [p.id, p]));
     const rows = playersSnap.map(p => {
@@ -2331,7 +3119,7 @@ function renderConfiguracion(){
       else { curPos = idx + 1; r.pos = curPos; }
     });
 
-    return { rows, summary: calcSessionSummary(s) };
+    return { rows, summary: calcSessionSummary(sView) };
   }
 
   function computeAnalytics(){
@@ -2449,6 +3237,8 @@ function renderConfiguracion(){
   }
 
   function recalcAndPersistStats(){
+    if (!isAdmin()) return;
+
     const a = computeAnalytics();
     // persist into players.stats (for convenience) + global block
     const players = getPlayers();
@@ -2597,6 +3387,11 @@ function renderConfiguracion(){
   }
 
   async function importBackupJson(text, { mode }){
+    if (!isAdmin()){
+      toast('Solo ADMIN puede importar/restablecer datos.');
+      await confirmDialog({ title: 'Permiso requerido', body: 'Solo ADMIN puede importar o restablecer datos de la MESA.', okText: 'OK', cancelText: 'Cerrar' });
+      return;
+    }
     let obj = null;
     try{ obj = JSON.parse(text); }catch(e){ obj = null; }
     if (!obj || typeof obj !== 'object'){
@@ -2635,8 +3430,14 @@ function renderConfiguracion(){
     if (mode === 'merge'){
       mergeStore(normalized);
     } else {
-      store = normalized;
-      persistStore(store);
+      // Replace shared data (ADMIN only) + local UI
+      store.chips = normalized.chips;
+      store.players = normalized.players;
+      store.sessions = normalized.sessions;
+      store.pdfSeqNext = normalized.pdfSeqNext;
+      store.draftSessionId = normalized.draftSessionId;
+      store.ui = normalized.ui;
+      saveStore();
     }
     if (incomingTheme){
       themePref = (incomingTheme === 'auto' || incomingTheme === 'light' || incomingTheme === 'dark') ? incomingTheme : themePref;
@@ -2651,10 +3452,11 @@ function renderConfiguracion(){
   function normalizeIncomingStore(obj){
     // keep our v/version; avoid destructive migrations
     const out = {
-      v: STORE_VERSION,
+      v: SHARED_STORE_VERSION,
       chips: Array.isArray(obj.chips) ? obj.chips : defaultChips(),
       players: Array.isArray(obj.players) ? obj.players : defaultPlayers(),
       sessions: Array.isArray(obj.sessions) ? obj.sessions : [],
+      pdfSeqNext: Number.isFinite(obj.pdfSeqNext) ? Math.floor(obj.pdfSeqNext) : 1,
       draftSessionId: (typeof obj.draftSessionId === 'string') ? obj.draftSessionId : '',
       ui: (obj.ui && typeof obj.ui === 'object') ? obj.ui : { juego: {} },
       createdAt: numOrZero(obj.createdAt) || Date.now(),
@@ -2672,6 +3474,7 @@ function renderConfiguracion(){
   }
 
   function mergeStore(incoming){
+    if (!requireAdmin()) return;
     // Safe merge: keep current on conflicts, only add missing IDs
     const cur = store;
     const byId = (arr) => {
@@ -2699,15 +3502,20 @@ function renderConfiguracion(){
     cur.players = Array.from(players.values());
     cur.sessions = Array.from(sessions.values());
     cur.updatedAt = Date.now();
-    persistStore(cur);
+    saveStore();
   }
 
   function resetAllData(){
-    try{ localStorage.removeItem(STORE_KEY); }catch(e){}
+    if (!requireAdmin()) return;
+    try{ localStorage.removeItem(LOCAL_STORE_KEY); }catch(e){}
     try{ localStorage.removeItem(THEME_KEY); }catch(e){}
     themePref = 'auto';
-    store = initStore();
+    localState = { v: LOCAL_STORE_VERSION, ui: { juego: {} }, updatedAt: Date.now() };
+    try{ persistLocalState(); }catch(e){}
+    store = initSharedStore();
     applyTheme();
+    // Also wipe shared store in Firestore (MESA)
+    try{ wipeSharedStoreInFirestore(); }catch(e){}
   }
 
   function round2(n){
@@ -3017,7 +3825,7 @@ function renderConfiguracion(){
     }
     if (!s){
       s = sessions.find(x => x && x.status === 'draft') || null;
-      if (s && s.id && s.id !== store.draftSessionId){
+      if (isAdmin() && s && s.id && s.id !== store.draftSessionId){
         store.draftSessionId = s.id;
         saveStore();
       }
@@ -3026,6 +3834,7 @@ function renderConfiguracion(){
   }
 
   function discardDraftSession(){
+  if (!requireAdmin()) return;
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
     const id = store.draftSessionId;
     if (!id) return;
@@ -3142,29 +3951,90 @@ function renderConfiguracion(){
   }
 
   function renderUsuarios(){
+    const api = getAuthApi();
+    const fbOk = !!(window.PK_FB && window.PK_FB.auth && api);
+    const fbStatus = fbOk ? "Firebase: OK" : "Firebase: NO";
+
+    const hasUser = !!currentUser;
+    const accessState = (!fbOk) ? 'no-firebase' : (!authReady ? 'loading' : (hasUser ? 'signed' : 'signedout'));
+
+    const msgBlock = (lastAuthError ? `
+      <div class="panel" role="region" aria-label="Error" style="border-color: color-mix(in oklab, #ff4d6d 60%, var(--border)); background: color-mix(in oklab, #ff4d6d 10%, var(--panel)); margin-bottom:12px">
+        <div class="panel-title">Aviso</div>
+        <div class="small-note" style="margin-top:10px; color: var(--text)">${escapeHtml(lastAuthError)}</div>
+      </div>
+    ` : (lastAuthInfo ? `
+      <div class="panel" role="region" aria-label="Info" style="margin-bottom:12px">
+        <div class="panel-title">Info</div>
+        <div class="small-note" style="margin-top:10px; color: var(--text)">${escapeHtml(lastAuthInfo)}</div>
+      </div>
+    ` : ''));
+
+    function accessHtml(){
+      if (accessState === 'no-firebase'){
+        return `
+          <div class="small-note">No hay Firebase inicializado. Revisa <code>js/firebaseConfig.js</code> y que el dominio esté autorizado en Firebase Auth.</div>
+          <div class="small-note" style="margin-top:10px; opacity:.85">${fbStatus}</div>
+        `;
+      }
+      if (accessState === 'loading'){
+        return `
+          <div class="small-note">Validando sesión…</div>
+          <div class="small-note" style="margin-top:10px; opacity:.85">${fbStatus}</div>
+        `;
+      }
+      if (accessState === 'signedout'){
+        return `
+          <button class="btn primary" type="button" id="loginBtn" style="width:100%; height:56px; border-radius:18px">INICIAR CON GOOGLE</button>
+          <div class="small-note" style="margin-top:10px; opacity:.85">${fbStatus}</div>
+        `;
+      }
+      // signed
+      const dn = escapeHtml(currentUser.displayName || '');
+      const em = escapeHtml(currentUser.email || '');
+      return `
+        <div class="panel" role="region" aria-label="Sesión" style="margin-top:10px">
+          <div class="panel-title" style="margin:0">Sesión activa</div>
+          <div class="small-note" style="margin-top:10px; color: var(--text)"><b>${dn || 'Usuario'}</b><br/><span style="opacity:.85">${em}</span></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn danger" type="button" id="logoutBtn">CERRAR SESIÓN</button>
+        </div>
+        <div class="small-note" style="margin-top:10px; opacity:.85">${fbStatus}</div>
+      `;
+    }
+
     const root = el(`
       <section class="screen" aria-label="Usuarios">
         <h1 class="screen-title">Usuarios</h1>
         <p class="screen-sub">Aquí se gestiona el acceso, tu mesa y los usuarios.</p>
 
+        ${msgBlock}
+
         <div class="panel" role="region" aria-label="Acceso">
           <div class="panel-title">ACCESO</div>
-          <div class="small-note">Placeholder — aquí vivirá el control de acceso (roles y autenticación) en próximas etapas.</div>
+          ${accessHtml()}
         </div>
 
         <div class="panel" role="region" aria-label="Mesa" style="margin-top:14px">
           <div class="panel-title">MESA</div>
-          <div class="small-note">Placeholder — datos de tu mesa y ajustes compartidos.</div>
+          <div id="mesaBlock"></div>
         </div>
 
         <div class="panel" role="region" aria-label="Miembros" style="margin-top:14px">
-          <div class="panel-title">MIEMBROS</div>
-          <div class="small-note">Placeholder — lista de miembros, roles y permisos.</div>
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">MIEMBROS</div>
+            <button class="btn" type="button" id="reloadMembersBtn">Recargar</button>
+          </div>
+          <div id="membersBlock" style="margin-top:10px"></div>
         </div>
 
         <div class="panel" role="region" aria-label="Invitaciones" style="margin-top:14px">
-          <div class="panel-title">INVITACIONES</div>
-          <div class="small-note">Placeholder — invitación por código/link y gestión de invitaciones.</div>
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">INVITACIONES</div>
+            <button class="btn" type="button" id="genInviteBtn">Generar código</button>
+          </div>
+          <div id="invitesBlock" style="margin-top:10px"></div>
         </div>
 
         <div class="row" style="margin-top:14px">
@@ -3176,7 +4046,388 @@ function renderConfiguracion(){
     $app.innerHTML = "";
     $app.appendChild(root);
 
-    document.getElementById("backBtn").addEventListener("click", () => navigate("/inicio"));
+    // Acciones login/logout
+    const $login = document.getElementById('loginBtn');
+    const $logout = document.getElementById('logoutBtn');
+
+    if ($login){
+      $login.addEventListener('click', async () => {
+        lastAuthError = '';
+        lastAuthInfo = '';
+        $login.disabled = true;
+        const api2 = getAuthApi();
+        if (!api2 || typeof api2.loginGoogle !== 'function'){
+          lastAuthError = 'Firebase Auth no está disponible.';
+          renderUsuarios();
+          return;
+        }
+        try {
+          const res = await api2.loginGoogle();
+          if (res && res.redirected) {
+            lastAuthInfo = 'Abriendo Google… si tu navegador bloqueó el popup, te redirigirá para completar el login.';
+            renderUsuarios();
+          }
+        } catch (err) {
+          lastAuthError = authErrText(err);
+          renderUsuarios();
+        } finally {
+          try { $login.disabled = false; } catch(e){}
+        }
+      });
+    }
+
+    if ($logout){
+      $logout.addEventListener('click', async () => {
+        lastAuthError = '';
+        lastAuthInfo = '';
+        $logout.disabled = true;
+        const api2 = getAuthApi();
+        if (!api2 || typeof api2.logout !== 'function'){
+          lastAuthError = 'Firebase Auth no está disponible.';
+          renderUsuarios();
+          return;
+        }
+        try {
+          await api2.logout();
+          // onAuthStateChanged se encargará del redirect/gate
+        } catch (err) {
+          lastAuthError = authErrText(err);
+          renderUsuarios();
+        } finally {
+          try { $logout.disabled = false; } catch(e){}
+        }
+      });
+    }
+
+    // ===== MESA / MIEMBROS / INVITACIONES =====
+    const $mesaBlock = document.getElementById('mesaBlock');
+    const $membersBlock = document.getElementById('membersBlock');
+    const $invitesBlock = document.getElementById('invitesBlock');
+    const $reloadMembersBtn = document.getElementById('reloadMembersBtn');
+    const $genInviteBtn = document.getElementById('genInviteBtn');
+
+    let membersCache = [];
+    let invitesCache = [];
+
+    function setHtml($el, html){ if ($el) $el.innerHTML = String(html || ''); }
+
+    function renderMesaBlock(){
+      if (!$mesaBlock) return;
+      if (!currentUser){
+        setHtml($mesaBlock, `<div class="small-note">Inicia sesión para crear o unirte a una MESA.</div>`);
+        return;
+      }
+
+      if (!mesaReady){
+        setHtml($mesaBlock, `<div class="small-note">Validando tu mesa…</div>`);
+        return;
+      }
+
+      if (mesaLastError){
+        setHtml($mesaBlock, `<div class="small-note" style="color: color-mix(in oklab, #ff4d6d 80%, var(--text))">${escapeHtml(mesaLastError)}</div>`);
+      }
+
+      if (!mesaValid){
+        setHtml($mesaBlock, `
+          <div class="row" style="gap:10px; flex-wrap:wrap">
+            <button class="btn primary" type="button" id="createMesaBtn">CREAR MESA</button>
+          </div>
+          <div class="small-note" style="margin-top:10px">O únete con un código PK.</div>
+          <div class="row" style="margin-top:10px; gap:10px; align-items:flex-end">
+            <label class="field" style="flex:1 1 220px; min-width:220px">
+              <span>Código de invitación</span>
+              <input id="joinCodeInput" type="text" autocapitalize="characters" autocomplete="off" placeholder="PK-AB12" value="" />
+            </label>
+            <button class="btn" type="button" id="joinMesaBtn">UNIRSE</button>
+          </div>
+          <div class="small-note" style="margin-top:10px; opacity:.9">Formato: <code>PK-XXXX</code> (4 caracteres).</div>
+        `);
+
+        const $create = document.getElementById('createMesaBtn');
+        const $join = document.getElementById('joinMesaBtn');
+        const $code = document.getElementById('joinCodeInput');
+
+        if ($create){
+          $create.addEventListener('click', async () => {
+            const ok = await confirmDialog({
+              title: 'Crear MESA',
+              body: 'Esto crea una MESA nueva y te deja como ADMIN.',
+              okText: 'Crear',
+              cancelText: 'Cancelar',
+            });
+            if (!ok) return;
+            try{
+              $create.disabled = true;
+              await createMesa();
+              lastAuthInfo = 'MESA creada.';
+              renderUsuarios();
+            }catch(e){
+              lastAuthError = 'No se pudo crear la MESA.';
+              renderUsuarios();
+            }finally{
+              try{ $create.disabled = false; }catch(e2){}
+            }
+          });
+        }
+
+        if ($join){
+          $join.addEventListener('click', async () => {
+            const code = ($code && $code.value) ? $code.value : '';
+            try{
+              $join.disabled = true;
+              await joinMesaByCode(code);
+              lastAuthInfo = 'Listo. Ya estás dentro de la MESA.';
+              renderUsuarios();
+            }catch(e){
+              const msg = String(e && e.message || '');
+              if (msg === 'bad-code') lastAuthError = 'Código inválido. Usa formato PK-XXXX.';
+              else if (msg === 'no-invite') lastAuthError = 'Ese código no existe.';
+              else if (msg === 'used') lastAuthError = 'Ese código ya fue usado.';
+              else if (msg === 'expired') lastAuthError = 'Ese código expiró.';
+              else lastAuthError = 'No se pudo unir con ese código.';
+              renderUsuarios();
+            }finally{
+              try{ $join.disabled = false; }catch(e2){}
+            }
+          });
+        }
+        return;
+      }
+
+      const label = mesaNombre ? mesaNombre : shortMesaLabel(mesaId);
+      setHtml($mesaBlock, `
+        <div class="small-note" style="color: var(--text)">
+          <b>Mesa actual:</b> ${escapeHtml(label || '')}
+          <span style="opacity:.75">(${escapeHtml(mesaId)})</span>
+        </div>
+        <div class="row" style="margin-top:10px; align-items:center; gap:10px">
+          <span class="badge">${escapeHtml(mesaRole || 'MIEMBRO')}</span>
+          <button class="btn" type="button" id="refreshMesaBtn">Revalidar</button>
+        </div>
+        <div class="small-note" style="margin-top:10px">Sin MESA activa, la app queda bloqueada (por diseño).</div>
+      `);
+      const $refresh = document.getElementById('refreshMesaBtn');
+      if ($refresh){
+        $refresh.addEventListener('click', async () => {
+          try{
+            $refresh.disabled = true;
+            await validateMesaFromLocal();
+            renderUsuarios();
+          }finally{
+            try{ $refresh.disabled = false; }catch(e2){}
+          }
+        });
+      }
+    }
+
+    async function loadAndRenderMembers(){
+      if (!$membersBlock) return;
+      if (!currentUser){ setHtml($membersBlock, `<div class="small-note">Inicia sesión.</div>`); return; }
+      if (!mesaReady){ setHtml($membersBlock, `<div class="small-note">Validando MESA…</div>`); return; }
+      if (!mesaValid){ setHtml($membersBlock, `<div class="small-note">Crea o únete a una MESA para ver miembros.</div>`); return; }
+
+      setHtml($membersBlock, `<div class="small-note">Cargando miembros…</div>`);
+      try{
+        membersCache = await fetchMesaMembers();
+      }catch(e){
+        membersCache = [];
+      }
+
+      if (!membersCache.length){
+        setHtml($membersBlock, `<div class="small-note">No hay miembros (raro). Revalida tu mesa.</div>`);
+        return;
+      }
+
+      const isAdmin = (mesaRole === 'ADMIN');
+      const canManage = isAdmin;
+
+      const rows = membersCache.map(m => {
+        const name = escapeHtml(m.nombre || 'Sin nombre');
+        const email = escapeHtml(m.email || '');
+        const rol = (String(m.rol || '').toUpperCase() === 'ADMIN') ? 'ADMIN' : 'MIEMBRO';
+        const self = (m.uid === currentUser.uid);
+        const actionBtns = (!canManage) ? '' : `
+          <div class="row" style="justify-content:flex-end; gap:8px; flex-wrap:wrap">
+            <button class="btn" type="button" data-act="role" data-uid="${escapeAttr(m.uid)}" ${self ? 'disabled' : ''}>Rol</button>
+            <button class="btn danger" type="button" data-act="remove" data-uid="${escapeAttr(m.uid)}" ${self ? 'disabled' : ''}>Remover</button>
+          </div>
+        `;
+        return `
+          <tr>
+            <td class="who">${name}${self ? ' <span style="opacity:.65">(tú)</span>' : ''}</td>
+            <td class="who" style="opacity:.85">${email}</td>
+            <td><span class="badge">${rol}</span></td>
+            <td>${actionBtns || '<span class="small-note" style="opacity:.8">—</span>'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      setHtml($membersBlock, `
+        <div class="table-wrap" role="region" aria-label="Miembros de la mesa">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Email</th>
+                <th>Rol</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div class="small-note" style="margin-top:10px; opacity:.9">Regla anti-caos: siempre debe quedar al menos 1 ADMIN.</div>
+      `);
+
+      // Delegación de eventos
+      $membersBlock.querySelectorAll('[data-act="role"]').forEach(b => b.addEventListener('click', async () => {
+        const uid = b.getAttribute('data-uid') || '';
+        try{
+          b.disabled = true;
+          await adminToggleRole(uid, membersCache);
+          await loadAndRenderMembers();
+          await loadAndRenderInvites();
+        }catch(e){
+          const msg = String(e && e.message || '');
+          if (msg === 'last-admin'){
+            await confirmDialog({ title: 'No permitido', body: 'No puedes quitar el rol al último ADMIN.', okText: 'OK', cancelText: 'Cerrar' });
+          } else {
+            await confirmDialog({ title: 'Error', body: 'No se pudo cambiar el rol.', okText: 'OK', cancelText: 'Cerrar' });
+          }
+        }finally{
+          try{ b.disabled = false; }catch(e2){}
+        }
+      }));
+
+      $membersBlock.querySelectorAll('[data-act="remove"]').forEach(b => b.addEventListener('click', async () => {
+        const uid = b.getAttribute('data-uid') || '';
+        const m = membersCache.find(x => x && x.uid === uid) || null;
+        const name = m ? (m.nombre || m.email || uid) : uid;
+        const ok = await confirmDialog({
+          title: 'Remover miembro',
+          body: `Remover a “${name}” de la MESA?`,
+          okText: 'Remover',
+          cancelText: 'Cancelar',
+          danger: true,
+        });
+        if (!ok) return;
+        try{
+          b.disabled = true;
+          await adminRemoveMember(uid, membersCache);
+          await loadAndRenderMembers();
+        }catch(e){
+          const msg = String(e && e.message || '');
+          if (msg === 'last-admin'){
+            await confirmDialog({ title: 'No permitido', body: 'No puedes remover al último ADMIN.', okText: 'OK', cancelText: 'Cerrar' });
+          } else {
+            await confirmDialog({ title: 'Error', body: 'No se pudo remover el miembro.', okText: 'OK', cancelText: 'Cerrar' });
+          }
+        }finally{
+          try{ b.disabled = false; }catch(e2){}
+        }
+      }));
+    }
+
+    async function loadAndRenderInvites(){
+      if (!$invitesBlock) return;
+      if (!currentUser){ setHtml($invitesBlock, `<div class="small-note">Inicia sesión.</div>`); return; }
+      if (!mesaReady){ setHtml($invitesBlock, `<div class="small-note">Validando MESA…</div>`); return; }
+      if (!mesaValid){ setHtml($invitesBlock, `<div class="small-note">Crea o únete a una MESA para usar invitaciones.</div>`); return; }
+
+      const isAdmin = (mesaRole === 'ADMIN');
+      if (!isAdmin){
+        setHtml($invitesBlock, `<div class="small-note">Solo ADMIN puede generar invitaciones.</div>`);
+        return;
+      }
+
+      setHtml($invitesBlock, `<div class="small-note">Cargando invitaciones…</div>`);
+      invitesCache = await fetchInvitesForMesa().catch(() => []);
+
+      const rows = invitesCache.map(inv => {
+        const exp = inv.expiraEnMs ? formatDateShort(inv.expiraEnMs) : '';
+        const status = inv.usado ? 'USADO' : (inv.expiraEnMs && inv.expiraEnMs < Date.now() ? 'EXPIRÓ' : 'ACTIVO');
+        const statusBadge = `<span class="badge">${escapeHtml(status)}</span>`;
+        return `
+          <tr>
+            <td><code>${escapeHtml(inv.code)}</code></td>
+            <td>${escapeHtml(exp)}</td>
+            <td>${statusBadge}</td>
+            <td>
+              <div class="row" style="justify-content:flex-end; gap:8px">
+                <button class="btn" type="button" data-act="copy" data-code="${escapeAttr(inv.code)}">Copiar</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      setHtml($invitesBlock, invitesCache.length ? `
+        <div class="table-wrap" role="region" aria-label="Invitaciones">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Expira</th>
+                <th>Estado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      ` : `<div class="small-note">Aún no hay invitaciones. Genera un código.</div>`);
+
+      $invitesBlock.querySelectorAll('[data-act="copy"]').forEach(b => b.addEventListener('click', async () => {
+        const code = b.getAttribute('data-code') || '';
+        try{
+          b.disabled = true;
+          const ok = await copyToClipboard(code);
+          if (!ok) throw new Error('no-copy');
+          await confirmDialog({ title: 'Copiado', body: code, okText: 'OK', cancelText: 'Cerrar' });
+        }catch(e){
+          await confirmDialog({ title: 'No se pudo copiar', body: 'Copia manualmente el código.', okText: 'OK', cancelText: 'Cerrar' });
+        }finally{
+          try{ b.disabled = false; }catch(e2){}
+        }
+      }));
+    }
+
+    // Control botones superiores de panel
+    if ($reloadMembersBtn){
+      $reloadMembersBtn.addEventListener('click', () => loadAndRenderMembers());
+    }
+
+    if ($genInviteBtn){
+      $genInviteBtn.addEventListener('click', async () => {
+        if (!mesaValid || mesaRole !== 'ADMIN'){
+          await confirmDialog({ title: 'Solo ADMIN', body: 'Solo ADMIN puede generar invitaciones.', okText: 'OK', cancelText: 'Cerrar' });
+          return;
+        }
+        try{
+          $genInviteBtn.disabled = true;
+          const res = await adminGenerateInviteCode();
+          const txt = `${res.code}`;
+          await copyToClipboard(txt);
+          await confirmDialog({ title: 'Código generado', body: `${txt}\nExpira: ${formatDateShort(res.expMs)}`, okText: 'OK', cancelText: 'Cerrar' });
+          await loadAndRenderInvites();
+        }catch(e){
+          await confirmDialog({ title: 'Error', body: 'No se pudo generar el código.', okText: 'OK', cancelText: 'Cerrar' });
+        }finally{
+          try{ $genInviteBtn.disabled = false; }catch(e2){}
+        }
+      });
+    }
+
+    // Render inicial
+    renderMesaBlock();
+    loadAndRenderMembers();
+    loadAndRenderInvites();
+
+    // Ajustar visibilidad del botón "Generar código"
+    try{ if ($genInviteBtn) $genInviteBtn.style.display = (mesaValid && mesaRole === 'ADMIN') ? '' : 'none'; }catch(e){}
+
+    const back = document.getElementById("backBtn");
+    if (back) back.addEventListener("click", () => navigate("/inicio"));
   }
 
   function renderSoporte(){
@@ -3260,7 +4511,22 @@ function renderConfiguracion(){
     }
 
     // Maintenance
-    document.getElementById('recalcBtn').addEventListener('click', async () => {
+    const $recalcBtn = document.getElementById('recalcBtn');
+    const $clearBtn = document.getElementById('clearBtn');
+    const $importBtn = document.getElementById('importJsonBtn');
+    const $importMergeBtn = document.getElementById('importMergeJsonBtn');
+
+    if (!isAdmin()){
+      try{
+        if ($importBtn) $importBtn.disabled = true;
+        if ($importMergeBtn) $importMergeBtn.disabled = true;
+        if ($recalcBtn) $recalcBtn.disabled = true;
+        if ($clearBtn) $clearBtn.disabled = true;
+      }catch(e){}
+    }
+
+    if ($recalcBtn) $recalcBtn.addEventListener('click', async () => {
+      if (!requireAdmin()) return;
       const ok = await confirmDialog({
         title: 'Recalcular estadísticas',
         body: 'Reconstruye stats desde todas las sesiones cerradas.',
@@ -3272,7 +4538,8 @@ function renderConfiguracion(){
       await confirmDialog({ title: 'Listo', body: 'Estadísticas recalculadas.', okText: 'OK', cancelText: 'Cerrar' });
     });
 
-    document.getElementById('clearBtn').addEventListener('click', async () => {
+    if ($clearBtn) $clearBtn.addEventListener('click', async () => {
+      if (!requireAdmin()) return;
       const ok = await confirmDialog({
         title: 'Borrar datos locales',
         body: 'Esto elimina TODO en este dispositivo (jugadores, fichas, sesiones). No hay undo.',
@@ -3284,6 +4551,104 @@ function renderConfiguracion(){
       resetAllData();
       await confirmDialog({ title: 'Hecho', body: 'Datos locales borrados.', okText: 'OK', cancelText: 'Cerrar' });
       navigate('/inicio');
+    });
+  }
+
+  function renderAuthGateLoading(){
+    const fbOk = !!(window.PK_FB && window.PK_FB.auth && window.PK_FB.authApi);
+    const msg = fbOk ? 'Validando sesión…' : 'Firebase no está inicializado. Ve a Usuarios para revisar.';
+    const root = el(`
+      <section class="screen" aria-label="Acceso">
+        <h1 class="screen-title">Acceso</h1>
+        <p class="screen-sub">${msg}</p>
+        <div class="panel" role="region" aria-label="Requerido">
+          <div class="panel-title">Necesitas iniciar sesión</div>
+          <div class="small-note" style="margin-top:10px">
+            Esta pantalla está bloqueada hasta que haya sesión activa.
+          </div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn primary" type="button" id="goUsersBtn">Ir a Usuarios</button>
+        </div>
+      </section>
+    `);
+    $app.innerHTML = '';
+    $app.appendChild(root);
+    const b = document.getElementById('goUsersBtn');
+    if (b) b.addEventListener('click', () => navigate('/usuarios'));
+  }
+
+  function renderMesaGateLoading(){
+    const msg = 'Validando MESA…';
+    const root = el(`
+      <section class="screen" aria-label="Mesa">
+        <h1 class="screen-title">Mesa</h1>
+        <p class="screen-sub">${msg}</p>
+        <div class="panel" role="region" aria-label="Requerido">
+          <div class="panel-title">Necesitas una MESA activa</div>
+          <div class="small-note" style="margin-top:10px">
+            Crea o únete desde Usuarios para desbloquear la app.
+          </div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn primary" type="button" id="goUsersBtn">Ir a Usuarios</button>
+        </div>
+      </section>
+    `);
+    $app.innerHTML = '';
+    $app.appendChild(root);
+    const b = document.getElementById('goUsersBtn');
+    if (b) b.addEventListener('click', () => navigate('/usuarios'));
+  }
+
+
+  function renderSharedStoreGateLoading(){
+    const msg = 'Cargando datos compartidos de la MESA…';
+    const root = el(`
+      <section class="screen" aria-label="Sincronización">
+        <h1 class="screen-title">Sincronización</h1>
+        <p class="screen-sub">${msg}</p>
+        <div class="panel" role="region" aria-label="Requerido">
+          <div class="panel-title">Conectando a la MESA</div>
+          <div class="small-note" style="margin-top:10px">
+            Espera un momento. Si se queda pegado, vuelve a Usuarios y revisa tu sesión/MESA.
+          </div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn primary" type="button" id="goUsersBtn">Ir a Usuarios</button>
+        </div>
+      </section>
+    `);
+    $app.innerHTML = '';
+    $app.appendChild(root);
+    const b = document.getElementById('goUsersBtn');
+    if (b) b.addEventListener('click', () => navigate('/usuarios'));
+  }
+
+  function renderSharedStoreGateError(err){
+    const safeErr = escapeHtml(String(err || 'No se pudo cargar la data compartida.'));
+    const root = el(`
+      <section class="screen" aria-label="Sincronización">
+        <h1 class="screen-title">Sincronización</h1>
+        <p class="screen-sub">Error al cargar la MESA</p>
+        <div class="panel" role="region" aria-label="Detalle">
+          <div class="panel-title">No se pudo sincronizar</div>
+          <div class="small-note" style="margin-top:10px">${safeErr}</div>
+        </div>
+        <div class="row" style="margin-top:14px; gap:10px">
+          <button class="btn" type="button" id="retryStoreBtn">Reintentar</button>
+          <button class="btn primary" type="button" id="goUsersBtn">Ir a Usuarios</button>
+        </div>
+      </section>
+    `);
+    $app.innerHTML = '';
+    $app.appendChild(root);
+    const b1 = document.getElementById('goUsersBtn');
+    if (b1) b1.addEventListener('click', () => navigate('/usuarios'));
+    const b2 = document.getElementById('retryStoreBtn');
+    if (b2) b2.addEventListener('click', () => {
+      try{ attachSharedStore(); }catch(e){}
+      onRoute();
     });
   }
 
@@ -3416,6 +4781,7 @@ function renderConfiguracion(){
     // ensure default route
     if (!window.location.hash) window.location.hash = '#/inicio';
     applyTheme();
+    initAuthState();
     onRoute();
   });
 
