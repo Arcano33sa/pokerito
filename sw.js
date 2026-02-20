@@ -1,6 +1,6 @@
 /* Pokerito SW — offline mínimo (cache core) — v0.1.7 Etapa 2 (PWA cache bump) */
 // Etapa 2: bump explícito para forzar refresh en iPad PWA (app.js / styles.css / assets)
-const CACHE_NAME = 'pokerito-v0.1.7-etapa2-pdf-nombre-consecutivo-pwa';
+const CACHE_NAME = 'pokerito-v0.1.8-etapa1-usuarios-share';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -19,12 +19,15 @@ const CORE_ASSETS = [
   './assets/cards/juego.svg',
   './assets/cards/configuracion.svg',
   './assets/cards/soporte.svg',
+  './assets/cards/usuarios.svg',
   './assets/hero/juego.svg',
   './assets/hero/configuracion.svg',
   './assets/hero/soporte.svg',
+  './assets/hero/usuarios.svg',
   './assets/hero/hero_juego.webp',
   './assets/hero/hero_config.webp',
-  './assets/hero/hero_soporte.webp'
+  './assets/hero/hero_soporte.webp',
+  './assets/hero/hero_usuarios.webp'
 ];
 
 self.addEventListener('install', (event) => {

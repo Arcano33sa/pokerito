@@ -183,10 +183,10 @@ body{
   padding-top: 10px;
 }
 
-/* Home (Inicio) — iPad landscape: 1×3, no overflow-x */
+/* Home (Inicio) — iPad landscape: 2×2, no overflow-x */
 .cards.home-grid{
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   padding-top: 10px;
   align-items: stretch;
@@ -280,6 +280,7 @@ body{
 .home-card--juego{ --tint: 46, 204, 113; }
 .home-card--config{ --tint: 52, 152, 219; }
 .home-card--soporte{ --tint: 155, 89, 182; }
+.home-card--usuarios{ --tint: 255, 196, 90; }
 
 .card.home-card:hover{
   transform: translateY(-2px);
@@ -1603,4 +1604,31 @@ body.print-mode .app-main{
   .app-main{ height: auto !important; margin-top: 0 !important; overflow: visible !important; }
   .print-screen{ max-width: none; padding: 0 !important; }
   .btn, .icon-btn{ display: none !important; }
+}
+
+
+/* ===== Toast (Compartir app) ===== */
+.toast{
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  transform: translateX(-50%) translateY(10px);
+  padding: 12px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(10,10,16,0.86);
+  color: rgba(245,245,250,0.92);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.42);
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 9999;
+  transition: opacity 180ms ease, transform 180ms ease;
+  max-width: min(680px, calc(100vw - 24px));
+  text-align: center;
+}
+.toast.show{
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }

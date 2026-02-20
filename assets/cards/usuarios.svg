@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Usuarios">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="currentColor" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="currentColor" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="28" width="232" height="200" rx="28" fill="url(#g)" stroke="currentColor" stroke-opacity="0.22" stroke-width="8"/>
+
+  <!-- group -->
+  <g fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.9">
+    <circle cx="128" cy="108" r="28"/>
+    <path d="M74 196c0-30 24-54 54-54s54 24 54 54"/>
+
+    <circle cx="78" cy="118" r="18" opacity="0.7"/>
+    <path d="M44 196c0-22 16-40 36-44" opacity="0.65"/>
+
+    <circle cx="178" cy="118" r="18" opacity="0.7"/>
+    <path d="M212 196c0-22-16-40-36-44" opacity="0.65"/>
+  </g>
+
+  <!-- crown (admin hint) -->
+  <path d="M112 74l10 10 12-18 12 18 10-10 4 28h-52l4-28z" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-opacity="0.35" stroke-width="8" stroke-linejoin="round"/>
+</svg>

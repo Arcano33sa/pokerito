@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.7 — Etapa 1/2: PDF nombre con consecutivo persistente */
+/* Pokerito — v0.1.8 — Etapa 1/7: USUARIOS + HERO + Compartir App (sin Firebase) */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -328,6 +328,7 @@ function setPlayerActive(id, active){
     '/historial/detalle': renderHistorialDetalle,
     '/ranking': renderRanking,
     '/configuracion': renderConfiguracion,
+    '/usuarios': renderUsuarios,
     '/soporte': renderSoporte,
     '/pdf': renderPdf,
   };
@@ -416,6 +417,20 @@ function setPlayerActive(id, active){
               <p class="home-desc">Fichas, jugadores, estadísticas, ranking global y exportación a Excel.</p>
             </div>
           </button>
+
+          <button class="card home-card home-card--usuarios" data-go="/usuarios" type="button">
+            <div class="card-hero" aria-hidden="true">
+              <div class="card-hero-slot">
+                <img class="card-hero-img" data-hero="usuarios" alt="" decoding="async" loading="lazy" />
+                <img class="card-hero-fallback" src="assets/hero/usuarios.svg" alt="" decoding="async" loading="lazy" />
+              </div>
+            </div>
+            <div class="home-body">
+              <div class="home-title">Usuarios</div>
+              <p class="home-desc">Acceso, roles y mesa. (Por ahora: mock + compartir app.)</p>
+            </div>
+          </button>
+
 
           <button class="card home-card home-card--soporte" data-go="/soporte" type="button">
             <div class="card-hero" aria-hidden="true">
@@ -2486,6 +2501,86 @@ function renderConfiguracion(){
     }catch(e){}
   }
 
+
+  function getAppShareUrl(){
+    // Always share a stable entry route
+    const base = (window.location.origin || '') + (window.location.pathname || '');
+    return base + '#/inicio';
+  }
+
+  async function shareAppLink(){
+    const url = getAppShareUrl();
+    const data = { title: 'Pokerito', url: url };
+
+    // Native share (if available)
+    if (navigator.share){
+      try{
+        await navigator.share(data);
+        return;
+      }catch(e){
+        // user canceled or not allowed — fall through
+      }
+    }
+
+    const ok = await copyTextToClipboard(url);
+    if (ok){
+      showToast('Link copiado');
+      return;
+    }
+
+    // Last resort: modal with the URL so the user can copy manually
+    await confirmDialog({ title: 'Compartir', body: 'Copia este link\n\n' + url, okText: 'OK', cancelText: 'Cerrar' });
+  }
+
+  async function copyTextToClipboard(text){
+    const t = String(text || '');
+    if (!t) return false;
+
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      try{ await navigator.clipboard.writeText(t); return true; }catch(e){}
+    }
+
+    // Fallback for older iOS: textarea + execCommand
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = t;
+      ta.setAttribute('readonly','');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return !!ok;
+    }catch(e){
+      return false;
+    }
+  }
+
+  let toastTimer = null;
+  function showToast(msg){
+    const text = String(msg || '').trim();
+    if (!text) return;
+
+    let elToast = document.getElementById('toast');
+    if (!elToast){
+      elToast = document.createElement('div');
+      elToast.id = 'toast';
+      elToast.className = 'toast';
+      document.body.appendChild(elToast);
+    }
+
+    elToast.textContent = text;
+    elToast.classList.add('show');
+
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      try{ elToast.classList.remove('show'); }catch(e){}
+    }, 1900);
+  }
+
   function exportExcel(){
     const a = computeAnalytics();
     const date = todayYmd();
@@ -3127,11 +3222,77 @@ function renderConfiguracion(){
     });
   }
 
+
+
+  function renderUsuarios(){
+    const root = el(`
+      <section class="screen" aria-label="Usuarios">
+        <h1 class="screen-title">Usuarios</h1>
+        <p class="screen-sub">Acceso y permisos. (En próximas etapas: login, mesa, roles e invitaciones.)</p>
+
+        <div class="panel" role="region" aria-label="Compartir app">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Compartir app</div>
+            <button class="btn primary" type="button" id="shareBtn">COMPARTIR APP</button>
+          </div>
+          <div class="small-note" style="margin-top:10px">Comparte el link para abrir Pokerito en otro dispositivo.</div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Acceso" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">No autorizado</div>
+            <span class="badge">SOLICITAR</span>
+          </div>
+          <div class="small-note" style="margin-top:10px">Placeholder: aquí irá el flujo para pedir acceso a la mesa.</div>
+          <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
+            <button class="btn" type="button" disabled>Solicitar acceso</button>
+          </div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Solicitud" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Solicitud enviada</div>
+            <span class="badge">PENDING</span>
+          </div>
+          <div class="small-note" style="margin-top:10px">Placeholder: esperando aprobación del ADMIN.</div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Rechazo" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Acceso no aprobado</div>
+            <span class="badge">REJECTED</span>
+          </div>
+          <div class="small-note" style="margin-top:10px">Placeholder: el ADMIN rechazó la solicitud.</div>
+        </div>
+
+        <div class="row" style="margin-top:14px">
+          <button class="btn primary" type="button" id="backBtn">Volver</button>
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = '';
+    $app.appendChild(root);
+
+    const b = document.getElementById('backBtn');
+    if (b) b.addEventListener('click', () => navigate('/inicio'));
+
+    const sb = document.getElementById('shareBtn');
+    if (sb) sb.addEventListener('click', () => shareAppLink());
+  }
   function renderSoporte(){
     const root = el(`
       <section class="screen" aria-label="Soporte">
         <h1 class="screen-title">Soporte</h1>
         <p class="screen-sub">Herramientas y ajustes generales. (Sí, aquí vive el “modo oscuro”.)</p>
+
+        <div class="panel" role="region" aria-label="Compartir" style="margin-top:10px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Compartir app</div>
+            <button class="btn primary" type="button" id="shareSupportBtn">COMPARTIR APP</button>
+          </div>
+          <div class="small-note" style="margin-top:10px">Comparte el link para abrir Pokerito en otro dispositivo.</div>
+        </div>
 
         <div class="panel" role="region" aria-label="Apariencia">
           <div class="panel-title">Apariencia</div>
@@ -3181,6 +3342,9 @@ function renderConfiguracion(){
     });
     syncSupportThemeUI();
     document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
+
+    const $share = document.getElementById('shareSupportBtn');
+    if ($share) $share.addEventListener('click', () => shareAppLink());
 
     // Backup
     const $file = document.getElementById('importFile');
