@@ -1528,16 +1528,6 @@ body.print-mode .app-main{
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
-
-.print-warn{
-  border: 1px solid rgba(0,0,0,0.16);
-  border-radius: 14px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  font-size: 13px;
-  font-weight: 900;
-  background: rgba(0,0,0,0.03);
-}
 .print-head{
   display: flex;
   justify-content: center;
@@ -1603,28 +1593,6 @@ body.print-mode .app-main{
 }
 .print-table tr:last-child td{ border-bottom: none; }
 .print-table .num{ text-align: right; font-variant-numeric: tabular-nums; }
-
-
-
-/* Toast (mensajes rápidos) */
-.toast{
-  position: fixed;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  max-width: min(780px, calc(100vw - 24px));
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: rgba(0,0,0,0.86);
-  color: #fff;
-  font-weight: 850;
-  font-size: 14px;
-  line-height: 1.25;
-  box-shadow: 0 14px 34px rgba(0,0,0,0.28);
-  z-index: 9999;
-  display: none;
-}
-.toast.show{ display: block; }
 
 @media print{
   @page { size: landscape; margin: 12mm; }

@@ -1,4 +1,4 @@
-/* Pokerito — v0.2.0 — Etapa 5/5: Store Firestore compartido + Permisos ADMIN/MIEMBRO + Export sin escrituras + SW bump */
+/* Pokerito — v0.1.7 — Etapa 1/2: PDF nombre con consecutivo persistente */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -24,631 +24,11 @@
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
 
-  // ===== Etapa 3/5: Auth (Firebase Google) =====
-  // Estado global en memoria
-  let currentUser = null; // { uid, displayName, email }
-  let authReady = false;
-  let lastAuthError = '';
-  let lastAuthInfo = '';
 
-  // ===== Etapa 4/5: MESA (multiusuario) =====
-  const MESA_KEY = 'pokerito_mesaId';
-  const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
-  const INVITE_RE = /^PK-[A-Z0-9]{4}$/;
-
-  let mesaId = '';
-  let mesaRole = ''; // ADMIN | MIEMBRO
-  let mesaNombre = '';
-  let mesaReady = false; // validación completada
-  let mesaValid = false; // tiene mesaId y member doc existe
-  let mesaLastError = '';
-
-// Diagnóstico Firestore (anti-cansancio)
-let lastFsError = null; // { code, message, path, op, atMs }
-let mesaDocOk = null;   // true/false/null
-let memberDocOk = null; // true/false/null
-let storeDocOk = null;  // true/false/null (store/main existe y se pudo leer)
-let storeInitAttempted = false;
-
-function setLastFsError(err, ctx){
-  try{
-    const code = (err && err.code) ? String(err.code) : '';
-    const message = (err && err.message) ? String(err.message) : '';
-    lastFsError = {
-      code: code || 'unknown',
-      message: message || '',
-      path: (ctx && ctx.path) ? String(ctx.path) : '',
-      op: (ctx && ctx.op) ? String(ctx.op) : '',
-      atMs: Date.now(),
-    };
-  }catch(e){
-    lastFsError = { code:'unknown', message:'', path:'', op:'', atMs: Date.now() };
-  }
-}
-function clearLastFsError(){ lastFsError = null; }
-
-  function getDb(){ return (window.PK_FB && window.PK_FB.db) ? window.PK_FB.db : null; }
-  function getFs(){ return (window.PK_FB && window.PK_FB.fs) ? window.PK_FB.fs : null; }
-
-  function loadMesaId(){
-    try{
-      const v = String(localStorage.getItem(MESA_KEY) || '').trim();
-      if (v) return v;
-      // Migración suave (por si hubo llaves viejas en intentos previos)
-      const legacyKeys = ['pokerito_mesa', 'pokerito_mesa_id', 'pk_mesaId', 'mesaId', 'mesa_id'];
-      for (const k of legacyKeys){
-        const x = String(localStorage.getItem(k) || '').trim();
-        if (x){
-          try{ localStorage.setItem(MESA_KEY, x); }catch(e){}
-          try{ localStorage.removeItem(k); }catch(e){}
-          return x;
-        }
-      }
-      return '';
-    }catch(e){ return ''; }
-  }
-  function persistMesaId(id){
-    const v = String(id || '').trim();
-    try{ localStorage.setItem(MESA_KEY, v); }catch(e){}
-    // Limpieza de posibles llaves viejas (no queremos 3 mesaIds peleándose)
-    const legacyKeys = ['pokerito_mesa', 'pokerito_mesa_id', 'pk_mesaId', 'mesaId', 'mesa_id'];
-    for (const k of legacyKeys){
-      try{ if (k !== MESA_KEY) localStorage.removeItem(k); }catch(e){}
-    }
-  }
-  function clearMesaId(){
-    try{ localStorage.removeItem(MESA_KEY); }catch(e){}
-    const legacyKeys = ['pokerito_mesa', 'pokerito_mesa_id', 'pk_mesaId', 'mesaId', 'mesa_id'];
-    for (const k of legacyKeys){
-      try{ localStorage.removeItem(k); }catch(e){}
-    }
-  }
-
-  function shortMesaLabel(id){
-    const s = String(id || '').trim();
-    if (!s) return '';
-    return s.slice(0, 6);
-  }
-
-  function msFromAnyTs(v){
-    if (!v) return 0;
-    // Firestore Timestamp
-    if (typeof v.toMillis === 'function') return v.toMillis();
-    if (typeof v.seconds === 'number') return Math.floor(v.seconds * 1000);
-    const n = Number(v);
-    return Number.isFinite(n) ? Math.floor(n) : 0;
-  }
-
-  function formatDateShort(ms){
-    const d = new Date(ms);
-    if (!Number.isFinite(d.getTime())) return '';
-    const dd = String(d.getDate()).padStart(2,'0');
-    const mm = String(d.getMonth()+1).padStart(2,'0');
-    const yy = d.getFullYear();
-    const hh = String(d.getHours()).padStart(2,'0');
-    const mi = String(d.getMinutes()).padStart(2,'0');
-    return `${dd}/${mm}/${yy} ${hh}:${mi}`;
-  }
-
-  function clearMesaState(){
-    mesaId = '';
-    mesaRole = '';
-    mesaNombre = '';
-    mesaReady = true;
-    mesaValid = false;
-    mesaLastError = '';
-    // Shared store sync teardown
-    try{ detachSharedStore(); }catch(e){}
-    try{ store = initSharedStore(); }catch(e){}
-    try{ lastSharedStr = ''; }catch(e){}
-  }
-
-  async function validateMesaFromLocal(){
-    mesaLastError = '';
-    mesaReady = false;
-    mesaValid = false;
-    mesaRole = '';
-    mesaNombre = '';
-
-    // Reset diagnóstico
-    mesaDocOk = null;
-    memberDocOk = null;
-    storeDocOk = null;
-    storeInitAttempted = false;
-    clearLastFsError();
-
-    if (!currentUser){
-      mesaId = '';
-      mesaReady = true;
-      mesaValid = false;
-      try{ detachSharedStore(); }catch(e){}
-      try{ store = initSharedStore(); }catch(e){}
-      try{ lastSharedStr = ''; }catch(e){}
-      return;
-    }
-
-    const id = loadMesaId();
-    mesaId = id;
-    if (!id){
-      mesaReady = true;
-      mesaValid = false;
-      try{ detachSharedStore(); }catch(e){}
-      try{ store = initSharedStore(); }catch(e){}
-      try{ lastSharedStr = ''; }catch(e){}
-      return;
-    }
-
-    const db = getDb();
-    const fs = getFs();
-    if (!db || !fs){
-      mesaLastError = 'Firestore no está disponible.';
-      mesaReady = true;
-      mesaValid = false;
-      return;
-    }
-
-    const memberPath = `mesas/${id}/members/${currentUser.uid}`;
-    const mesaPath = `mesas/${id}`;
-
-    try{
-      // 1) member
-      const memberRef = fs.doc(db, 'mesas', id, 'members', currentUser.uid);
-      let memberSnap = null;
-      try{
-        memberSnap = await fs.getDoc(memberRef);
-      }catch(e){
-        setLastFsError(e, { op: 'getDoc member', path: memberPath });
-        throw e;
-      }
-
-      if (!memberSnap.exists()){
-        memberDocOk = false;
-        mesaDocOk = null;
-        storeDocOk = null;
-        clearMesaId();
-        mesaId = '';
-        mesaReady = true;
-        mesaValid = false;
-        try{ detachSharedStore(); }catch(e){}
-        try{ store = initSharedStore(); }catch(e){}
-        try{ lastSharedStr = ''; }catch(e){}
-        return;
-      }
-      memberDocOk = true;
-
-      const md = memberSnap.data() || {};
-      mesaRole = String(md.rol || '').toUpperCase();
-      if (mesaRole !== 'ADMIN' && mesaRole !== 'MIEMBRO') mesaRole = 'MIEMBRO';
-
-      // 2) mesa doc
-      const mesaRef = fs.doc(db, 'mesas', id);
-      let mesaSnap = null;
-      try{
-        mesaSnap = await fs.getDoc(mesaRef);
-      }catch(e){
-        setLastFsError(e, { op: 'getDoc mesa', path: mesaPath });
-        throw e;
-      }
-
-      mesaDocOk = mesaSnap.exists();
-      if (!mesaSnap.exists()){
-        // Inconsistencia: existe member pero no mesa
-        mesaLastError = 'MESA inválida (no existe el documento principal).';
-        clearMesaId();
-        mesaId = '';
-        mesaReady = true;
-        mesaValid = false;
-        try{ detachSharedStore(); }catch(e){}
-        try{ store = initSharedStore(); }catch(e){}
-        try{ lastSharedStr = ''; }catch(e){}
-        return;
-      }
-
-      const md2 = mesaSnap.data() || {};
-      mesaNombre = String(md2.nombreMesa || '').trim();
-
-      mesaValid = true;
-      mesaReady = true;
-
-      // 3) Store compartido: listener (y/o init si falta)
-      try{ attachSharedStore(); }catch(e){}
-    }catch(e){
-      try{ console.error('validateMesaFromLocal error', e); }catch(e2){}
-      if (!lastFsError){
-        setLastFsError(e, { op: 'validateMesaFromLocal', path: memberPath });
-      }
-      mesaLastError = 'No se pudo validar tu mesa. ' + fsErrText(e);
-      mesaReady = true;
-      mesaValid = false;
-      try{ detachSharedStore(); }catch(e){}
-      try{ store = initSharedStore(); }catch(e){}
-      try{ lastSharedStr = ''; }catch(e){}
-    }
-  }
-
-  function randomInviteSuffix(){
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let out = '';
-    for (let i=0;i<4;i++) out += chars[Math.floor(Math.random()*chars.length)];
-    return out;
-  }
-
-  async function createMesa(){
-    if (!currentUser) throw new Error('no-auth');
-    const db = getDb();
-    const fs = getFs();
-    if (!db || !fs) throw new Error('no-fs');
-
-    clearLastFsError();
-
-    // mesaId auto
-    const mesaRef = fs.doc(fs.collection(db, 'mesas'));
-    const id = mesaRef.id;
-    const nowTs = fs.serverTimestamp();
-
-    // Guardar ID desde ya (si algo falla, al menos el usuario puede usar “Rescate”)
-    persistMesaId(id);
-
-    const mesaPath = `mesas/${id}`;
-    const memberPath = `mesas/${id}/members/${currentUser.uid}`;
-    const storePath = `mesas/${id}/store/main`;
-
-    // 1) mesa
-    try{
-      await fs.setDoc(mesaRef, {
-        createdAt: nowTs,
-        createdBy: currentUser.uid,
-        nombreMesa: '',
-      }, { merge: true });
-    }catch(e){
-      setLastFsError(e, { op: 'setDoc mesa', path: mesaPath });
-      clearMesaId();
-      throw e;
-    }
-
-    // 2) miembro (ADMIN creador)
-    try{
-      const memberRef = fs.doc(db, 'mesas', id, 'members', currentUser.uid);
-      await fs.setDoc(memberRef, {
-        uid: currentUser.uid,
-        nombre: currentUser.displayName || '',
-        email: currentUser.email || '',
-        rol: 'ADMIN',
-        joinedAt: nowTs,
-      }, { merge: true });
-    }catch(e){
-      setLastFsError(e, { op: 'setDoc member', path: memberPath });
-      // Intentar limpiar mesaId local (no tocamos Firestore)
-      clearMesaId();
-      throw e;
-    }
-
-    // 3) store/main (si falla, NO tiramos la app: dejamos aviso + botón para reintentar)
-    let storeOk = true;
-    try{
-      const storeRef = fs.doc(db, 'mesas', id, 'store', 'main');
-      await fs.setDoc(storeRef, {
-        v: SHARED_STORE_VERSION,
-        chips: defaultChips(),
-        players: defaultPlayers(),
-        sessions: defaultSessions(),
-        pdfSeqNext: 1,
-        draftSessionId: '',
-        createdAt: nowTs,
-        updatedAt: nowTs,
-        updatedBy: (currentUser.email || currentUser.uid),
-      }, { merge: true });
-    }catch(e){
-      storeOk = false;
-      storeDocOk = false;
-      setLastFsError(e, { op: 'setDoc store/main', path: storePath });
-      sharedLastError = 'No se pudo inicializar el store. ' + fsErrText(e);
-    }
-
-    await validateMesaFromLocal();
-    return { id, storeOk };
-  }
-
-  async function joinMesaByCode(rawCode){
-    if (!currentUser) throw new Error('no-auth');
-    const db = getDb();
-    const fs = getFs();
-    if (!db || !fs) throw new Error('no-fs');
-
-    const code = String(rawCode || '').trim().toUpperCase();
-    if (!INVITE_RE.test(code)) throw new Error('bad-code');
-
-    const inviteRef = fs.doc(db, 'invitaciones', code);
-    const nowMs = Date.now();
-
-    const mesaIdFromInvite = await fs.runTransaction(db, async (tx) => {
-      const snap = await tx.get(inviteRef);
-      if (!snap.exists()) throw new Error('no-invite');
-      const inv = snap.data() || {};
-      if (inv.usado) throw new Error('used');
-      const exp = msFromAnyTs(inv.expiraEn);
-      if (exp && exp < nowMs) throw new Error('expired');
-      const mid = String(inv.mesaId || '').trim();
-      if (!mid) throw new Error('no-mesa');
-
-      // marcar usado + crear member
-      tx.update(inviteRef, {
-        usado: true,
-        usadoPor: currentUser.uid,
-        usadoEn: fs.serverTimestamp(),
-      });
-
-      const memberRef = fs.doc(db, 'mesas', mid, 'members', currentUser.uid);
-      tx.set(memberRef, {
-        uid: currentUser.uid,
-        nombre: currentUser.displayName || '',
-        email: currentUser.email || '',
-        rol: 'MIEMBRO',
-        joinedAt: fs.serverTimestamp(),
-      }, { merge: true });
-
-      return mid;
-    });
-
-    persistMesaId(mesaIdFromInvite);
-    await validateMesaFromLocal();
-    return mesaIdFromInvite;
-  }
-
-  async function fetchMesaMembers(){
-    if (!mesaValid || !mesaId) return [];
-    const db = getDb();
-    const fs = getFs();
-    if (!db || !fs) return [];
-    const col = fs.collection(db, 'mesas', mesaId, 'members');
-    const snap = await fs.getDocs(col);
-    const out = [];
-    snap.forEach(d => {
-      const x = d.data() || {};
-      out.push({
-        uid: String(x.uid || d.id || ''),
-        nombre: String(x.nombre || ''),
-        email: String(x.email || ''),
-        rol: String(x.rol || '').toUpperCase(),
-        joinedAt: x.joinedAt || null,
-      });
-    });
-    // admins primero
-    out.sort((a,b) => {
-      const ar = (a.rol === 'ADMIN') ? 0 : 1;
-      const br = (b.rol === 'ADMIN') ? 0 : 1;
-      if (ar !== br) return ar - br;
-      return (a.nombre || a.email || a.uid).localeCompare(b.nombre || b.email || b.uid);
-    });
-    return out;
-  }
-
-  async function adminToggleRole(targetUid, members){
-    if (!mesaValid || mesaRole !== 'ADMIN') throw new Error('no-admin');
-    const uid = String(targetUid || '').trim();
-    if (!uid) return;
-    const db = getDb();
-    const fs = getFs();
-    if (!db || !fs) throw new Error('no-fs');
-
-    const m = (members || []).find(x => x && x.uid === uid) || null;
-    if (!m) return;
-    const cur = String(m.rol || '').toUpperCase();
-    const next = (cur === 'ADMIN') ? 'MIEMBRO' : 'ADMIN';
-
-    // anti-caos: no dejar sin admins
-    const admins = (members || []).filter(x => x && String(x.rol || '').toUpperCase() === 'ADMIN');
-    if (cur === 'ADMIN' && admins.length <= 1){
-      throw new Error('last-admin');
-    }
-
-    const ref = fs.doc(db, 'mesas', mesaId, 'members', uid);
-    await fs.updateDoc(ref, { rol: next });
-
-    // si me cambian a mí, revalidar
-    if (uid === currentUser.uid) await validateMesaFromLocal();
-    return next;
-  }
-
-  async function adminRemoveMember(targetUid, members){
-    if (!mesaValid || mesaRole !== 'ADMIN') throw new Error('no-admin');
-    const uid = String(targetUid || '').trim();
-    if (!uid) return;
-    const db = getDb();
-    const fs = getFs();
-    if (!db || !fs) throw new Error('no-fs');
-
-    const m = (members || []).find(x => x && x.uid === uid) || null;
-    if (!m) return;
-    const cur = String(m.rol || '').toUpperCase();
-
-    const admins = (members || []).filter(x => x && String(x.rol || '').toUpperCase() === 'ADMIN');
-    if (cur === 'ADMIN' && admins.length <= 1){
-      throw new Error('last-admin');
-    }
-
-    const ref = fs.doc(db, 'mesas', mesaId, 'members', uid);
-    await fs.deleteDoc(ref);
-
-    // si removieron al usuario actual (raro), limpiar mesa
-    if (uid === currentUser.uid){
-      clearMesaId();
-      await validateMesaFromLocal();
-    }
-    return true;
-  }
-
-  async function adminGenerateInviteCode(){
-    if (!mesaValid || mesaRole !== 'ADMIN') throw new Error('no-admin');
-    const db = getDb();
-    const fs = getFs();
-    if (!db || !fs) throw new Error('no-fs');
-
-    for (let i=0;i<12;i++){
-      const code = 'PK-' + randomInviteSuffix();
-      const ref = fs.doc(db, 'invitaciones', code);
-      const snap = await fs.getDoc(ref);
-      if (snap.exists()) continue;
-
-      const expMs = Date.now() + INVITE_TTL_MS;
-      const expTs = (fs.Timestamp && typeof fs.Timestamp.fromMillis === 'function')
-        ? fs.Timestamp.fromMillis(expMs)
-        : expMs;
-
-      await fs.setDoc(ref, {
-        mesaId: mesaId,
-        expiraEn: expTs,
-        usado: false,
-        creadoPor: currentUser.uid,
-        createdAt: fs.serverTimestamp(),
-      }, { merge: false });
-
-      return { code, expMs };
-    }
-    throw new Error('no-code');
-  }
-
-  async function fetchInvitesForMesa(){
-    if (!mesaValid || mesaRole !== 'ADMIN') return [];
-    const db = getDb();
-    const fs = getFs();
-    if (!db || !fs) return [];
-    // Intento: filtrar por mesaId (puede requerir índice, pero normalmente no)
-    try{
-      const q = fs.query(
-        fs.collection(db, 'invitaciones'),
-        fs.where('mesaId', '==', mesaId),
-        fs.orderBy('createdAt', 'desc'),
-        fs.limit(10)
-      );
-      const snap = await fs.getDocs(q);
-      const out = [];
-      snap.forEach(d => {
-        const x = d.data() || {};
-        out.push({
-          code: d.id,
-          mesaId: String(x.mesaId || ''),
-          usado: !!x.usado,
-          expiraEnMs: msFromAnyTs(x.expiraEn),
-          createdAtMs: msFromAnyTs(x.createdAt),
-          creadoPor: String(x.creadoPor || ''),
-        });
-      });
-      return out;
-    }catch(e){
-      return [];
-    }
-  }
-
-  async function copyToClipboard(text){
-    const t = String(text || '');
-    if (!t) return false;
-    try{
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
-        await navigator.clipboard.writeText(t);
-        return true;
-      }
-    }catch(e){}
-    // fallback
-    try{
-      const ta = document.createElement('textarea');
-      ta.value = t;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
-      return true;
-    }catch(e){
-      return false;
-    }
-  }
-
-  function normUser(u){
-    if (!u) return null;
-    return {
-      uid: String(u.uid || ''),
-      displayName: String(u.displayName || ''),
-      email: String(u.email || ''),
-    };
-  }
-
-  function authErrText(err){
-    const code = (err && err.code) ? String(err.code) : '';
-    if (code === 'auth/popup-blocked') return 'El popup fue bloqueado. Probando redirección…';
-    if (code === 'auth/popup-closed-by-user') return 'Cerraste el popup antes de terminar.';
-    if (code === 'auth/cancelled-popup-request') return 'Se canceló la solicitud de popup. Intenta de nuevo.';
-    if (code === 'auth/unauthorized-domain') return 'Dominio no autorizado en Firebase Auth (revisar Dominios autorizados).';
-    if (code === 'auth/network-request-failed') return 'Falló la red. Revisa conexión.';
-    if (code) return `Error de login (${code}).`;
-    if (err && err.message) return String(err.message);
-    return 'Error de login.';
-  }
-
-  function fsErrText(err){
-    const code = (err && err.code) ? String(err.code) : '';
-    if (code === 'permission-denied') return 'Permiso denegado en Firestore. Revisa Reglas.';
-    if (code === 'unauthenticated') return 'Sesión no válida. Cierra sesión e inicia de nuevo.';
-    if (code) return `Error de Firestore (${code}).`;
-    if (err && err.message) return String(err.message);
-    return 'Error de Firestore.';
-  }
-
-  function getAuthApi(){
-    return (window.PK_FB && window.PK_FB.authApi) ? window.PK_FB.authApi : null;
-  }
-
-  function initAuthState(){
-    const fb = window.PK_FB;
-    const api = getAuthApi();
-    if (!fb || !fb.auth || !api || typeof api.onAuth !== 'function') {
-      authReady = true;
-      currentUser = null;
-      return;
-    }
-
-    // Resultado de redirect (si el login cayó a redirect)
-    const rr = api.redirectResultPromise || (typeof api.handleRedirect === 'function' ? api.handleRedirect() : null);
-    Promise.resolve(rr).then(res => {
-      if (res && res.__error) lastAuthError = authErrText(res.__error);
-    }).catch(() => {});
-
-    api.onAuth((u) => {
-      authReady = true;
-      currentUser = normUser(u);
-
-      if (currentUser) { lastAuthError = ''; lastAuthInfo = ''; }
-
-      // Si no hay sesión: limpiar estado de mesa
-      if (!currentUser){
-        clearMesaState();
-      } else {
-        // Validar mesa local (async) y re-render al terminar
-        validateMesaFromLocal().then(() => {
-          // Si el usuario cambió de ruta mientras validábamos, el gate se encargará.
-          onRoute();
-        });
-      }
-
-      // Gate: si no hay sesión, forzar /usuarios
-      const path = getRoute();
-      if (!currentUser && path !== '/usuarios') {
-        navigate('/usuarios');
-        return;
-      }
-      // Re-render para reflejar estado (por ejemplo en /usuarios)
-      onRoute();
-    });
-  }
-
-
-// ===== Etapa 5/5: Local prefs + Shared store (Firestore) =====
-const LOCAL_STORE_KEY = 'pokerito_local_v1';
-const LOCAL_STORE_VERSION = 1;
-const SHARED_STORE_VERSION = 1;
-const LEGACY_STORE_KEY = 'pokerito_store_v1';
+// Storage (versioned) — local only for now
+const STORE_KEY = 'pokerito_store_v1';
+const STORE_VERSION = 1;
+let store = loadStore();
 
 // Chips defaults (Etapa 3)
 function defaultChips(){
@@ -661,6 +41,7 @@ function defaultChips(){
   ];
 }
 
+
 // Players defaults (Etapa 4)
 function defaultPlayers(){
   return [];
@@ -671,371 +52,114 @@ function defaultSessions(){
   return [];
 }
 
-let localState = loadLocalState();
-let store = initSharedStore();
-
-// Shared store/main sync state
-let sharedReady = false;
-let sharedLastError = '';
-let storeUnsub = null;
-let lastSharedStr = '';
-let saveTimer = null;
-let savingShared = false;
-
-// Tiny toast (no deps)
-let __toastEl = null;
-let __toastTimer = null;
-function toast(msg){
-  const m = String(msg || '').trim();
-  if (!m) return;
+function loadStore(){
   try{
-    if (!__toastEl){
-      __toastEl = document.createElement('div');
-      __toastEl.id = 'pk-toast';
-      __toastEl.className = 'toast';
-      __toastEl.style.display = 'none';
-      document.body.appendChild(__toastEl);
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return initStore();
+    const obj = JSON.parse(raw);
+    if (!obj || obj.v !== STORE_VERSION) return initStore();
+    if (!Array.isArray(obj.chips) || !obj.chips.length){
+      obj.chips = defaultChips();
+      obj.updatedAt = Date.now();
+      persistStore(obj);
     }
-    __toastEl.textContent = m;
-    __toastEl.style.display = 'block';
-    if (__toastTimer) clearTimeout(__toastTimer);
-    __toastTimer = setTimeout(() => {
-      try{ if (__toastEl) __toastEl.style.display = 'none'; }catch(e){}
-    }, 1800);
-  }catch(e){}
-}
+    if (!Array.isArray(obj.players)){
+      obj.players = defaultPlayers();
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
+    if (!Array.isArray(obj.sessions)){
+      obj.sessions = defaultSessions();
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
 
-function isAdmin(){ return mesaRole === 'ADMIN'; }
-function requireAdmin(){
-  if (!isAdmin()){
-    toast('Solo ADMIN puede editar.');
-    return false;
-  }
-  return true;
-}
-
-function loadLocalState(){
-  // New local-only preferences store
-  try{
-    const raw = localStorage.getItem(LOCAL_STORE_KEY);
-    if (raw){
-      const obj = JSON.parse(raw);
-      if (obj && obj.v === LOCAL_STORE_VERSION){
-        if (!obj.ui || typeof obj.ui !== 'object') obj.ui = { juego: {} };
-        if (!obj.ui.juego || typeof obj.ui.juego !== 'object') obj.ui.juego = {};
-        return obj;
+    // Etapa 6: asegurar forma de sesiones existentes (migración suave)
+    if (Array.isArray(obj.sessions)){
+      let changed = false;
+      obj.sessions.forEach(s => {
+        const before = JSON.stringify(s);
+        try{ ensureSessionGame(s); }catch(e){}
+        if (JSON.stringify(s) !== before) changed = true;
+      });
+      // si el draft apuntado ya no es draft, limpiar
+      if (obj.draftSessionId){
+        const ds = obj.sessions.find(x => x && x.id === obj.draftSessionId) || null;
+        if (ds && ds.status !== 'draft') { obj.draftSessionId = ''; changed = true; }
+      }
+      if (changed){
+        obj.updatedAt = Date.now();
+        persistStore(obj);
       }
     }
-  }catch(e){}
-
-  // Soft migration from legacy full store (pre-Firestore)
-  try{
-    const raw = localStorage.getItem(LEGACY_STORE_KEY);
-    if (raw){
-      const old = JSON.parse(raw);
-      const ui = (old && old.ui && typeof old.ui === 'object') ? old.ui : { juego: {} };
-      if (!ui.juego || typeof ui.juego !== 'object') ui.juego = {};
-      const obj = { v: LOCAL_STORE_VERSION, ui, updatedAt: Date.now() };
-      try{ localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(obj)); }catch(e){}
-      return obj;
+    if (!obj.ui || typeof obj.ui !== 'object'){
+      obj.ui = {};
+      obj.updatedAt = Date.now();
+      persistStore(obj);
     }
-  }catch(e){}
+    if (!obj.ui.juego || typeof obj.ui.juego !== 'object'){
+      obj.ui.juego = {};
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
+        if (typeof obj.draftSessionId !== 'string'){
+      obj.draftSessionId = '';
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
 
-  const fresh = { v: LOCAL_STORE_VERSION, ui: { juego: {} }, updatedAt: Date.now() };
-  try{ localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(fresh)); }catch(e){}
-  return fresh;
+    // Etapa 1: PDF consecutivo global (pdfSeqNext) — migración suave
+    try{
+      let next = obj.pdfSeqNext;
+      let changedPdf = false;
+
+      if (!Number.isFinite(next) || next < 1){ next = 1; changedPdf = true; }
+      next = Math.floor(next);
+
+      let maxSeq = 0;
+      (Array.isArray(obj.sessions) ? obj.sessions : []).forEach(s => {
+        const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
+        if (n > maxSeq) maxSeq = n;
+      });
+      if (next <= maxSeq){ next = maxSeq + 1; changedPdf = true; }
+
+      if (obj.pdfSeqNext !== next){ obj.pdfSeqNext = next; changedPdf = true; }
+
+      if (changedPdf){
+        obj.updatedAt = Date.now();
+        persistStore(obj);
+      }
+    }catch(e){}
+
+    return obj;
+  }catch(e){
+    return initStore();
+  }
 }
 
-function persistLocalState(){
-  try{ localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(localState)); }catch(e){}
-}
-
-function initSharedStore(){
-  const ui = (localState && localState.ui && typeof localState.ui === 'object') ? localState.ui : { juego: {} };
-  if (!ui.juego || typeof ui.juego !== 'object') ui.juego = {};
-  return {
-    v: SHARED_STORE_VERSION,
+function initStore(){
+  const obj = {
+    v: STORE_VERSION,
     chips: defaultChips(),
     players: defaultPlayers(),
     sessions: defaultSessions(),
     pdfSeqNext: 1,
     draftSessionId: '',
-    ui,
+    ui: { juego: {} },
     createdAt: Date.now(),
-    updatedAt: Date.now(),
+    updatedAt: Date.now()
   };
-}
-
-function normalizeSharedStore(data){
-  const d = (data && typeof data === 'object') ? data : {};
-  const obj = {
-    v: SHARED_STORE_VERSION,
-    chips: Array.isArray(d.chips) ? d.chips : defaultChips(),
-    players: Array.isArray(d.players) ? d.players : defaultPlayers(),
-    sessions: Array.isArray(d.sessions) ? d.sessions : defaultSessions(),
-    pdfSeqNext: Number.isFinite(d.pdfSeqNext) ? Math.floor(d.pdfSeqNext) : 1,
-    draftSessionId: (typeof d.draftSessionId === 'string') ? d.draftSessionId : '',
-  };
-
-  // Ensure minimal invariants
-  try{
-    (Array.isArray(obj.sessions) ? obj.sessions : []).forEach(s => { try{ ensureSessionGame(s); }catch(e){} });
-  }catch(e){}
-
-  // Draft pointer hygiene
-  try{
-    if (obj.draftSessionId){
-      const s = (obj.sessions || []).find(x => x && x.id === obj.draftSessionId) || null;
-      if (!s || s.status !== 'draft') obj.draftSessionId = '';
-    }
-  }catch(e){}
-
-  // pdfSeqNext migration: always above max(pdfSeq)
-
-  try{
-    let next = obj.pdfSeqNext;
-    if (!Number.isFinite(next) || next < 1) next = 1;
-    next = Math.floor(next);
-    let maxSeq = 0;
-    (obj.sessions || []).forEach(s => {
-      const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
-      if (n > maxSeq) maxSeq = n;
-    });
-    if (next <= maxSeq) next = maxSeq + 1;
-    obj.pdfSeqNext = next;
-  }catch(e){}
-
+  persistStore(obj);
   return obj;
 }
 
-function getSharedSubset(){
-  const subset = {
-    v: SHARED_STORE_VERSION,
-    chips: Array.isArray(store.chips) ? store.chips : defaultChips(),
-    players: Array.isArray(store.players) ? store.players : defaultPlayers(),
-    sessions: Array.isArray(store.sessions) ? store.sessions : defaultSessions(),
-    pdfSeqNext: Number.isFinite(store.pdfSeqNext) ? Math.floor(store.pdfSeqNext) : 1,
-    draftSessionId: (typeof store.draftSessionId === 'string') ? store.draftSessionId : '',
-  };
-
-  // Keep pdfSeqNext sane
-  try{
-    let next = subset.pdfSeqNext;
-    let maxSeq = 0;
-    (subset.sessions || []).forEach(s => {
-      const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
-      if (n > maxSeq) maxSeq = n;
-    });
-    if (!Number.isFinite(next) || next < 1) next = 1;
-    next = Math.floor(next);
-    if (next <= maxSeq) next = maxSeq + 1;
-    subset.pdfSeqNext = next;
-  }catch(e){}
-
-  return subset;
+function persistStore(obj){
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(obj)); }catch(e){}
 }
-
-function detachSharedStore(){
-  if (storeUnsub){
-    try{ storeUnsub(); }catch(e){}
-    storeUnsub = null;
-  }
-  sharedReady = false;
-  sharedLastError = '';
-  storeDocOk = null;
-  storeInitAttempted = false;
-}
-
-function attachSharedStore(){
-  detachSharedStore();
-  sharedReady = false;
-  sharedLastError = '';
-
-  if (!mesaValid || !mesaId){
-    sharedReady = true;
-    return;
-  }
-
-  const db = getDb();
-  const fs = getFs();
-  if (!db || !fs){
-    sharedReady = true;
-    sharedLastError = 'Firestore no está disponible.';
-    return;
-  }
-
-  const ref = fs.doc(db, 'mesas', mesaId, 'store', 'main');
-
-  storeUnsub = fs.onSnapshot(ref, async (snap) => {
-    try{
-      if (!snap.exists()){
-        storeDocOk = false;
-
-        if (isAdmin()){
-          // initialize if missing (solo 1 intento automático por attach)
-          if (storeInitAttempted){
-            sharedLastError = 'Store de MESA no encontrado.';
-            sharedReady = true;
-            onRoute();
-            return;
-          }
-          storeInitAttempted = true;
-
-          const nowTs = fs.serverTimestamp();
-          const storePath = `mesas/${mesaId}/store/main`;
-          try{
-            await fs.setDoc(ref, {
-              v: SHARED_STORE_VERSION,
-              chips: defaultChips(),
-              players: defaultPlayers(),
-              sessions: defaultSessions(),
-              pdfSeqNext: 1,
-              draftSessionId: '',
-              createdAt: nowTs,
-              updatedAt: nowTs,
-              updatedBy: (currentUser && (currentUser.email || currentUser.uid)) ? (currentUser.email || currentUser.uid) : '',
-            }, { merge: true });
-            // Esperar el siguiente snapshot
-            return;
-          }catch(e){
-            setLastFsError(e, { op: 'setDoc store/main', path: storePath });
-            sharedLastError = 'No se pudo inicializar el store de la MESA. ' + fsErrText(e);
-            sharedReady = true;
-            onRoute();
-            return;
-          }
-        }
-
-        sharedLastError = 'Store de MESA no encontrado.';
-        sharedReady = true;
-        onRoute();
-        return;
-      }
-
-      storeDocOk = true;
-
-      const data = snap.data() || {};
-      const shared = normalizeSharedStore(data);
-
-      // Hydrate in-memory store, preserving local-only UI
-      store.v = SHARED_STORE_VERSION;
-      store.chips = shared.chips;
-      store.players = shared.players;
-      store.sessions = shared.sessions;
-      store.pdfSeqNext = shared.pdfSeqNext;
-      store.draftSessionId = shared.draftSessionId;
-      if (!store.ui || typeof store.ui !== 'object') store.ui = (localState && localState.ui) ? localState.ui : { juego: {} };
-      if (!store.ui.juego || typeof store.ui.juego !== 'object') store.ui.juego = {};
-
-      // Baseline for change detection (avoid re-writing the same snapshot)
-      try{ lastSharedStr = JSON.stringify(getSharedSubset()); }catch(e){ lastSharedStr = ''; }
-
-      sharedReady = true;
-      sharedLastError = '';
-      onRoute();
-    }catch(e){
-      const storePath = `mesas/${mesaId}/store/main`;
-      setLastFsError(e, { op: 'onSnapshot callback', path: storePath });
-      sharedReady = true;
-      sharedLastError = 'Error al sincronizar store de MESA. ' + fsErrText(e);
-      onRoute();
-    }
-  }, (err) => {
-    const storePath = `mesas/${mesaId}/store/main`;
-    setLastFsError(err, { op: 'onSnapshot error', path: storePath });
-    sharedReady = true;
-    sharedLastError = 'Error al sincronizar store de MESA. ' + fsErrText(err);
-    onRoute();
-  });
-}
-
-function queueSharedSave(){
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    doSharedSave();
-  }, 650);
-}
-
-async function doSharedSave(){
-  if (!mesaValid || !mesaId || !isAdmin()) return;
-  if (savingShared) return;
-
-  const db = getDb();
-  const fs = getFs();
-  if (!db || !fs) return;
-
-  const subset = getSharedSubset();
-  let str = '';
-  try{ str = JSON.stringify(subset); }catch(e){ str = ''; }
-  if (!str || str === lastSharedStr) return;
-
-  savingShared = true;
-  try{
-    const ref = fs.doc(db, 'mesas', mesaId, 'store', 'main');
-    const payload = {
-      ...subset,
-      updatedAt: fs.serverTimestamp(),
-      updatedBy: (currentUser && (currentUser.email || currentUser.uid)) ? (currentUser.email || currentUser.uid) : '',
-    };
-    await fs.setDoc(ref, payload, { merge: true });
-    lastSharedStr = str;
-  }catch(e){
-    // non-fatal; keep local UI alive
-    const storePath = `mesas/${mesaId}/store/main`;
-    setLastFsError(e, { op: 'setDoc store/main (save)', path: storePath });
-    sharedLastError = 'No se pudo guardar en Firestore. ' + fsErrText(e);
-  }finally{
-    savingShared = false;
-  }
-}
-
-async function wipeSharedStoreInFirestore(){
-  if (!mesaValid || !mesaId || !isAdmin()) return;
-  const db = getDb();
-  const fs = getFs();
-  if (!db || !fs) return;
-  const ref = fs.doc(db, 'mesas', mesaId, 'store', 'main');
-  const nowTs = fs.serverTimestamp();
-  const payload = {
-    v: SHARED_STORE_VERSION,
-    chips: defaultChips(),
-    players: defaultPlayers(),
-    sessions: defaultSessions(),
-    pdfSeqNext: 1,
-    draftSessionId: '',
-    updatedAt: nowTs,
-    updatedBy: (currentUser && (currentUser.email || currentUser.uid)) ? (currentUser.email || currentUser.uid) : '',
-  };
-  try{
-    await fs.setDoc(ref, payload, { merge: true });
-  }catch(e){
-    const storePath = `mesas/${mesaId}/store/main`;
-    setLastFsError(e, { op: 'setDoc store/main (wipe)', path: storePath });
-    sharedLastError = 'No se pudo reiniciar el store en Firestore. ' + fsErrText(e);
-  }
-}
-
 
 function saveStore(){
-  // Always persist local-only preferences
-  try{
-    if (!store.ui || typeof store.ui !== 'object') store.ui = { juego: {} };
-    if (!store.ui.juego || typeof store.ui.juego !== 'object') store.ui.juego = {};
-    localState.ui = store.ui;
-    localState.updatedAt = Date.now();
-    persistLocalState();
-  }catch(e){}
-
-  // Shared store writes: ADMIN only, debounced, only when changed
-  if (mesaValid && mesaId && isAdmin()){
-    try{
-      const subset = getSharedSubset();
-      const str = JSON.stringify(subset);
-      if (!lastSharedStr) lastSharedStr = str; // baseline if needed
-      if (str !== lastSharedStr) queueSharedSave();
-    }catch(e){}
-  }
+  store.updatedAt = Date.now();
+  persistStore(store);
 }
 
 function uid(prefix){
@@ -1043,13 +167,6 @@ function uid(prefix){
 }
 
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
-
-function deepClone(obj){
-  try{
-    if (typeof structuredClone === 'function') return structuredClone(obj);
-  }catch(e){}
-  try{ return JSON.parse(JSON.stringify(obj)); }catch(e){ return null; }
-}
 
 function normHex(hex){
   if (!hex) return null;
@@ -1129,7 +246,6 @@ function getChips(){
 }
 
 function upsertChip(chip){
-  if (!requireAdmin()) return;
   const idx = store.chips.findIndex(c => c.id === chip.id);
   if (idx >= 0) store.chips[idx] = chip;
   else store.chips.push(chip);
@@ -1137,7 +253,6 @@ function upsertChip(chip){
 }
 
 function setChipActive(id, active){
-  if (!requireAdmin()) return;
   const c = store.chips.find(x => x.id === id);
   if (!c) return;
   c.active = !!active;
@@ -1188,7 +303,6 @@ function makeReportNameResolver(session){
 
 
 function upsertPlayer(player){
-  if (!requireAdmin()) return;
   if (!store.players) store.players = [];
   const idx = store.players.findIndex(p => p.id === player.id);
   if (idx >= 0) store.players[idx] = player;
@@ -1197,7 +311,6 @@ function upsertPlayer(player){
 }
 
 function setPlayerActive(id, active){
-  if (!requireAdmin()) return;
   const p = (store.players || []).find(x => x.id === id);
   if (!p) return;
   p.active = !!active;
@@ -1215,7 +328,6 @@ function setPlayerActive(id, active){
     '/historial/detalle': renderHistorialDetalle,
     '/ranking': renderRanking,
     '/configuracion': renderConfiguracion,
-    '/usuarios': renderUsuarios,
     '/soporte': renderSoporte,
     '/pdf': renderPdf,
   };
@@ -1259,49 +371,6 @@ function setPlayerActive(id, active){
     const path = getRoute();
     const isPrint = (path === '/pdf');
     try{ document.body.classList.toggle('print-mode', isPrint); }catch(e){}
-
-    // ===== Etapa 3/5: Gate por sesión =====
-    // /usuarios siempre puede cargar. Todo lo demás queda bloqueado sin sesión.
-    if (path !== '/usuarios') {
-      if (!authReady) {
-        renderAuthGateLoading();
-        updateHeaderControls(path);
-        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
-        return;
-      }
-      if (authReady && !currentUser) {
-        navigate('/usuarios');
-        return;
-      }
-
-      // ===== Etapa 4/5: Gate por MESA =====
-      // Si hay sesión pero NO hay mesa válida, forzar /usuarios.
-      if (!mesaReady) {
-        renderMesaGateLoading();
-        updateHeaderControls(path);
-        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
-        return;
-      }
-      if (mesaReady && !mesaValid) {
-        navigate('/usuarios');
-        return;
-      }
-
-      // ===== Etapa 5/5: Gate por store compartido (mesas/{mesaId}/store/main) =====
-      if (!sharedReady) {
-        renderSharedStoreGateLoading();
-        updateHeaderControls(path);
-        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
-        return;
-      }
-      if (sharedReady && sharedLastError) {
-        renderSharedStoreGateError(sharedLastError);
-        updateHeaderControls(path);
-        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
-        return;
-      }
-    }
-
     const fn = routes[path] || routes['/inicio'];
     fn();
     updateHeaderControls(path);
@@ -1345,19 +414,6 @@ function setPlayerActive(id, active){
             <div class="home-body">
               <div class="home-title">Configuración</div>
               <p class="home-desc">Fichas, jugadores, estadísticas, ranking global y exportación a Excel.</p>
-            </div>
-          </button>
-
-          <button class="card home-card home-card--usuarios" data-go="/usuarios" type="button">
-            <div class="card-hero" aria-hidden="true">
-              <div class="card-hero-slot">
-                <img class="card-hero-img" data-hero="usuarios" alt="" decoding="async" loading="lazy" />
-                <img class="card-hero-fallback" src="assets/hero/usuarios.svg" alt="" decoding="async" loading="lazy" />
-              </div>
-            </div>
-            <div class="home-body">
-              <div class="home-title">Usuarios</div>
-              <p class="home-desc">Acceso, mesa, miembros e invitaciones. (La puerta del club.)</p>
             </div>
           </button>
 
@@ -1449,7 +505,6 @@ function setPlayerActive(id, active){
     const defaultDate = (store.ui && store.ui.juego && typeof store.ui.juego.lastDate === 'string' && store.ui.juego.lastDate) ? store.ui.juego.lastDate : todayYMD();
 
     const closedSessions = getClosedSessions();
-    const canEdit = isAdmin();
 
     const root = el(`
       <section class="screen" aria-label="Crear/Continuar Partida">
@@ -1462,7 +517,7 @@ function setPlayerActive(id, active){
               <div class="panel-title" style="margin:0">Partida en borrador</div>
               <div class="row">
                 <button class="btn primary" type="button" id="continueDraftBtn">Continuar</button>
-                <button class="btn danger" type="button" id="discardDraftBtn" ${canEdit ? '' : 'disabled'}>Descartar</button>
+                <button class="btn danger" type="button" id="discardDraftBtn">Descartar</button>
               </div>
             </div>
 
@@ -1567,7 +622,7 @@ function setPlayerActive(id, active){
           const name = (p.name || '').trim();
           const sel = selected.has(p.id);
           return `
-            <button class="pick ${sel ? 'selected' : ''}" type="button" data-id="${p.id}" ${(draft || !canEdit) ? 'disabled' : ''}>
+            <button class="pick ${sel ? 'selected' : ''}" type="button" data-id="${p.id}" ${draft ? 'disabled' : ''}>
               <div class="pick-nick">${escapeHtml(disp)}</div>
               <div class="pick-name">${escapeHtml(name || '')}</div>
             </button>
@@ -1576,7 +631,7 @@ function setPlayerActive(id, active){
     }
 
     function syncStartDisabled(){
-      const can = canEdit && !draft && selected.size > 0 && activePlayers.length > 0;
+      const can = !draft && selected.size > 0 && activePlayers.length > 0;
       $start.disabled = !can;
     }
 
@@ -1600,7 +655,6 @@ function setPlayerActive(id, active){
     });
 
     $start.addEventListener('click', () => {
-      if (!requireAdmin()) return;
       if (draft) return;
       const date = ($date.value || '').trim() || todayYMD();
       const ids = Array.from(selected);
@@ -1623,7 +677,6 @@ function setPlayerActive(id, active){
       const $discard = document.getElementById('discardDraftBtn');
       if ($continue) $continue.addEventListener('click', () => navigate('/juego/mesa'));
       if ($discard) $discard.addEventListener('click', async () => {
-        if (!requireAdmin()) return;
         const ok = await confirmDialog({
           title: 'Descartar borrador',
           body: 'Esto eliminará la sesión en borrador. No hay “Ctrl+Z” (aún).',
@@ -1667,7 +720,7 @@ function setPlayerActive(id, active){
       return;
     }
     ensureSessionGame(s);
-    renderMesaSession(s, { readOnly: (!isAdmin()), backPath: '/juego', badge: (isAdmin() ? 'Draft' : 'Solo lectura') });
+    renderMesaSession(s, { readOnly: false, backPath: '/juego', badge: 'Draft' });
   }
 
   function renderJuegoSesion(){
@@ -1679,7 +732,7 @@ function setPlayerActive(id, active){
       return;
     }
     ensureSessionGame(s);
-    renderMesaSession(s, { readOnly: (!isAdmin() || s.status === 'closed'), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : (isAdmin() ? 'Draft' : 'Solo lectura')) });
+    renderMesaSession(s, { readOnly: (s.status === 'closed'), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : 'Draft') });
   }
 
     // ===== Etapa 7: Historial (navegable) =====
@@ -1973,25 +1026,13 @@ function renderHistorialDetalle(){
       return;
     }
 
-    // Nota: export/view no debe mutar el store por accidente.
-    const sView = deepClone(s) || s;
-    try{ ensureSessionGame(sView); }catch(e){}
+    ensureSessionGame(s);
 
-    // Etapa 5: Export sin escrituras para MIEMBRO
-    // - ADMIN puede backfill de consecutivo si falta (solo en sesión cerrada)
-    // - MIEMBRO NO debe mutar sesión/store al exportar
-    let missingSeqForMember = false;
+    // Etapa 1: asegurar consecutivo PDF persistente (backfill suave)
     try{
       if (s.status === 'closed'){
-        const hasSeq = (Number.isFinite(s.pdfSeq) && Math.floor(s.pdfSeq) >= 1);
-        if (!hasSeq){
-          if (isAdmin()){
-            const changed = assignPdfSeqIfNeeded(s);
-            if (changed) saveSession(s);
-          } else {
-            missingSeqForMember = true;
-          }
-        }
+        const changed = assignPdfSeqIfNeeded(s);
+        if (changed) saveSession(s);
       }
     }catch(e){}
 
@@ -2012,7 +1053,7 @@ function renderHistorialDetalle(){
     try{ window.addEventListener('afterprint', restoreTitle, { once: true }); }catch(e){}
     try{ window.addEventListener('focus', restoreTitle, { once: true }); }catch(e){}
 
-    const an = analyzeSession(sView);
+    const an = analyzeSession(s);
     const sum = an.summary;
     const rows = an.rows.slice();
 
@@ -2067,10 +1108,6 @@ function renderHistorialDetalle(){
           <button class="btn primary" type="button" id="printBtn">Imprimir / Guardar PDF</button>
           <button class="btn" type="button" id="backBtn">Volver</button>
         </div>
-
-        ${missingSeqForMember ? `
-          <div class="print-warn">⚠️ Falta consecutivo: solo ADMIN puede asignarlo.</div>
-        ` : ''}
 
         <div class="print-head">
           <div class="print-brand">
@@ -2462,7 +1499,6 @@ function renderHistorialDetalle(){
 
   
 function renderConfiguracion(){
-    const canEdit = isAdmin();
     const root = el(`
       <section class="screen" aria-label="Configuración">
         <h1 class="screen-title">Configuración</h1>
@@ -2491,7 +1527,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Jugadores">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Jugadores</div>
-            <button class="btn primary" type="button" id="addPlayerBtn" ${canEdit ? '' : 'disabled'}>Agregar jugador</button>
+            <button class="btn primary" type="button" id="addPlayerBtn">Agregar jugador</button>
           </div>
 
           <div class="player-grid" id="playerGrid" aria-live="polite"></div>
@@ -2502,7 +1538,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Fichas" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Fichas</div>
-            <button class="btn primary" type="button" id="addChipBtn" ${canEdit ? '' : 'disabled'}>Agregar ficha</button>
+            <button class="btn primary" type="button" id="addChipBtn">Agregar ficha</button>
           </div>
 
           <div class="chip-grid" id="chipGrid" aria-live="polite"></div>
@@ -2602,8 +1638,8 @@ function renderConfiguracion(){
             </div>
 
             <div class="player-actions">
-              <button class="btn" type="button" data-act="edit" ${canEdit ? '' : 'disabled'}>Editar</button>
-              <button class="btn" type="button" data-act="toggle" ${canEdit ? '' : 'disabled'}>${actionLabel}</button>
+              <button class="btn" type="button" data-act="edit">Editar</button>
+              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
             </div>
           </article>
         `;
@@ -2613,7 +1649,6 @@ function renderConfiguracion(){
     $pgrid.addEventListener('click', (ev) => {
       const btn = ev.target.closest('button[data-act]');
       if (!btn) return;
-      if (!requireAdmin()) return;
       const card = ev.target.closest('.player-card');
       if (!card) return;
       const id = card.getAttribute('data-id');
@@ -2634,7 +1669,6 @@ function renderConfiguracion(){
     });
 
     document.getElementById('addPlayerBtn').addEventListener('click', () => {
-      if (!requireAdmin()) return;
       openPlayerModal({ mode: 'add', onSave: renderPlayers });
     });
 
@@ -2681,8 +1715,8 @@ function renderConfiguracion(){
             </div>
 
             <div class="chip-actions">
-              <button class="btn" type="button" data-act="edit" ${canEdit ? '' : 'disabled'}>Editar</button>
-              <button class="btn" type="button" data-act="toggle" ${canEdit ? '' : 'disabled'}>${actionLabel}</button>
+              <button class="btn" type="button" data-act="edit">Editar</button>
+              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
             </div>
           </article>
         `;
@@ -2692,7 +1726,6 @@ function renderConfiguracion(){
     $cgrid.addEventListener('click', (ev) => {
       const btn = ev.target.closest('button[data-act]');
       if (!btn) return;
-      if (!requireAdmin()) return;
       const card = ev.target.closest('.chip-card');
       if (!card) return;
       const id = card.getAttribute('data-id');
@@ -2713,7 +1746,6 @@ function renderConfiguracion(){
     });
 
     document.getElementById('addChipBtn').addEventListener('click', () => {
-      if (!requireAdmin()) return;
       openChipModal({ mode: 'add', onSave: renderChips });
     });
 
@@ -2724,7 +1756,6 @@ function renderConfiguracion(){
   }
 
   function openChipModal({ mode, chip, onSave }){
-    if (!requireAdmin()) return;
     const isEdit = (mode === 'edit');
     const base = chip || { id: uid('chip'), name: '', value: '', color: '#808080', active: true };
 
@@ -2870,7 +1901,6 @@ function renderConfiguracion(){
 
   
   function openPlayerModal({ mode, player, onSave }){
-  if (!requireAdmin()) return;
     const isEdit = (mode === 'edit');
     const base = player || { id: uid('player'), name: '', nick: '', active: true, stats: {} };
 
@@ -3087,7 +2117,6 @@ function renderConfiguracion(){
   }
 
   function saveSession(s){
-  if (!requireAdmin()) return;
     if (!s || !s.id) return;
     if (!Array.isArray(store.sessions)) store.sessions = [];
     const idx = store.sessions.findIndex(x => x && x.id === s.id);
@@ -3147,7 +2176,6 @@ function renderConfiguracion(){
 
 
   function closeSession(id){
-  if (!requireAdmin()) return;
     const s = getSessionById(id);
     if (!s) return;
     if (s.status === 'closed') return;
@@ -3242,13 +2270,11 @@ function renderConfiguracion(){
 
   // ===== Etapa 7: Analytics (ranking/stats/records/excel) =====
   function analyzeSession(s){
-    // Analítica debe ser "pure": no mutar el store/sesiones al calcular.
-    const sView = deepClone(s) || s;
-    ensureSessionGame(sView);
-    const playersSnap = Array.isArray(sView.playersSnapshot) ? sView.playersSnapshot : [];
-    const chipsSnap = Array.isArray(sView.chipsSnapshot) ? sView.chipsSnapshot : [];
+    ensureSessionGame(s);
+    const playersSnap = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
+    const chipsSnap = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : [];
     const chipValueMap = new Map(chipsSnap.map(c => [c.id, numOrZero(c.value)]));
-    const pStateMap = new Map((sView.game && Array.isArray(sView.game.players) ? sView.game.players : []).map(p => [p.id, p]));
+    const pStateMap = new Map((s.game && Array.isArray(s.game.players) ? s.game.players : []).map(p => [p.id, p]));
 
     const masterPlayers = new Map(getPlayers().map(p => [p.id, p]));
     const rows = playersSnap.map(p => {
@@ -3291,7 +2317,7 @@ function renderConfiguracion(){
       else { curPos = idx + 1; r.pos = curPos; }
     });
 
-    return { rows, summary: calcSessionSummary(sView) };
+    return { rows, summary: calcSessionSummary(s) };
   }
 
   function computeAnalytics(){
@@ -3409,8 +2435,6 @@ function renderConfiguracion(){
   }
 
   function recalcAndPersistStats(){
-    if (!isAdmin()) return;
-
     const a = computeAnalytics();
     // persist into players.stats (for convenience) + global block
     const players = getPlayers();
@@ -3559,11 +2583,6 @@ function renderConfiguracion(){
   }
 
   async function importBackupJson(text, { mode }){
-    if (!isAdmin()){
-      toast('Solo ADMIN puede importar/restablecer datos.');
-      await confirmDialog({ title: 'Permiso requerido', body: 'Solo ADMIN puede importar o restablecer datos de la MESA.', okText: 'OK', cancelText: 'Cerrar' });
-      return;
-    }
     let obj = null;
     try{ obj = JSON.parse(text); }catch(e){ obj = null; }
     if (!obj || typeof obj !== 'object'){
@@ -3602,14 +2621,8 @@ function renderConfiguracion(){
     if (mode === 'merge'){
       mergeStore(normalized);
     } else {
-      // Replace shared data (ADMIN only) + local UI
-      store.chips = normalized.chips;
-      store.players = normalized.players;
-      store.sessions = normalized.sessions;
-      store.pdfSeqNext = normalized.pdfSeqNext;
-      store.draftSessionId = normalized.draftSessionId;
-      store.ui = normalized.ui;
-      saveStore();
+      store = normalized;
+      persistStore(store);
     }
     if (incomingTheme){
       themePref = (incomingTheme === 'auto' || incomingTheme === 'light' || incomingTheme === 'dark') ? incomingTheme : themePref;
@@ -3624,11 +2637,10 @@ function renderConfiguracion(){
   function normalizeIncomingStore(obj){
     // keep our v/version; avoid destructive migrations
     const out = {
-      v: SHARED_STORE_VERSION,
+      v: STORE_VERSION,
       chips: Array.isArray(obj.chips) ? obj.chips : defaultChips(),
       players: Array.isArray(obj.players) ? obj.players : defaultPlayers(),
       sessions: Array.isArray(obj.sessions) ? obj.sessions : [],
-      pdfSeqNext: Number.isFinite(obj.pdfSeqNext) ? Math.floor(obj.pdfSeqNext) : 1,
       draftSessionId: (typeof obj.draftSessionId === 'string') ? obj.draftSessionId : '',
       ui: (obj.ui && typeof obj.ui === 'object') ? obj.ui : { juego: {} },
       createdAt: numOrZero(obj.createdAt) || Date.now(),
@@ -3646,7 +2658,6 @@ function renderConfiguracion(){
   }
 
   function mergeStore(incoming){
-    if (!requireAdmin()) return;
     // Safe merge: keep current on conflicts, only add missing IDs
     const cur = store;
     const byId = (arr) => {
@@ -3674,20 +2685,15 @@ function renderConfiguracion(){
     cur.players = Array.from(players.values());
     cur.sessions = Array.from(sessions.values());
     cur.updatedAt = Date.now();
-    saveStore();
+    persistStore(cur);
   }
 
   function resetAllData(){
-    if (!requireAdmin()) return;
-    try{ localStorage.removeItem(LOCAL_STORE_KEY); }catch(e){}
+    try{ localStorage.removeItem(STORE_KEY); }catch(e){}
     try{ localStorage.removeItem(THEME_KEY); }catch(e){}
     themePref = 'auto';
-    localState = { v: LOCAL_STORE_VERSION, ui: { juego: {} }, updatedAt: Date.now() };
-    try{ persistLocalState(); }catch(e){}
-    store = initSharedStore();
+    store = initStore();
     applyTheme();
-    // Also wipe shared store in Firestore (MESA)
-    try{ wipeSharedStoreInFirestore(); }catch(e){}
   }
 
   function round2(n){
@@ -3997,7 +3003,7 @@ function renderConfiguracion(){
     }
     if (!s){
       s = sessions.find(x => x && x.status === 'draft') || null;
-      if (isAdmin() && s && s.id && s.id !== store.draftSessionId){
+      if (s && s.id && s.id !== store.draftSessionId){
         store.draftSessionId = s.id;
         saveStore();
       }
@@ -4006,7 +3012,6 @@ function renderConfiguracion(){
   }
 
   function discardDraftSession(){
-  if (!requireAdmin()) return;
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
     const id = store.draftSessionId;
     if (!id) return;
@@ -4122,706 +3127,6 @@ function renderConfiguracion(){
     });
   }
 
-  function renderUsuarios(){
-    const api = getAuthApi();
-    const fbOk = !!(window.PK_FB && window.PK_FB.auth && api);
-    const fbStatus = fbOk ? "Firebase: OK" : "Firebase: NO";
-
-    const hasUser = !!currentUser;
-    const accessState = (!fbOk) ? 'no-firebase' : (!authReady ? 'loading' : (hasUser ? 'signed' : 'signedout'));
-
-    const msgBlock = (lastAuthError ? `
-      <div class="panel" role="region" aria-label="Error" style="border-color: color-mix(in oklab, #ff4d6d 60%, var(--border)); background: color-mix(in oklab, #ff4d6d 10%, var(--panel)); margin-bottom:12px">
-        <div class="panel-title">Aviso</div>
-        <div class="small-note" style="margin-top:10px; color: var(--text)">${escapeHtml(lastAuthError)}</div>
-      </div>
-    ` : (lastAuthInfo ? `
-      <div class="panel" role="region" aria-label="Info" style="margin-bottom:12px">
-        <div class="panel-title">Info</div>
-        <div class="small-note" style="margin-top:10px; color: var(--text)">${escapeHtml(lastAuthInfo)}</div>
-      </div>
-    ` : ''));
-
-    function accessHtml(){
-      if (accessState === 'no-firebase'){
-        return `
-          <div class="small-note">No hay Firebase inicializado. Revisa <code>js/firebaseConfig.js</code> y que el dominio esté autorizado en Firebase Auth.</div>
-          <div class="small-note" style="margin-top:10px; opacity:.85">${fbStatus}</div>
-        `;
-      }
-      if (accessState === 'loading'){
-        return `
-          <div class="small-note">Validando sesión…</div>
-          <div class="small-note" style="margin-top:10px; opacity:.85">${fbStatus}</div>
-        `;
-      }
-      if (accessState === 'signedout'){
-        return `
-          <button class="btn primary" type="button" id="loginBtn" style="width:100%; height:56px; border-radius:18px">INICIAR CON GOOGLE</button>
-          <div class="small-note" style="margin-top:10px; opacity:.85">${fbStatus}</div>
-        `;
-      }
-      // signed
-      const dn = escapeHtml(currentUser.displayName || '');
-      const em = escapeHtml(currentUser.email || '');
-      return `
-        <div class="panel" role="region" aria-label="Sesión" style="margin-top:10px">
-          <div class="panel-title" style="margin:0">Sesión activa</div>
-          <div class="small-note" style="margin-top:10px; color: var(--text)"><b>${dn || 'Usuario'}</b><br/><span style="opacity:.85">${em}</span></div>
-        </div>
-        <div class="row" style="margin-top:12px">
-          <button class="btn danger" type="button" id="logoutBtn">CERRAR SESIÓN</button>
-        </div>
-        <div class="small-note" style="margin-top:10px; opacity:.85">${fbStatus}</div>
-      `;
-    }
-
-    const root = el(`
-      <section class="screen" aria-label="Usuarios">
-        <h1 class="screen-title">Usuarios</h1>
-        <p class="screen-sub">Aquí se gestiona el acceso, tu mesa y los usuarios.</p>
-
-        ${msgBlock}
-
-        <div class="panel" role="region" aria-label="Acceso">
-          <div class="panel-title">ACCESO</div>
-          ${accessHtml()}
-        </div>
-
-        <div class="panel" role="region" aria-label="Mesa" style="margin-top:14px">
-          <div class="panel-title">MESA</div>
-          <div id="mesaBlock"></div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Estado" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">ESTADO</div>
-            <button class="btn" type="button" id="diagRefreshBtn">Actualizar</button>
-          </div>
-          <div id="diagBlock" style="margin-top:10px"></div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Miembros" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">MIEMBROS</div>
-            <button class="btn" type="button" id="reloadMembersBtn">Recargar</button>
-          </div>
-          <div id="membersBlock" style="margin-top:10px"></div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Invitaciones" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">INVITACIONES</div>
-            <button class="btn" type="button" id="genInviteBtn">Generar código</button>
-          </div>
-          <div id="invitesBlock" style="margin-top:10px"></div>
-        </div>
-
-        <div class="row" style="margin-top:14px">
-          <button class="btn" type="button" id="backBtn">Volver</button>
-        </div>
-      </section>
-    `);
-
-    $app.innerHTML = "";
-    $app.appendChild(root);
-
-    // Acciones login/logout
-    const $login = document.getElementById('loginBtn');
-    const $logout = document.getElementById('logoutBtn');
-
-    if ($login){
-      $login.addEventListener('click', async () => {
-        lastAuthError = '';
-        lastAuthInfo = '';
-        $login.disabled = true;
-        const api2 = getAuthApi();
-        if (!api2 || typeof api2.loginGoogle !== 'function'){
-          lastAuthError = 'Firebase Auth no está disponible.';
-          renderUsuarios();
-          return;
-        }
-        try {
-          const res = await api2.loginGoogle();
-          if (res && res.redirected) {
-            lastAuthInfo = 'Abriendo Google… si tu navegador bloqueó el popup, te redirigirá para completar el login.';
-            renderUsuarios();
-          }
-        } catch (err) {
-          lastAuthError = authErrText(err);
-          renderUsuarios();
-        } finally {
-          try { $login.disabled = false; } catch(e){}
-        }
-      });
-    }
-
-    if ($logout){
-      $logout.addEventListener('click', async () => {
-        lastAuthError = '';
-        lastAuthInfo = '';
-        $logout.disabled = true;
-        const api2 = getAuthApi();
-        if (!api2 || typeof api2.logout !== 'function'){
-          lastAuthError = 'Firebase Auth no está disponible.';
-          renderUsuarios();
-          return;
-        }
-        try {
-          await api2.logout();
-          // onAuthStateChanged se encargará del redirect/gate
-        } catch (err) {
-          lastAuthError = authErrText(err);
-          renderUsuarios();
-        } finally {
-          try { $logout.disabled = false; } catch(e){}
-        }
-      });
-    }
-
-    // ===== MESA / MIEMBROS / INVITACIONES =====
-    const $mesaBlock = document.getElementById('mesaBlock');
-    const $membersBlock = document.getElementById('membersBlock');
-    const $invitesBlock = document.getElementById('invitesBlock');
-    const $reloadMembersBtn = document.getElementById('reloadMembersBtn');
-    const $genInviteBtn = document.getElementById('genInviteBtn');
-    const $diagBlock = document.getElementById('diagBlock');
-    const $diagRefreshBtn = document.getElementById('diagRefreshBtn');
-
-    let membersCache = [];
-    let invitesCache = [];
-
-    function setHtml($el, html){ if ($el) $el.innerHTML = String(html || ''); }
-
-    function renderMesaBlock(){
-      if (!$mesaBlock) return;
-      if (!currentUser){
-        setHtml($mesaBlock, `<div class="small-note">Inicia sesión para crear o unirte a una MESA.</div>`);
-        return;
-      }
-
-      if (!mesaReady){
-        setHtml($mesaBlock, `<div class="small-note">Validando tu mesa…</div>`);
-        return;
-      }
-
-      if (mesaLastError){
-        setHtml($mesaBlock, `<div class="small-note" style="color: color-mix(in oklab, #ff4d6d 80%, var(--text))">${escapeHtml(mesaLastError)}</div>`);
-      }
-
-      if (!mesaValid){
-        const savedMid = loadMesaId();
-        setHtml($mesaBlock, `
-          <div class="row" style="gap:10px; flex-wrap:wrap">
-            <button class="btn primary" type="button" id="createMesaBtn">CREAR MESA</button>
-          </div>
-          <div class="small-note" style="margin-top:10px">O únete con un código PK.</div>
-          <div class="row" style="margin-top:10px; gap:10px; align-items:flex-end">
-            <label class="field" style="flex:1 1 220px; min-width:220px">
-              <span>Código de invitación</span>
-              <input id="joinCodeInput" type="text" autocapitalize="characters" autocomplete="off" placeholder="PK-AB12" value="" />
-            </label>
-            <button class="btn" type="button" id="joinMesaBtn">UNIRSE</button>
-          </div>
-          <div class="small-note" style="margin-top:10px; opacity:.9">Formato: <code>PK-XXXX</code> (4 caracteres).</div>
-
-          <div class="small-note" style="margin-top:14px; opacity:.9">
-            <b>Rescate:</b> si ya creaste una MESA pero no aparece aquí, pega el <b>ID real</b> (nombre del documento en Firestore).
-          </div>
-          ${savedMid ? `<div class="small-note" style="margin-top:8px; opacity:.9">ID guardado en este dispositivo: <code>${escapeHtml(savedMid)}</code></div>` : ''}
-          <div class="row" style="margin-top:10px; gap:10px; align-items:flex-end; flex-wrap:wrap">
-            <label class="field" style="flex:1 1 320px; min-width:260px">
-              <span>ID de MESA</span>
-              <input id="manualMesaIdInput" type="text" autocomplete="off" placeholder="Ej: 2uXK7FGywXbAJVP5Xec1" value="${escapeAttr(savedMid || '')}" />
-            </label>
-            <button class="btn" type="button" id="manualMesaUseBtn">ACTIVAR</button>
-            <button class="btn danger" type="button" id="manualMesaClearBtn">LIMPIAR</button>
-          </div>
-        `);
-
-        const $create = document.getElementById('createMesaBtn');
-        const $join = document.getElementById('joinMesaBtn');
-        const $code = document.getElementById('joinCodeInput');
-        const $mid = document.getElementById('manualMesaIdInput');
-        const $use = document.getElementById('manualMesaUseBtn');
-        const $clr = document.getElementById('manualMesaClearBtn');
-
-        if ($create){
-          $create.addEventListener('click', async () => {
-            const ok = await confirmDialog({
-              title: 'Crear MESA',
-              body: 'Esto crea una MESA nueva y te deja como ADMIN.',
-              okText: 'Crear',
-              cancelText: 'Cancelar',
-            });
-            if (!ok) return;
-            try{
-              $create.disabled = true;
-              const res = await createMesa();
-              if (res && res.storeOk){
-                lastAuthInfo = 'MESA creada.';
-              } else {
-                lastAuthError = 'MESA creada, pero no se pudo inicializar el store (aún). Ve a “Estado” y usa Reintentar.';
-              }
-              renderUsuarios();
-            }catch(e){
-              lastAuthError = fsErrText(e);
-              renderUsuarios();
-            }finally{
-              try{ $create.disabled = false; }catch(e2){}
-            }
-          });
-        }
-
-        if ($join){
-          $join.addEventListener('click', async () => {
-            const code = ($code && $code.value) ? $code.value : '';
-            try{
-              $join.disabled = true;
-              await joinMesaByCode(code);
-              lastAuthInfo = 'Listo. Ya estás dentro de la MESA.';
-              renderUsuarios();
-            }catch(e){
-              const msg = String(e && e.message || '');
-              if (msg === 'bad-code') lastAuthError = 'Código inválido. Usa formato PK-XXXX.';
-              else if (msg === 'no-invite') lastAuthError = 'Ese código no existe.';
-              else if (msg === 'used') lastAuthError = 'Ese código ya fue usado.';
-              else if (msg === 'expired') lastAuthError = 'Ese código expiró.';
-              else lastAuthError = 'No se pudo unir con ese código.';
-              renderUsuarios();
-            }finally{
-              try{ $join.disabled = false; }catch(e2){}
-            }
-          });
-        }
-
-        if ($use){
-          $use.addEventListener('click', async () => {
-            const mid = ($mid && $mid.value) ? String($mid.value).trim() : '';
-            if (!mid){
-              toast('Pega un ID de MESA.');
-              return;
-            }
-            try{
-              $use.disabled = true;
-              persistMesaId(mid);
-              await validateMesaFromLocal();
-              // Si la MESA valida, intentar salir de inmediato (el gate mostrará “Sincronizando…” si aplica).
-              if (mesaValid) navigate('/inicio');
-              else renderUsuarios();
-            }catch(e){
-              lastAuthError = 'No se pudo activar esa MESA.';
-              renderUsuarios();
-            }finally{
-              try{ $use.disabled = false; }catch(e2){}
-            }
-          });
-        }
-
-        if ($clr){
-          $clr.addEventListener('click', async () => {
-            try{
-              $clr.disabled = true;
-              clearMesaId();
-              await validateMesaFromLocal();
-              renderUsuarios();
-            }finally{
-              try{ $clr.disabled = false; }catch(e2){}
-            }
-          });
-        }
-        return;
-      }
-
-      const label = mesaNombre ? mesaNombre : shortMesaLabel(mesaId);
-      setHtml($mesaBlock, `
-        <div class="small-note" style="color: var(--text)">
-          <b>Mesa actual:</b> ${escapeHtml(label || '')}
-          <span style="opacity:.75">(${escapeHtml(mesaId)})</span>
-        </div>
-        <div class="row" style="margin-top:10px; align-items:center; gap:10px">
-          <span class="badge">${escapeHtml(mesaRole || 'MIEMBRO')}</span>
-          <button class="btn" type="button" id="refreshMesaBtn">Revalidar</button>
-        </div>
-        <div class="small-note" style="margin-top:10px">Sin MESA activa, la app queda bloqueada (por diseño).</div>
-        <div class="small-note" style="margin-top:8px; opacity:.9">
-          <b>Store:</b>
-          ${!sharedReady ? 'Sincronizando…' : (sharedLastError ? `<span style="color: color-mix(in oklab, #ff4d6d 80%, var(--text))">${escapeHtml(sharedLastError)}</span>` : 'OK')}
-        </div>
-      `);
-      const $refresh = document.getElementById('refreshMesaBtn');
-      if ($refresh){
-        $refresh.addEventListener('click', async () => {
-          try{
-            $refresh.disabled = true;
-            await validateMesaFromLocal();
-            renderUsuarios();
-          }finally{
-            try{ $refresh.disabled = false; }catch(e2){}
-          }
-        });
-      }
-    }
-
-
-    function renderDiagBlock(){
-      if (!$diagBlock) return;
-
-      const pathNow = getRoute();
-      const savedMid = loadMesaId();
-      const u = currentUser;
-
-      const tri = (v) => (v === null ? '—' : (v ? '✅' : '❌'));
-      const storeGate = (!mesaValid) ? '—' : (!sharedReady ? '⏳' : (sharedLastError ? '❌' : '✅'));
-
-      const errHtml = lastFsError ? `
-        <div class="small-note" style="margin-top:10px; padding:10px 12px; border-radius:14px; border:1px solid color-mix(in oklab, #ff4d6d 55%, var(--border)); background: color-mix(in oklab, #ff4d6d 10%, var(--panel))">
-          <div style="font-weight:950; margin-bottom:6px">Último error Firestore</div>
-          <div class="small-note" style="opacity:.95"><b>Código:</b> ${escapeHtml(lastFsError.code || '')}</div>
-          ${lastFsError.op ? `<div class="small-note" style="opacity:.95"><b>Op:</b> ${escapeHtml(lastFsError.op)}</div>` : ''}
-          ${lastFsError.path ? `<div class="small-note" style="opacity:.95"><b>Path:</b> <code>${escapeHtml(lastFsError.path)}</code></div>` : ''}
-          ${lastFsError.message ? `<div class="small-note" style="opacity:.85; margin-top:6px">${escapeHtml(String(lastFsError.message).slice(0,220))}</div>` : ''}
-        </div>
-      ` : `<div class="small-note" style="opacity:.85">Sin errores recientes.</div>`;
-
-      const isAdminNow = (mesaRole === 'ADMIN');
-      const showRetryStore = (isAdminNow && mesaValid && (sharedLastError || storeDocOk === false));
-
-      setHtml($diagBlock, `
-        <div class="table-wrap" role="region" aria-label="Diagnóstico">
-          <table class="table">
-            <tbody>
-              <tr><td style="width:40%"><b>Ruta</b></td><td><code>${escapeHtml(pathNow)}</code></td></tr>
-              <tr><td><b>Firebase</b></td><td>${(window.PK_FB && window.PK_FB.db) ? 'OK' : 'NO'}</td></tr>
-              <tr><td><b>authReady</b></td><td>${authReady ? 'true' : 'false'}</td></tr>
-              <tr><td><b>Usuario</b></td><td>${u ? `${escapeHtml(u.displayName || 'Usuario')} <span style="opacity:.8">(${escapeHtml(u.email || u.uid || '')})</span>` : '—'}</td></tr>
-              <tr><td><b>mesaReady</b></td><td>${mesaReady ? 'true' : 'false'}</td></tr>
-              <tr><td><b>mesaValid</b></td><td>${mesaValid ? 'true' : 'false'}</td></tr>
-              <tr><td><b>mesaId</b></td><td>${mesaId ? `<code>${escapeHtml(mesaId)}</code>` : (savedMid ? `<code>${escapeHtml(savedMid)}</code> <span style="opacity:.8">(guardado)</span>` : '—')}</td></tr>
-              <tr><td><b>Rol</b></td><td>${mesaRole ? `<span class="badge">${escapeHtml(mesaRole)}</span>` : '—'}</td></tr>
-              <tr><td><b>Doc mesa</b></td><td>${tri(mesaDocOk)}</td></tr>
-              <tr><td><b>Doc member</b></td><td>${tri(memberDocOk)}</td></tr>
-              <tr><td><b>Store gate</b></td><td>${storeGate}${sharedLastError ? ` <span style="opacity:.85">(${escapeHtml(sharedLastError)})</span>` : ''}</td></tr>
-              <tr><td><b>Doc store/main</b></td><td>${tri(storeDocOk)}</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        ${showRetryStore ? `
-          <div class="row" style="margin-top:10px; gap:10px; flex-wrap:wrap">
-            <button class="btn" type="button" id="retryStoreBtn">Reintentar Store</button>
-          </div>
-          <div class="small-note" style="margin-top:8px; opacity:.85">Esto intenta crear <code>mesas/{mesaId}/store/main</code> otra vez (solo ADMIN).</div>
-        ` : ''}
-
-        ${errHtml}
-      `);
-
-      const $retry = document.getElementById('retryStoreBtn');
-      if ($retry){
-        $retry.addEventListener('click', async () => {
-          if (!currentUser || !mesaValid || mesaRole !== 'ADMIN'){
-            toast('Solo ADMIN puede inicializar el store.');
-            return;
-          }
-          const db = getDb();
-          const fs = getFs();
-          if (!db || !fs){
-            toast('Firestore no está disponible.');
-            return;
-          }
-          const storePath = `mesas/${mesaId}/store/main`;
-          try{
-            $retry.disabled = true;
-            const ref = fs.doc(db, 'mesas', mesaId, 'store', 'main');
-            const nowTs = fs.serverTimestamp();
-            await fs.setDoc(ref, {
-              v: SHARED_STORE_VERSION,
-              chips: defaultChips(),
-              players: defaultPlayers(),
-              sessions: defaultSessions(),
-              pdfSeqNext: 1,
-              draftSessionId: '',
-              createdAt: nowTs,
-              updatedAt: nowTs,
-              updatedBy: (currentUser.email || currentUser.uid),
-            }, { merge: true });
-            sharedLastError = '';
-            storeDocOk = true;
-            clearLastFsError();
-            await validateMesaFromLocal();
-            renderUsuarios();
-          }catch(e){
-            setLastFsError(e, { op: 'setDoc store/main (manual retry)', path: storePath });
-            sharedLastError = 'No se pudo inicializar el store. ' + fsErrText(e);
-            renderUsuarios();
-          }finally{
-            try{ $retry.disabled = false; }catch(e2){}
-          }
-        });
-      }
-    }
-    async function loadAndRenderMembers(){
-      if (!$membersBlock) return;
-      if (!currentUser){ setHtml($membersBlock, `<div class="small-note">Inicia sesión.</div>`); return; }
-      if (!mesaReady){ setHtml($membersBlock, `<div class="small-note">Validando MESA…</div>`); return; }
-      if (!mesaValid){ setHtml($membersBlock, `<div class="small-note">Crea o únete a una MESA para ver miembros.</div>`); return; }
-
-      setHtml($membersBlock, `<div class="small-note">Cargando miembros…</div>`);
-      try{
-        membersCache = await fetchMesaMembers();
-      }catch(e){
-        membersCache = [];
-      }
-
-      if (!membersCache.length){
-        setHtml($membersBlock, `<div class="small-note">No hay miembros (raro). Revalida tu mesa.</div>`);
-        return;
-      }
-
-      const isAdmin = (mesaRole === 'ADMIN');
-      const canManage = isAdmin;
-
-      const rows = membersCache.map(m => {
-        const name = escapeHtml(m.nombre || 'Sin nombre');
-        const email = escapeHtml(m.email || '');
-        const rol = (String(m.rol || '').toUpperCase() === 'ADMIN') ? 'ADMIN' : 'MIEMBRO';
-        const self = (m.uid === currentUser.uid);
-        const actionBtns = (!canManage) ? '' : `
-          <div class="row" style="justify-content:flex-end; gap:8px; flex-wrap:wrap">
-            <button class="btn" type="button" data-act="role" data-uid="${escapeAttr(m.uid)}" ${self ? 'disabled' : ''}>Rol</button>
-            <button class="btn danger" type="button" data-act="remove" data-uid="${escapeAttr(m.uid)}" ${self ? 'disabled' : ''}>Remover</button>
-          </div>
-        `;
-        return `
-          <tr>
-            <td class="who">${name}${self ? ' <span style="opacity:.65">(tú)</span>' : ''}</td>
-            <td class="who" style="opacity:.85">${email}</td>
-            <td><span class="badge">${rol}</span></td>
-            <td>${actionBtns || '<span class="small-note" style="opacity:.8">—</span>'}</td>
-          </tr>
-        `;
-      }).join('');
-
-      setHtml($membersBlock, `
-        <div class="table-wrap" role="region" aria-label="Miembros de la mesa">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Nombre</th>
-                <th>Email</th>
-                <th>Rol</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-        <div class="small-note" style="margin-top:10px; opacity:.9">Regla anti-caos: siempre debe quedar al menos 1 ADMIN.</div>
-      `);
-
-      // Delegación de eventos
-      $membersBlock.querySelectorAll('[data-act="role"]').forEach(b => b.addEventListener('click', async () => {
-        const uid = b.getAttribute('data-uid') || '';
-        try{
-          b.disabled = true;
-          await adminToggleRole(uid, membersCache);
-          await loadAndRenderMembers();
-          await loadAndRenderInvites();
-        }catch(e){
-          const msg = String(e && e.message || '');
-          if (msg === 'last-admin'){
-            await confirmDialog({ title: 'No permitido', body: 'No puedes quitar el rol al último ADMIN.', okText: 'OK', cancelText: 'Cerrar' });
-          } else {
-            await confirmDialog({ title: 'Error', body: 'No se pudo cambiar el rol.', okText: 'OK', cancelText: 'Cerrar' });
-          }
-        }finally{
-          try{ b.disabled = false; }catch(e2){}
-        }
-      }));
-
-      $membersBlock.querySelectorAll('[data-act="remove"]').forEach(b => b.addEventListener('click', async () => {
-        const uid = b.getAttribute('data-uid') || '';
-        const m = membersCache.find(x => x && x.uid === uid) || null;
-        const name = m ? (m.nombre || m.email || uid) : uid;
-        const ok = await confirmDialog({
-          title: 'Remover miembro',
-          body: `Remover a “${name}” de la MESA?`,
-          okText: 'Remover',
-          cancelText: 'Cancelar',
-          danger: true,
-        });
-        if (!ok) return;
-        try{
-          b.disabled = true;
-          await adminRemoveMember(uid, membersCache);
-          await loadAndRenderMembers();
-        }catch(e){
-          const msg = String(e && e.message || '');
-          if (msg === 'last-admin'){
-            await confirmDialog({ title: 'No permitido', body: 'No puedes remover al último ADMIN.', okText: 'OK', cancelText: 'Cerrar' });
-          } else {
-            await confirmDialog({ title: 'Error', body: 'No se pudo remover el miembro.', okText: 'OK', cancelText: 'Cerrar' });
-          }
-        }finally{
-          try{ b.disabled = false; }catch(e2){}
-        }
-      }));
-    }
-
-    async function loadAndRenderInvites(){
-      if (!$invitesBlock) return;
-      if (!currentUser){ setHtml($invitesBlock, `<div class="small-note">Inicia sesión.</div>`); return; }
-      if (!mesaReady){ setHtml($invitesBlock, `<div class="small-note">Validando MESA…</div>`); return; }
-      if (!mesaValid){ setHtml($invitesBlock, `<div class="small-note">Crea o únete a una MESA para usar invitaciones.</div>`); return; }
-
-      const isAdmin = (mesaRole === 'ADMIN');
-      if (!isAdmin){
-        setHtml($invitesBlock, `<div class="small-note">Solo ADMIN puede generar invitaciones.</div>`);
-        return;
-      }
-
-      setHtml($invitesBlock, `<div class="small-note">Cargando invitaciones…</div>`);
-      invitesCache = await fetchInvitesForMesa().catch(() => []);
-
-      const rows = invitesCache.map(inv => {
-        const exp = inv.expiraEnMs ? formatDateShort(inv.expiraEnMs) : '';
-        const status = inv.usado ? 'USADO' : (inv.expiraEnMs && inv.expiraEnMs < Date.now() ? 'EXPIRÓ' : 'ACTIVO');
-        const statusBadge = `<span class="badge">${escapeHtml(status)}</span>`;
-        return `
-          <tr>
-            <td><code>${escapeHtml(inv.code)}</code></td>
-            <td>${escapeHtml(exp)}</td>
-            <td>${statusBadge}</td>
-            <td>
-              <div class="row" style="justify-content:flex-end; gap:8px">
-                <button class="btn" type="button" data-act="copy" data-code="${escapeAttr(inv.code)}">Copiar</button>
-              </div>
-            </td>
-          </tr>
-        `;
-      }).join('');
-
-      setHtml($invitesBlock, invitesCache.length ? `
-        <div class="table-wrap" role="region" aria-label="Invitaciones">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Código</th>
-                <th>Expira</th>
-                <th>Estado</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      ` : `<div class="small-note">Aún no hay invitaciones. Genera un código.</div>`);
-
-      $invitesBlock.querySelectorAll('[data-act="copy"]').forEach(b => b.addEventListener('click', async () => {
-        const code = b.getAttribute('data-code') || '';
-        try{
-          b.disabled = true;
-          const ok = await copyToClipboard(code);
-          if (!ok) throw new Error('no-copy');
-          await confirmDialog({ title: 'Copiado', body: code, okText: 'OK', cancelText: 'Cerrar' });
-        }catch(e){
-          await confirmDialog({ title: 'No se pudo copiar', body: 'Copia manualmente el código.', okText: 'OK', cancelText: 'Cerrar' });
-        }finally{
-          try{ b.disabled = false; }catch(e2){}
-        }
-      }));
-    }
-
-    // Control botones superiores de panel
-    if ($reloadMembersBtn){
-      $reloadMembersBtn.addEventListener('click', () => loadAndRenderMembers());
-    }
-
-    if ($diagRefreshBtn){
-      $diagRefreshBtn.addEventListener('click', async () => {
-        try{
-          $diagRefreshBtn.disabled = true;
-          await validateMesaFromLocal();
-          renderUsuarios();
-        }finally{
-          try{ $diagRefreshBtn.disabled = false; }catch(e2){}
-        }
-      });
-    }
-
-    if ($genInviteBtn){
-      $genInviteBtn.addEventListener('click', async () => {
-        if (!mesaValid || mesaRole !== 'ADMIN'){
-          await confirmDialog({ title: 'Solo ADMIN', body: 'Solo ADMIN puede generar invitaciones.', okText: 'OK', cancelText: 'Cerrar' });
-          return;
-        }
-        try{
-          $genInviteBtn.disabled = true;
-          const res = await adminGenerateInviteCode();
-          const txt = `${res.code}`;
-          await copyToClipboard(txt);
-          await confirmDialog({ title: 'Código generado', body: `${txt}\nExpira: ${formatDateShort(res.expMs)}`, okText: 'OK', cancelText: 'Cerrar' });
-          await loadAndRenderInvites();
-        }catch(e){
-          await confirmDialog({ title: 'Error', body: 'No se pudo generar el código.', okText: 'OK', cancelText: 'Cerrar' });
-        }finally{
-          try{ $genInviteBtn.disabled = false; }catch(e2){}
-        }
-      });
-    }
-
-    const $backBtn = document.getElementById('backBtn');
-    if ($backBtn){
-      $backBtn.addEventListener('click', async () => {
-        // Volver SIEMPRE funciona: o navega a Inicio, o avisa claro por qué está bloqueado.
-        if (!mesaReady || !mesaValid){
-          await confirmDialog({
-            title: 'Bloqueado',
-            body: 'No hay una MESA activa para este usuario. Crea o activa una MESA primero.',
-            okText: 'OK',
-            cancelText: 'Cerrar'
-          });
-          return;
-        }
-        if (!sharedReady){
-          toast('Cargando MESA…');
-          return;
-        }
-        if (sharedLastError){
-          await confirmDialog({
-            title: 'Bloqueado',
-            body: 'Tu MESA tiene un problema con el store. Ve a ESTADO → Reintentar Store.\n\nDetalle: ' + String(sharedLastError || ''),
-            okText: 'OK',
-            cancelText: 'Cerrar'
-          });
-          return;
-        }
-        navigate('/inicio');
-      });
-    }
-
-    // Render inicial
-    renderMesaBlock();
-    renderDiagBlock();
-    loadAndRenderMembers();
-    loadAndRenderInvites();
-
-    // Ajustar visibilidad del botón "Generar código"
-    try{ if ($genInviteBtn) $genInviteBtn.style.display = (mesaValid && mesaRole === 'ADMIN') ? '' : 'none'; }catch(e){}
-
-    const back = document.getElementById("backBtn");
-    if (back) back.addEventListener("click", () => {
-      // Evitar la sensación de “botón muerto”: SIEMPRE navegar.
-      // Si falta algo, el gate mostrará la pantalla correspondiente (Validando / Sincronizando / Error).
-      if (!mesaReady){ toast('Validando MESA…'); }
-      else if (!mesaValid){ toast('Activa una MESA para continuar.'); }
-      else if (!sharedReady){ toast('Sincronizando MESA…'); }
-      else if (sharedLastError){ toast('Error de sincronización de MESA.'); }
-      navigate("/inicio");
-    });
-  }
-
   function renderSoporte(){
     const root = el(`
       <section class="screen" aria-label="Soporte">
@@ -4903,22 +3208,7 @@ function renderConfiguracion(){
     }
 
     // Maintenance
-    const $recalcBtn = document.getElementById('recalcBtn');
-    const $clearBtn = document.getElementById('clearBtn');
-    const $importBtn = document.getElementById('importJsonBtn');
-    const $importMergeBtn = document.getElementById('importMergeJsonBtn');
-
-    if (!isAdmin()){
-      try{
-        if ($importBtn) $importBtn.disabled = true;
-        if ($importMergeBtn) $importMergeBtn.disabled = true;
-        if ($recalcBtn) $recalcBtn.disabled = true;
-        if ($clearBtn) $clearBtn.disabled = true;
-      }catch(e){}
-    }
-
-    if ($recalcBtn) $recalcBtn.addEventListener('click', async () => {
-      if (!requireAdmin()) return;
+    document.getElementById('recalcBtn').addEventListener('click', async () => {
       const ok = await confirmDialog({
         title: 'Recalcular estadísticas',
         body: 'Reconstruye stats desde todas las sesiones cerradas.',
@@ -4930,8 +3220,7 @@ function renderConfiguracion(){
       await confirmDialog({ title: 'Listo', body: 'Estadísticas recalculadas.', okText: 'OK', cancelText: 'Cerrar' });
     });
 
-    if ($clearBtn) $clearBtn.addEventListener('click', async () => {
-      if (!requireAdmin()) return;
+    document.getElementById('clearBtn').addEventListener('click', async () => {
       const ok = await confirmDialog({
         title: 'Borrar datos locales',
         body: 'Esto elimina TODO en este dispositivo (jugadores, fichas, sesiones). No hay undo.',
@@ -4943,104 +3232,6 @@ function renderConfiguracion(){
       resetAllData();
       await confirmDialog({ title: 'Hecho', body: 'Datos locales borrados.', okText: 'OK', cancelText: 'Cerrar' });
       navigate('/inicio');
-    });
-  }
-
-  function renderAuthGateLoading(){
-    const fbOk = !!(window.PK_FB && window.PK_FB.auth && window.PK_FB.authApi);
-    const msg = fbOk ? 'Validando sesión…' : 'Firebase no está inicializado. Ve a Usuarios para revisar.';
-    const root = el(`
-      <section class="screen" aria-label="Acceso">
-        <h1 class="screen-title">Acceso</h1>
-        <p class="screen-sub">${msg}</p>
-        <div class="panel" role="region" aria-label="Requerido">
-          <div class="panel-title">Necesitas iniciar sesión</div>
-          <div class="small-note" style="margin-top:10px">
-            Esta pantalla está bloqueada hasta que haya sesión activa.
-          </div>
-        </div>
-        <div class="row" style="margin-top:14px">
-          <button class="btn primary" type="button" id="goUsersBtn">Ir a Usuarios</button>
-        </div>
-      </section>
-    `);
-    $app.innerHTML = '';
-    $app.appendChild(root);
-    const b = document.getElementById('goUsersBtn');
-    if (b) b.addEventListener('click', () => navigate('/usuarios'));
-  }
-
-  function renderMesaGateLoading(){
-    const msg = 'Validando MESA…';
-    const root = el(`
-      <section class="screen" aria-label="Mesa">
-        <h1 class="screen-title">Mesa</h1>
-        <p class="screen-sub">${msg}</p>
-        <div class="panel" role="region" aria-label="Requerido">
-          <div class="panel-title">Necesitas una MESA activa</div>
-          <div class="small-note" style="margin-top:10px">
-            Crea o únete desde Usuarios para desbloquear la app.
-          </div>
-        </div>
-        <div class="row" style="margin-top:14px">
-          <button class="btn primary" type="button" id="goUsersBtn">Ir a Usuarios</button>
-        </div>
-      </section>
-    `);
-    $app.innerHTML = '';
-    $app.appendChild(root);
-    const b = document.getElementById('goUsersBtn');
-    if (b) b.addEventListener('click', () => navigate('/usuarios'));
-  }
-
-
-  function renderSharedStoreGateLoading(){
-    const msg = 'Cargando datos compartidos de la MESA…';
-    const root = el(`
-      <section class="screen" aria-label="Sincronización">
-        <h1 class="screen-title">Sincronización</h1>
-        <p class="screen-sub">${msg}</p>
-        <div class="panel" role="region" aria-label="Requerido">
-          <div class="panel-title">Conectando a la MESA</div>
-          <div class="small-note" style="margin-top:10px">
-            Espera un momento. Si se queda pegado, vuelve a Usuarios y revisa tu sesión/MESA.
-          </div>
-        </div>
-        <div class="row" style="margin-top:14px">
-          <button class="btn primary" type="button" id="goUsersBtn">Ir a Usuarios</button>
-        </div>
-      </section>
-    `);
-    $app.innerHTML = '';
-    $app.appendChild(root);
-    const b = document.getElementById('goUsersBtn');
-    if (b) b.addEventListener('click', () => navigate('/usuarios'));
-  }
-
-  function renderSharedStoreGateError(err){
-    const safeErr = escapeHtml(String(err || 'No se pudo cargar la data compartida.'));
-    const root = el(`
-      <section class="screen" aria-label="Sincronización">
-        <h1 class="screen-title">Sincronización</h1>
-        <p class="screen-sub">Error al cargar la MESA</p>
-        <div class="panel" role="region" aria-label="Detalle">
-          <div class="panel-title">No se pudo sincronizar</div>
-          <div class="small-note" style="margin-top:10px">${safeErr}</div>
-        </div>
-        <div class="row" style="margin-top:14px; gap:10px">
-          <button class="btn" type="button" id="retryStoreBtn">Reintentar</button>
-          <button class="btn primary" type="button" id="goUsersBtn">Ir a Usuarios</button>
-        </div>
-      </section>
-    `);
-    $app.innerHTML = '';
-    $app.appendChild(root);
-    const b1 = document.getElementById('goUsersBtn');
-    if (b1) b1.addEventListener('click', () => navigate('/usuarios'));
-    const b2 = document.getElementById('retryStoreBtn');
-    if (b2) b2.addEventListener('click', () => {
-      try{ attachSharedStore(); }catch(e){}
-      onRoute();
     });
   }
 
@@ -5173,7 +3364,6 @@ function renderConfiguracion(){
     // ensure default route
     if (!window.location.hash) window.location.hash = '#/inicio';
     applyTheme();
-    initAuthState();
     onRoute();
   });
 
