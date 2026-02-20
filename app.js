@@ -43,17 +43,65 @@
   let mesaValid = false; // tiene mesaId y member doc existe
   let mesaLastError = '';
 
+// Diagnóstico Firestore (anti-cansancio)
+let lastFsError = null; // { code, message, path, op, atMs }
+let mesaDocOk = null;   // true/false/null
+let memberDocOk = null; // true/false/null
+let storeDocOk = null;  // true/false/null (store/main existe y se pudo leer)
+let storeInitAttempted = false;
+
+function setLastFsError(err, ctx){
+  try{
+    const code = (err && err.code) ? String(err.code) : '';
+    const message = (err && err.message) ? String(err.message) : '';
+    lastFsError = {
+      code: code || 'unknown',
+      message: message || '',
+      path: (ctx && ctx.path) ? String(ctx.path) : '',
+      op: (ctx && ctx.op) ? String(ctx.op) : '',
+      atMs: Date.now(),
+    };
+  }catch(e){
+    lastFsError = { code:'unknown', message:'', path:'', op:'', atMs: Date.now() };
+  }
+}
+function clearLastFsError(){ lastFsError = null; }
+
   function getDb(){ return (window.PK_FB && window.PK_FB.db) ? window.PK_FB.db : null; }
   function getFs(){ return (window.PK_FB && window.PK_FB.fs) ? window.PK_FB.fs : null; }
 
   function loadMesaId(){
-    try{ return String(localStorage.getItem(MESA_KEY) || '').trim(); }catch(e){ return ''; }
+    try{
+      const v = String(localStorage.getItem(MESA_KEY) || '').trim();
+      if (v) return v;
+      // Migración suave (por si hubo llaves viejas en intentos previos)
+      const legacyKeys = ['pokerito_mesa', 'pokerito_mesa_id', 'pk_mesaId', 'mesaId', 'mesa_id'];
+      for (const k of legacyKeys){
+        const x = String(localStorage.getItem(k) || '').trim();
+        if (x){
+          try{ localStorage.setItem(MESA_KEY, x); }catch(e){}
+          try{ localStorage.removeItem(k); }catch(e){}
+          return x;
+        }
+      }
+      return '';
+    }catch(e){ return ''; }
   }
   function persistMesaId(id){
-    try{ localStorage.setItem(MESA_KEY, String(id || '').trim()); }catch(e){}
+    const v = String(id || '').trim();
+    try{ localStorage.setItem(MESA_KEY, v); }catch(e){}
+    // Limpieza de posibles llaves viejas (no queremos 3 mesaIds peleándose)
+    const legacyKeys = ['pokerito_mesa', 'pokerito_mesa_id', 'pk_mesaId', 'mesaId', 'mesa_id'];
+    for (const k of legacyKeys){
+      try{ if (k !== MESA_KEY) localStorage.removeItem(k); }catch(e){}
+    }
   }
   function clearMesaId(){
     try{ localStorage.removeItem(MESA_KEY); }catch(e){}
+    const legacyKeys = ['pokerito_mesa', 'pokerito_mesa_id', 'pk_mesaId', 'mesaId', 'mesa_id'];
+    for (const k of legacyKeys){
+      try{ localStorage.removeItem(k); }catch(e){}
+    }
   }
 
   function shortMesaLabel(id){
@@ -102,6 +150,13 @@
     mesaRole = '';
     mesaNombre = '';
 
+    // Reset diagnóstico
+    mesaDocOk = null;
+    memberDocOk = null;
+    storeDocOk = null;
+    storeInitAttempted = false;
+    clearLastFsError();
+
     if (!currentUser){
       mesaId = '';
       mesaReady = true;
@@ -132,10 +187,24 @@
       return;
     }
 
+    const memberPath = `mesas/${id}/members/${currentUser.uid}`;
+    const mesaPath = `mesas/${id}`;
+
     try{
+      // 1) member
       const memberRef = fs.doc(db, 'mesas', id, 'members', currentUser.uid);
-      const memberSnap = await fs.getDoc(memberRef);
+      let memberSnap = null;
+      try{
+        memberSnap = await fs.getDoc(memberRef);
+      }catch(e){
+        setLastFsError(e, { op: 'getDoc member', path: memberPath });
+        throw e;
+      }
+
       if (!memberSnap.exists()){
+        memberDocOk = false;
+        mesaDocOk = null;
+        storeDocOk = null;
         clearMesaId();
         mesaId = '';
         mesaReady = true;
@@ -145,24 +214,49 @@
         try{ lastSharedStr = ''; }catch(e){}
         return;
       }
+      memberDocOk = true;
+
       const md = memberSnap.data() || {};
       mesaRole = String(md.rol || '').toUpperCase();
       if (mesaRole !== 'ADMIN' && mesaRole !== 'MIEMBRO') mesaRole = 'MIEMBRO';
 
-      // cargar nombreMesa si existe
+      // 2) mesa doc
       const mesaRef = fs.doc(db, 'mesas', id);
-      const mesaSnap = await fs.getDoc(mesaRef);
-      if (mesaSnap.exists()){
-        const m = mesaSnap.data() || {};
-        mesaNombre = String(m.nombreMesa || '').trim();
+      let mesaSnap = null;
+      try{
+        mesaSnap = await fs.getDoc(mesaRef);
+      }catch(e){
+        setLastFsError(e, { op: 'getDoc mesa', path: mesaPath });
+        throw e;
       }
+
+      mesaDocOk = mesaSnap.exists();
+      if (!mesaSnap.exists()){
+        // Inconsistencia: existe member pero no mesa
+        mesaLastError = 'MESA inválida (no existe el documento principal).';
+        clearMesaId();
+        mesaId = '';
+        mesaReady = true;
+        mesaValid = false;
+        try{ detachSharedStore(); }catch(e){}
+        try{ store = initSharedStore(); }catch(e){}
+        try{ lastSharedStr = ''; }catch(e){}
+        return;
+      }
+
+      const md2 = mesaSnap.data() || {};
+      mesaNombre = String(md2.nombreMesa || '').trim();
 
       mesaValid = true;
       mesaReady = true;
-      // Start listening shared store/main for this MESA
+
+      // 3) Store compartido: listener (y/o init si falta)
       try{ attachSharedStore(); }catch(e){}
     }catch(e){
       try{ console.error('validateMesaFromLocal error', e); }catch(e2){}
+      if (!lastFsError){
+        setLastFsError(e, { op: 'validateMesaFromLocal', path: memberPath });
+      }
       mesaLastError = 'No se pudo validar tu mesa. ' + fsErrText(e);
       mesaReady = true;
       mesaValid = false;
@@ -185,43 +279,74 @@
     const fs = getFs();
     if (!db || !fs) throw new Error('no-fs');
 
+    clearLastFsError();
+
     // mesaId auto
     const mesaRef = fs.doc(fs.collection(db, 'mesas'));
     const id = mesaRef.id;
     const nowTs = fs.serverTimestamp();
 
-    await fs.setDoc(mesaRef, {
-      createdAt: nowTs,
-      createdBy: currentUser.uid,
-      nombreMesa: '',
-    }, { merge: true });
-
-    const memberRef = fs.doc(db, 'mesas', id, 'members', currentUser.uid);
-    await fs.setDoc(memberRef, {
-      uid: currentUser.uid,
-      nombre: currentUser.displayName || '',
-      email: currentUser.email || '',
-      rol: 'ADMIN',
-      joinedAt: nowTs,
-    }, { merge: true });
-
-    // Importante para Etapa 5: inicializar store base
-    const storeRef = fs.doc(db, 'mesas', id, 'store', 'main');
-    await fs.setDoc(storeRef, {
-      v: SHARED_STORE_VERSION,
-      chips: defaultChips(),
-      players: defaultPlayers(),
-      sessions: defaultSessions(),
-      pdfSeqNext: 1,
-      draftSessionId: '',
-      createdAt: nowTs,
-      updatedAt: nowTs,
-      updatedBy: (currentUser.email || currentUser.uid),
-    }, { merge: true });
-
+    // Guardar ID desde ya (si algo falla, al menos el usuario puede usar “Rescate”)
     persistMesaId(id);
+
+    const mesaPath = `mesas/${id}`;
+    const memberPath = `mesas/${id}/members/${currentUser.uid}`;
+    const storePath = `mesas/${id}/store/main`;
+
+    // 1) mesa
+    try{
+      await fs.setDoc(mesaRef, {
+        createdAt: nowTs,
+        createdBy: currentUser.uid,
+        nombreMesa: '',
+      }, { merge: true });
+    }catch(e){
+      setLastFsError(e, { op: 'setDoc mesa', path: mesaPath });
+      clearMesaId();
+      throw e;
+    }
+
+    // 2) miembro (ADMIN creador)
+    try{
+      const memberRef = fs.doc(db, 'mesas', id, 'members', currentUser.uid);
+      await fs.setDoc(memberRef, {
+        uid: currentUser.uid,
+        nombre: currentUser.displayName || '',
+        email: currentUser.email || '',
+        rol: 'ADMIN',
+        joinedAt: nowTs,
+      }, { merge: true });
+    }catch(e){
+      setLastFsError(e, { op: 'setDoc member', path: memberPath });
+      // Intentar limpiar mesaId local (no tocamos Firestore)
+      clearMesaId();
+      throw e;
+    }
+
+    // 3) store/main (si falla, NO tiramos la app: dejamos aviso + botón para reintentar)
+    let storeOk = true;
+    try{
+      const storeRef = fs.doc(db, 'mesas', id, 'store', 'main');
+      await fs.setDoc(storeRef, {
+        v: SHARED_STORE_VERSION,
+        chips: defaultChips(),
+        players: defaultPlayers(),
+        sessions: defaultSessions(),
+        pdfSeqNext: 1,
+        draftSessionId: '',
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        updatedBy: (currentUser.email || currentUser.uid),
+      }, { merge: true });
+    }catch(e){
+      storeOk = false;
+      storeDocOk = false;
+      setLastFsError(e, { op: 'setDoc store/main', path: storePath });
+      sharedLastError = 'No se pudo inicializar el store. ' + fsErrText(e);
+    }
+
     await validateMesaFromLocal();
-    return id;
+    return { id, storeOk };
   }
 
   async function joinMesaByCode(rawCode){
@@ -717,6 +842,8 @@ function detachSharedStore(){
   }
   sharedReady = false;
   sharedLastError = '';
+  storeDocOk = null;
+  storeInitAttempted = false;
 }
 
 function attachSharedStore(){
@@ -742,27 +869,50 @@ function attachSharedStore(){
   storeUnsub = fs.onSnapshot(ref, async (snap) => {
     try{
       if (!snap.exists()){
+        storeDocOk = false;
+
         if (isAdmin()){
-          // initialize if missing
+          // initialize if missing (solo 1 intento automático por attach)
+          if (storeInitAttempted){
+            sharedLastError = 'Store de MESA no encontrado.';
+            sharedReady = true;
+            onRoute();
+            return;
+          }
+          storeInitAttempted = true;
+
           const nowTs = fs.serverTimestamp();
-          await fs.setDoc(ref, {
-            v: SHARED_STORE_VERSION,
-            chips: defaultChips(),
-            players: defaultPlayers(),
-            sessions: defaultSessions(),
-            pdfSeqNext: 1,
-            draftSessionId: '',
-            createdAt: nowTs,
-            updatedAt: nowTs,
-            updatedBy: (currentUser && (currentUser.email || currentUser.uid)) ? (currentUser.email || currentUser.uid) : '',
-          }, { merge: true });
-          return;
+          const storePath = `mesas/${mesaId}/store/main`;
+          try{
+            await fs.setDoc(ref, {
+              v: SHARED_STORE_VERSION,
+              chips: defaultChips(),
+              players: defaultPlayers(),
+              sessions: defaultSessions(),
+              pdfSeqNext: 1,
+              draftSessionId: '',
+              createdAt: nowTs,
+              updatedAt: nowTs,
+              updatedBy: (currentUser && (currentUser.email || currentUser.uid)) ? (currentUser.email || currentUser.uid) : '',
+            }, { merge: true });
+            // Esperar el siguiente snapshot
+            return;
+          }catch(e){
+            setLastFsError(e, { op: 'setDoc store/main', path: storePath });
+            sharedLastError = 'No se pudo inicializar el store de la MESA. ' + fsErrText(e);
+            sharedReady = true;
+            onRoute();
+            return;
+          }
         }
+
         sharedLastError = 'Store de MESA no encontrado.';
         sharedReady = true;
         onRoute();
         return;
       }
+
+      storeDocOk = true;
 
       const data = snap.data() || {};
       const shared = normalizeSharedStore(data);
@@ -784,13 +934,17 @@ function attachSharedStore(){
       sharedLastError = '';
       onRoute();
     }catch(e){
+      const storePath = `mesas/${mesaId}/store/main`;
+      setLastFsError(e, { op: 'onSnapshot callback', path: storePath });
       sharedReady = true;
-      sharedLastError = 'Error al sincronizar store de MESA.';
+      sharedLastError = 'Error al sincronizar store de MESA. ' + fsErrText(e);
       onRoute();
     }
   }, (err) => {
+    const storePath = `mesas/${mesaId}/store/main`;
+    setLastFsError(err, { op: 'onSnapshot error', path: storePath });
     sharedReady = true;
-    sharedLastError = 'Error al sincronizar store de MESA.';
+    sharedLastError = 'Error al sincronizar store de MESA. ' + fsErrText(err);
     onRoute();
   });
 }
@@ -828,7 +982,9 @@ async function doSharedSave(){
     lastSharedStr = str;
   }catch(e){
     // non-fatal; keep local UI alive
-    sharedLastError = 'No se pudo guardar en Firestore. Revisa conexión.';
+    const storePath = `mesas/${mesaId}/store/main`;
+    setLastFsError(e, { op: 'setDoc store/main (save)', path: storePath });
+    sharedLastError = 'No se pudo guardar en Firestore. ' + fsErrText(e);
   }finally{
     savingShared = false;
   }
@@ -851,7 +1007,13 @@ async function wipeSharedStoreInFirestore(){
     updatedAt: nowTs,
     updatedBy: (currentUser && (currentUser.email || currentUser.uid)) ? (currentUser.email || currentUser.uid) : '',
   };
-  await fs.setDoc(ref, payload, { merge: true });
+  try{
+    await fs.setDoc(ref, payload, { merge: true });
+  }catch(e){
+    const storePath = `mesas/${mesaId}/store/main`;
+    setLastFsError(e, { op: 'setDoc store/main (wipe)', path: storePath });
+    sharedLastError = 'No se pudo reiniciar el store en Firestore. ' + fsErrText(e);
+  }
 }
 
 
@@ -4031,6 +4193,14 @@ function renderConfiguracion(){
           <div id="mesaBlock"></div>
         </div>
 
+        <div class="panel" role="region" aria-label="Estado" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">ESTADO</div>
+            <button class="btn" type="button" id="diagRefreshBtn">Actualizar</button>
+          </div>
+          <div id="diagBlock" style="margin-top:10px"></div>
+        </div>
+
         <div class="panel" role="region" aria-label="Miembros" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">MIEMBROS</div>
@@ -4115,6 +4285,8 @@ function renderConfiguracion(){
     const $invitesBlock = document.getElementById('invitesBlock');
     const $reloadMembersBtn = document.getElementById('reloadMembersBtn');
     const $genInviteBtn = document.getElementById('genInviteBtn');
+    const $diagBlock = document.getElementById('diagBlock');
+    const $diagRefreshBtn = document.getElementById('diagRefreshBtn');
 
     let membersCache = [];
     let invitesCache = [];
@@ -4185,8 +4357,12 @@ function renderConfiguracion(){
             if (!ok) return;
             try{
               $create.disabled = true;
-              await createMesa();
-              lastAuthInfo = 'MESA creada.';
+              const res = await createMesa();
+              if (res && res.storeOk){
+                lastAuthInfo = 'MESA creada.';
+              } else {
+                lastAuthError = 'MESA creada, pero no se pudo inicializar el store (aún). Ve a “Estado” y usa Reintentar.';
+              }
               renderUsuarios();
             }catch(e){
               lastAuthError = fsErrText(e);
@@ -4287,6 +4463,104 @@ function renderConfiguracion(){
       }
     }
 
+
+    function renderDiagBlock(){
+      if (!$diagBlock) return;
+
+      const pathNow = getRoute();
+      const savedMid = loadMesaId();
+      const u = currentUser;
+
+      const tri = (v) => (v === null ? '—' : (v ? '✅' : '❌'));
+      const storeGate = (!mesaValid) ? '—' : (!sharedReady ? '⏳' : (sharedLastError ? '❌' : '✅'));
+
+      const errHtml = lastFsError ? `
+        <div class="small-note" style="margin-top:10px; padding:10px 12px; border-radius:14px; border:1px solid color-mix(in oklab, #ff4d6d 55%, var(--border)); background: color-mix(in oklab, #ff4d6d 10%, var(--panel))">
+          <div style="font-weight:950; margin-bottom:6px">Último error Firestore</div>
+          <div class="small-note" style="opacity:.95"><b>Código:</b> ${escapeHtml(lastFsError.code || '')}</div>
+          ${lastFsError.op ? `<div class="small-note" style="opacity:.95"><b>Op:</b> ${escapeHtml(lastFsError.op)}</div>` : ''}
+          ${lastFsError.path ? `<div class="small-note" style="opacity:.95"><b>Path:</b> <code>${escapeHtml(lastFsError.path)}</code></div>` : ''}
+          ${lastFsError.message ? `<div class="small-note" style="opacity:.85; margin-top:6px">${escapeHtml(String(lastFsError.message).slice(0,220))}</div>` : ''}
+        </div>
+      ` : `<div class="small-note" style="opacity:.85">Sin errores recientes.</div>`;
+
+      const isAdminNow = (mesaRole === 'ADMIN');
+      const showRetryStore = (isAdminNow && mesaValid && (sharedLastError || storeDocOk === false));
+
+      setHtml($diagBlock, `
+        <div class="table-wrap" role="region" aria-label="Diagnóstico">
+          <table class="table">
+            <tbody>
+              <tr><td style="width:40%"><b>Ruta</b></td><td><code>${escapeHtml(pathNow)}</code></td></tr>
+              <tr><td><b>Firebase</b></td><td>${(window.PK_FB && window.PK_FB.db) ? 'OK' : 'NO'}</td></tr>
+              <tr><td><b>authReady</b></td><td>${authReady ? 'true' : 'false'}</td></tr>
+              <tr><td><b>Usuario</b></td><td>${u ? `${escapeHtml(u.displayName || 'Usuario')} <span style="opacity:.8">(${escapeHtml(u.email || u.uid || '')})</span>` : '—'}</td></tr>
+              <tr><td><b>mesaReady</b></td><td>${mesaReady ? 'true' : 'false'}</td></tr>
+              <tr><td><b>mesaValid</b></td><td>${mesaValid ? 'true' : 'false'}</td></tr>
+              <tr><td><b>mesaId</b></td><td>${mesaId ? `<code>${escapeHtml(mesaId)}</code>` : (savedMid ? `<code>${escapeHtml(savedMid)}</code> <span style="opacity:.8">(guardado)</span>` : '—')}</td></tr>
+              <tr><td><b>Rol</b></td><td>${mesaRole ? `<span class="badge">${escapeHtml(mesaRole)}</span>` : '—'}</td></tr>
+              <tr><td><b>Doc mesa</b></td><td>${tri(mesaDocOk)}</td></tr>
+              <tr><td><b>Doc member</b></td><td>${tri(memberDocOk)}</td></tr>
+              <tr><td><b>Store gate</b></td><td>${storeGate}${sharedLastError ? ` <span style="opacity:.85">(${escapeHtml(sharedLastError)})</span>` : ''}</td></tr>
+              <tr><td><b>Doc store/main</b></td><td>${tri(storeDocOk)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        ${showRetryStore ? `
+          <div class="row" style="margin-top:10px; gap:10px; flex-wrap:wrap">
+            <button class="btn" type="button" id="retryStoreBtn">Reintentar Store</button>
+          </div>
+          <div class="small-note" style="margin-top:8px; opacity:.85">Esto intenta crear <code>mesas/{mesaId}/store/main</code> otra vez (solo ADMIN).</div>
+        ` : ''}
+
+        ${errHtml}
+      `);
+
+      const $retry = document.getElementById('retryStoreBtn');
+      if ($retry){
+        $retry.addEventListener('click', async () => {
+          if (!currentUser || !mesaValid || mesaRole !== 'ADMIN'){
+            toast('Solo ADMIN puede inicializar el store.');
+            return;
+          }
+          const db = getDb();
+          const fs = getFs();
+          if (!db || !fs){
+            toast('Firestore no está disponible.');
+            return;
+          }
+          const storePath = `mesas/${mesaId}/store/main`;
+          try{
+            $retry.disabled = true;
+            const ref = fs.doc(db, 'mesas', mesaId, 'store', 'main');
+            const nowTs = fs.serverTimestamp();
+            await fs.setDoc(ref, {
+              v: SHARED_STORE_VERSION,
+              chips: defaultChips(),
+              players: defaultPlayers(),
+              sessions: defaultSessions(),
+              pdfSeqNext: 1,
+              draftSessionId: '',
+              createdAt: nowTs,
+              updatedAt: nowTs,
+              updatedBy: (currentUser.email || currentUser.uid),
+            }, { merge: true });
+            sharedLastError = '';
+            storeDocOk = true;
+            clearLastFsError();
+            await validateMesaFromLocal();
+            renderUsuarios();
+          }catch(e){
+            setLastFsError(e, { op: 'setDoc store/main (manual retry)', path: storePath });
+            sharedLastError = 'No se pudo inicializar el store. ' + fsErrText(e);
+            renderUsuarios();
+          }finally{
+            try{ $retry.disabled = false; }catch(e2){}
+          }
+        });
+      }
+    }
     async function loadAndRenderMembers(){
       if (!$membersBlock) return;
       if (!currentUser){ setHtml($membersBlock, `<div class="small-note">Inicia sesión.</div>`); return; }
@@ -4464,6 +4738,18 @@ function renderConfiguracion(){
       $reloadMembersBtn.addEventListener('click', () => loadAndRenderMembers());
     }
 
+    if ($diagRefreshBtn){
+      $diagRefreshBtn.addEventListener('click', async () => {
+        try{
+          $diagRefreshBtn.disabled = true;
+          await validateMesaFromLocal();
+          renderUsuarios();
+        }finally{
+          try{ $diagRefreshBtn.disabled = false; }catch(e2){}
+        }
+      });
+    }
+
     if ($genInviteBtn){
       $genInviteBtn.addEventListener('click', async () => {
         if (!mesaValid || mesaRole !== 'ADMIN'){
@@ -4485,8 +4771,39 @@ function renderConfiguracion(){
       });
     }
 
+    const $backBtn = document.getElementById('backBtn');
+    if ($backBtn){
+      $backBtn.addEventListener('click', async () => {
+        // Volver SIEMPRE funciona: o navega a Inicio, o avisa claro por qué está bloqueado.
+        if (!mesaReady || !mesaValid){
+          await confirmDialog({
+            title: 'Bloqueado',
+            body: 'No hay una MESA activa para este usuario. Crea o activa una MESA primero.',
+            okText: 'OK',
+            cancelText: 'Cerrar'
+          });
+          return;
+        }
+        if (!sharedReady){
+          toast('Cargando MESA…');
+          return;
+        }
+        if (sharedLastError){
+          await confirmDialog({
+            title: 'Bloqueado',
+            body: 'Tu MESA tiene un problema con el store. Ve a ESTADO → Reintentar Store.\n\nDetalle: ' + String(sharedLastError || ''),
+            okText: 'OK',
+            cancelText: 'Cerrar'
+          });
+          return;
+        }
+        navigate('/inicio');
+      });
+    }
+
     // Render inicial
     renderMesaBlock();
+    renderDiagBlock();
     loadAndRenderMembers();
     loadAndRenderInvites();
 

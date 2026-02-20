@@ -1,6 +1,6 @@
 /* Pokerito SW — offline mínimo (cache core) — v0.2.0 Etapa 5 (PWA cache bump) */
 // Etapa 5: bump explícito para forzar refresh en iPad PWA (incluye Firebase helpers)
-const CACHE_NAME = 'pokerito-v0.2.0-usuarios-firebase-etapa5-r1';
+const CACHE_NAME = 'pokerito-v0.2.0-etapa5-mesa-hotfix-r2';
 const CORE_ASSETS = [
   './',
   './index.html',
