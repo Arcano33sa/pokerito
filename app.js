@@ -4230,7 +4230,9 @@ function renderConfiguracion(){
               $use.disabled = true;
               persistMesaId(mid);
               await validateMesaFromLocal();
-              renderUsuarios();
+              // Si la MESA valida, intentar salir de inmediato (el gate mostrará “Sincronizando…” si aplica).
+              if (mesaValid) navigate('/inicio');
+              else renderUsuarios();
             }catch(e){
               lastAuthError = 'No se pudo activar esa MESA.';
               renderUsuarios();
@@ -4266,6 +4268,10 @@ function renderConfiguracion(){
           <button class="btn" type="button" id="refreshMesaBtn">Revalidar</button>
         </div>
         <div class="small-note" style="margin-top:10px">Sin MESA activa, la app queda bloqueada (por diseño).</div>
+        <div class="small-note" style="margin-top:8px; opacity:.9">
+          <b>Store:</b>
+          ${!sharedReady ? 'Sincronizando…' : (sharedLastError ? `<span style="color: color-mix(in oklab, #ff4d6d 80%, var(--text))">${escapeHtml(sharedLastError)}</span>` : 'OK')}
+        </div>
       `);
       const $refresh = document.getElementById('refreshMesaBtn');
       if ($refresh){
@@ -4489,11 +4495,12 @@ function renderConfiguracion(){
 
     const back = document.getElementById("backBtn");
     if (back) back.addEventListener("click", () => {
-      // Evitar la sensación de “botón muerto”: si no hay MESA, el gate te rebotaría.
-      if (!mesaReady){ toast('Validando MESA…'); return; }
-      if (!mesaValid){ toast('Activa una MESA para continuar.'); return; }
-      if (!sharedReady){ toast('Sincronizando MESA…'); return; }
-      if (sharedLastError){ toast('Error de sincronización de MESA.'); return; }
+      // Evitar la sensación de “botón muerto”: SIEMPRE navegar.
+      // Si falta algo, el gate mostrará la pantalla correspondiente (Validando / Sincronizando / Error).
+      if (!mesaReady){ toast('Validando MESA…'); }
+      else if (!mesaValid){ toast('Activa una MESA para continuar.'); }
+      else if (!sharedReady){ toast('Sincronizando MESA…'); }
+      else if (sharedLastError){ toast('Error de sincronización de MESA.'); }
       navigate("/inicio");
     });
   }
