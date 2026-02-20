@@ -162,7 +162,8 @@
       // Start listening shared store/main for this MESA
       try{ attachSharedStore(); }catch(e){}
     }catch(e){
-      mesaLastError = 'No se pudo validar tu mesa. Intenta de nuevo.';
+      try{ console.error('validateMesaFromLocal error', e); }catch(e2){}
+      mesaLastError = 'No se pudo validar tu mesa. ' + fsErrText(e);
       mesaReady = true;
       mesaValid = false;
       try{ detachSharedStore(); }catch(e){}
@@ -459,6 +460,15 @@
     if (code) return `Error de login (${code}).`;
     if (err && err.message) return String(err.message);
     return 'Error de login.';
+  }
+
+  function fsErrText(err){
+    const code = (err && err.code) ? String(err.code) : '';
+    if (code === 'permission-denied') return 'Permiso denegado en Firestore. Revisa Reglas.';
+    if (code === 'unauthenticated') return 'Sesión no válida. Cierra sesión e inicia de nuevo.';
+    if (code) return `Error de Firestore (${code}).`;
+    if (err && err.message) return String(err.message);
+    return 'Error de Firestore.';
   }
 
   function getAuthApi(){
@@ -4128,6 +4138,7 @@ function renderConfiguracion(){
       }
 
       if (!mesaValid){
+        const savedMid = loadMesaId();
         setHtml($mesaBlock, `
           <div class="row" style="gap:10px; flex-wrap:wrap">
             <button class="btn primary" type="button" id="createMesaBtn">CREAR MESA</button>
@@ -4141,11 +4152,27 @@ function renderConfiguracion(){
             <button class="btn" type="button" id="joinMesaBtn">UNIRSE</button>
           </div>
           <div class="small-note" style="margin-top:10px; opacity:.9">Formato: <code>PK-XXXX</code> (4 caracteres).</div>
+
+          <div class="small-note" style="margin-top:14px; opacity:.9">
+            <b>Rescate:</b> si ya creaste una MESA pero no aparece aquí, pega el <b>ID real</b> (nombre del documento en Firestore).
+          </div>
+          ${savedMid ? `<div class="small-note" style="margin-top:8px; opacity:.9">ID guardado en este dispositivo: <code>${escapeHtml(savedMid)}</code></div>` : ''}
+          <div class="row" style="margin-top:10px; gap:10px; align-items:flex-end; flex-wrap:wrap">
+            <label class="field" style="flex:1 1 320px; min-width:260px">
+              <span>ID de MESA</span>
+              <input id="manualMesaIdInput" type="text" autocomplete="off" placeholder="Ej: 2uXK7FGywXbAJVP5Xec1" value="${escapeAttr(savedMid || '')}" />
+            </label>
+            <button class="btn" type="button" id="manualMesaUseBtn">ACTIVAR</button>
+            <button class="btn danger" type="button" id="manualMesaClearBtn">LIMPIAR</button>
+          </div>
         `);
 
         const $create = document.getElementById('createMesaBtn');
         const $join = document.getElementById('joinMesaBtn');
         const $code = document.getElementById('joinCodeInput');
+        const $mid = document.getElementById('manualMesaIdInput');
+        const $use = document.getElementById('manualMesaUseBtn');
+        const $clr = document.getElementById('manualMesaClearBtn');
 
         if ($create){
           $create.addEventListener('click', async () => {
@@ -4162,7 +4189,7 @@ function renderConfiguracion(){
               lastAuthInfo = 'MESA creada.';
               renderUsuarios();
             }catch(e){
-              lastAuthError = 'No se pudo crear la MESA.';
+              lastAuthError = fsErrText(e);
               renderUsuarios();
             }finally{
               try{ $create.disabled = false; }catch(e2){}
@@ -4188,6 +4215,40 @@ function renderConfiguracion(){
               renderUsuarios();
             }finally{
               try{ $join.disabled = false; }catch(e2){}
+            }
+          });
+        }
+
+        if ($use){
+          $use.addEventListener('click', async () => {
+            const mid = ($mid && $mid.value) ? String($mid.value).trim() : '';
+            if (!mid){
+              toast('Pega un ID de MESA.');
+              return;
+            }
+            try{
+              $use.disabled = true;
+              persistMesaId(mid);
+              await validateMesaFromLocal();
+              renderUsuarios();
+            }catch(e){
+              lastAuthError = 'No se pudo activar esa MESA.';
+              renderUsuarios();
+            }finally{
+              try{ $use.disabled = false; }catch(e2){}
+            }
+          });
+        }
+
+        if ($clr){
+          $clr.addEventListener('click', async () => {
+            try{
+              $clr.disabled = true;
+              clearMesaId();
+              await validateMesaFromLocal();
+              renderUsuarios();
+            }finally{
+              try{ $clr.disabled = false; }catch(e2){}
             }
           });
         }
@@ -4427,7 +4488,14 @@ function renderConfiguracion(){
     try{ if ($genInviteBtn) $genInviteBtn.style.display = (mesaValid && mesaRole === 'ADMIN') ? '' : 'none'; }catch(e){}
 
     const back = document.getElementById("backBtn");
-    if (back) back.addEventListener("click", () => navigate("/inicio"));
+    if (back) back.addEventListener("click", () => {
+      // Evitar la sensación de “botón muerto”: si no hay MESA, el gate te rebotaría.
+      if (!mesaReady){ toast('Validando MESA…'); return; }
+      if (!mesaValid){ toast('Activa una MESA para continuar.'); return; }
+      if (!sharedReady){ toast('Sincronizando MESA…'); return; }
+      if (sharedLastError){ toast('Error de sincronización de MESA.'); return; }
+      navigate("/inicio");
+    });
   }
 
   function renderSoporte(){
