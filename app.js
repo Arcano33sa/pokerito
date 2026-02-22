@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.11 — Etapa 7/7: Store Firestore compartido (solicitudes + roles) */
+/* Pokerito — v0.1.12 — Etapa 3/3: Late Joiners hardening + smoke + cache bump */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -977,12 +977,15 @@ function canReadData(){
   return !!(authorized && authUser && storeSyncReady && storeRemoteExists && !storeSyncError);
 }
 
-function requireAdminEdit(){
-  if (!authorized || !authUser){ showToast('Inicia sesión'); return false; }
-  if (!storeSyncReady){ showToast('Store cargando…'); return false; }
-  if (storeSyncError){ showToast('Store: ' + storeSyncError); return false; }
-  if (!storeRemoteExists){ showToast('Store no inicializado'); return false; }
-  if (!isAdminRole()){ showToast('Solo ADMIN puede editar'); return false; }
+function requireAdminEdit(ctx){
+  const prefix = (ctx === undefined || ctx === null) ? '' : String(ctx).trim();
+  const withCtx = (m) => prefix ? (prefix + ': ' + m) : m;
+
+  if (!authorized || !authUser){ showToast(withCtx('Inicia sesión')); return false; }
+  if (!storeSyncReady){ showToast(withCtx('Store cargando…')); return false; }
+  if (storeSyncError){ showToast(withCtx('Store: ' + storeSyncError)); return false; }
+  if (!storeRemoteExists){ showToast(withCtx('Store no inicializado')); return false; }
+  if (!isAdminRole()){ showToast(withCtx('Solo ADMIN puede editar')); return false; }
   return true;
 }
 
@@ -2372,6 +2375,7 @@ function renderHistorialDetalle(){
             <div class="mesa-sub">${escapeHtml(String(s.date || ''))} · ${escapeHtml(String(players.length))} jugadores · snapshot ${escapeHtml(String(chips.length))} fichas</div>
           </div>
           <div class="row">
+            ${(!readOnly && canEditData() && String(s.status || '').toLowerCase() === 'draft') ? `<button class="btn" type="button" id="addPlayersBtn">Agregar jugadores</button>` : ``}
             <button class="btn" type="button" id="backBtn">Volver</button>
             ${readOnly ? `<button class="btn primary" type="button" id="toInicioBtn">Inicio</button>` : `<button class="btn danger" type="button" id="closeBtn">Cerrar Partida</button>`}
           </div>
@@ -2480,6 +2484,94 @@ function renderHistorialDetalle(){
         if (!ok) return;
         closeSession(s.id);
         navigate('/juego');
+      });
+    }
+
+    const $addPlayers = document.getElementById('addPlayersBtn');
+    if ($addPlayers){
+      $addPlayers.addEventListener('click', async () => {
+        const ctx = 'Agregar jugadores';
+        let rerender = false;
+        try{
+          if (readOnly) return;
+
+          const sid = String(s && s.id ? s.id : '').trim();
+          if (!sid){ showToast(ctx + ': Sesión no válida'); return; }
+
+          // Sesión fresca (evitar objeto stale para elegibles)
+          const base = getSessionById(sid);
+          if (!base){ showToast(ctx + ': Sesión no encontrada'); return; }
+          if (String(base.status || '').toLowerCase() !== 'draft') return;
+          if (!requireAdminEdit(ctx)) return;
+
+          const existing = new Set();
+          (Array.isArray(base.playerIds) ? base.playerIds : []).forEach(pid => existing.add(String(pid)));
+          (Array.isArray(base.playersSnapshot) ? base.playersSnapshot : []).forEach(p => { if (p && p.id) existing.add(String(p.id)); });
+          (base.game && Array.isArray(base.game.players) ? base.game.players : []).forEach(p => { if (p && p.id) existing.add(String(p.id)); });
+
+          const eligible = getPlayers()
+            .filter(p => p && p.id && p.active === true)
+            .map(p => ({
+              id: String(p.id),
+              display: playerDisplayName(p),
+              name: (p && p.name ? String(p.name).trim() : ''),
+              nick: (p && p.nick ? String(p.nick).trim() : ''),
+            }))
+            .filter(p => !existing.has(p.id))
+            .sort((a,b) => {
+              const ad = String(a.display || '').toLowerCase();
+              const bd = String(b.display || '').toLowerCase();
+              if (ad < bd) return -1;
+              if (ad > bd) return 1;
+              return String(a.id).localeCompare(String(b.id));
+            });
+
+          if (!eligible.length){
+            showToast(ctx + ': No hay jugadores nuevos. Agrégalos en Configuración y actívalos.');
+            return;
+          }
+
+          const selected = await multiSelectPlayersDialog({
+            title: 'Agregar jugadores',
+            body: 'Selecciona jugadores activos que no estén en la sesión.',
+            players: eligible,
+            okText: 'Agregar',
+            cancelText: 'Cancelar'
+          });
+          if (!Array.isArray(selected) || !selected.length) return;
+
+          // Re-leer sesión antes de aplicar (concurrencia mínima)
+          const latest = getSessionById(sid);
+          if (!latest){ showToast(ctx + ': Sesión no encontrada'); return; }
+          if (String(latest.status || '').toLowerCase() !== 'draft'){ showToast(ctx + ': Sesión cerrada: no se pueden agregar jugadores'); return; }
+          if (!requireAdminEdit(ctx)) return;
+
+          const existing2 = new Set();
+          (Array.isArray(latest.playerIds) ? latest.playerIds : []).forEach(pid => existing2.add(String(pid)));
+          (Array.isArray(latest.playersSnapshot) ? latest.playersSnapshot : []).forEach(p => { if (p && p.id) existing2.add(String(p.id)); });
+          (latest.game && Array.isArray(latest.game.players) ? latest.game.players : []).forEach(p => { if (p && p.id) existing2.add(String(p.id)); });
+
+          const filtered = selected
+            .map(x => String(x || '').trim())
+            .filter(pid => pid && !existing2.has(pid));
+
+          if (!filtered.length){
+            showToast(ctx + ': Ya estaban en la sesión (actualizada).');
+            return;
+          }
+
+          const res = addPlayersToDraftSession(sid, filtered);
+          rerender = true;
+
+          if (res && res.addedCount > 0) showToast('Jugadores agregados: ' + String(res.addedCount));
+        }catch(err){
+          const msg = (err && err.message) ? err.message : String(err || 'Error');
+          showToast(ctx + ': ' + msg);
+        }finally{
+          if (rerender){
+            try{ onRoute(); }catch(e){}
+          }
+        }
       });
     }
 
@@ -3253,6 +3345,108 @@ function renderConfiguracion(){
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
     return sessions.find(x => x && x.id === id) || null;
   }
+
+  // ===== Etapa 1/3: Late joiners (agregar jugadores a Draft sin re-snapshot completo) =====
+  // Regla de negocio:
+  // - Los jugadores a agregar deben existir en Configuración (store.players) y estar active=true
+  // - Solo en sesiones status='draft'
+  // - Solo ADMIN (requireAdminEdit)
+  // Nota: NO recalcula el playersSnapshot completo; solo anexa snapshots nuevos al final.
+  function addPlayersToDraftSession(sessionId, newPlayerIds){
+    const ctx = 'Agregar jugadores';
+    if (!requireAdminEdit(ctx)) return { addedCount: 0, ignoredCount: 0, addedIds: [], ignoredIds: [] };
+
+    const toast = (m) => showToast(ctx + ': ' + m);
+
+    const sid = String(sessionId || '').trim() || String(store.draftSessionId || '').trim();
+    if (!sid){
+      toast('Sesión no válida');
+      return { addedCount: 0, ignoredCount: 0, addedIds: [], ignoredIds: [] };
+    }
+
+    // Obtener la sesión más reciente desde store (evitar objeto stale)
+    const s = getSessionById(sid);
+    if (!s){
+      toast('Sesión no encontrada');
+      return { addedCount: 0, ignoredCount: 0, addedIds: [], ignoredIds: [] };
+    }
+    if (String(s.status || '').toLowerCase() !== 'draft'){
+      toast('Sesión cerrada: no se pueden agregar jugadores');
+      return { addedCount: 0, ignoredCount: 0, addedIds: [], ignoredIds: [] };
+    }
+
+    const raw = Array.isArray(newPlayerIds)
+      ? newPlayerIds
+      : (newPlayerIds != null ? [newPlayerIds] : []);
+
+    // Normalizar ids de entrada (sin duplicados)
+    const req = [];
+    const reqSeen = new Set();
+    raw.forEach(x => {
+      const pid = String(x || '').trim();
+      if (!pid) return;
+      if (reqSeen.has(pid)) return;
+      reqSeen.add(pid);
+      req.push(pid);
+    });
+
+    const master = new Map(getPlayers().filter(p => p && p.id).map(p => [String(p.id), p]));
+    const existing = new Set();
+    (Array.isArray(s.playerIds) ? s.playerIds : []).forEach(pid => existing.add(String(pid)));
+    (Array.isArray(s.playersSnapshot) ? s.playersSnapshot : []).forEach(p => { if (p && p.id) existing.add(String(p.id)); });
+    (s.game && Array.isArray(s.game.players) ? s.game.players : []).forEach(p => { if (p && p.id) existing.add(String(p.id)); });
+
+    const added = [];
+    const ignored = [];
+    req.forEach(pid => {
+      const p = master.get(pid);
+      const ok = !!(p && p.active === true);
+      if (!ok || existing.has(pid)){
+        ignored.push(pid);
+        return;
+      }
+      added.push(pid);
+      existing.add(pid);
+    });
+
+    if (!added.length){
+      toast('No hay jugadores nuevos. Agrégalos en Configuración y actívalos.');
+      return { addedCount: 0, ignoredCount: req.length, addedIds: [], ignoredIds: ignored.slice() };
+    }
+
+    if (!Array.isArray(s.playerIds)) s.playerIds = [];
+    if (!Array.isArray(s.playersSnapshot)) s.playersSnapshot = [];
+
+    // Anexar ids nuevos al final (sin duplicados)
+    const pidSet = new Set(s.playerIds.map(x => String(x)));
+    added.forEach(pid => {
+      if (pidSet.has(pid)) return;
+      s.playerIds.push(pid);
+      pidSet.add(pid);
+    });
+
+    // Anexar snapshots solo de los nuevos jugadores (NO re-snapshot del resto)
+    const newSnaps = snapshotPlayers(added);
+    newSnaps.forEach(sp => s.playersSnapshot.push(sp));
+
+    // Asegurar game.players consistente (preserva estados existentes)
+    ensureSessionGame(s);
+
+    // Persistir
+    touchSession(s);
+    saveSession(s);
+
+    return {
+      addedCount: added.length,
+      ignoredCount: Math.max(0, req.length - added.length),
+      addedIds: added.slice(),
+      ignoredIds: ignored.slice()
+    };
+  }
+
+  // Hook ligero para pruebas manuales (sin UI):
+  // window.pokeritoAddPlayersToDraftSession(sessionId?, [playerIds])
+  try{ window.pokeritoAddPlayersToDraftSession = addPlayersToDraftSession; }catch(e){}
 
   function getClosedSessions(){
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
@@ -4266,6 +4460,91 @@ function renderConfiguracion(){
 
       document.body.appendChild(overlay);
       try{ document.body.style.overflow = 'hidden'; }catch(e){}
+    });
+  }
+
+  function multiSelectPlayersDialog({ title, body, players, okText, cancelText }){
+    return new Promise(resolve => {
+      const list = Array.isArray(players) ? players : [];
+
+      const overlay = el(`
+        <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Seleccionar jugadores">
+          <div class="modal">
+            <div class="modal-head">
+              <div class="modal-title">${escapeHtml(title || 'Seleccionar')}</div>
+              <button class="icon-btn" type="button" data-act="close" aria-label="Cerrar">×</button>
+            </div>
+            <div class="modal-body">
+              ${body ? `<div class="small-note" style="margin-top:0">${escapeHtml(body)}</div>` : ''}
+              <div class="small-note" style="margin-top:10px">Seleccionados: <b id="selCount">0</b></div>
+              <div class="pick-grid" style="margin-top:10px">
+                ${list.map(p => {
+                  const disp = String(p && p.display ? p.display : '').trim() || 'Sin nombre';
+                  const name = String(p && p.name ? p.name : '').trim();
+                  const nick = String(p && p.nick ? p.nick : '').trim();
+                  const sub = (name && name !== disp) ? name : ((nick && nick !== disp) ? nick : '');
+                  return `
+                    <button class="pick" type="button" data-id="${escapeAttr(String(p.id || ''))}">
+                      <div class="pick-nick">${escapeHtml(disp)}</div>
+                      <div class="pick-name">${escapeHtml(sub)}</div>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn" type="button" data-act="cancel">${escapeHtml(cancelText || 'Cancelar')}</button>
+              <button class="btn primary" type="button" data-act="ok" disabled>${escapeHtml(okText || 'OK')}</button>
+            </div>
+          </div>
+        </div>
+      `);
+
+      const selected = new Set();
+      const $ok = overlay.querySelector('[data-act="ok"]');
+      const $count = overlay.querySelector('#selCount');
+
+      function sync(){
+        if ($count) $count.textContent = String(selected.size);
+        if ($ok) $ok.disabled = (selected.size === 0);
+      }
+
+      function close(val){
+        overlay.remove();
+        try{ document.body.style.overflow = ''; }catch(e){}
+        resolve(val);
+      }
+
+      overlay.addEventListener('click', (ev) => {
+        if (ev.target === overlay) close(null);
+      });
+      overlay.querySelectorAll('[data-act="close"],[data-act="cancel"]').forEach(b => b.addEventListener('click', () => close(null)));
+
+      const $grid = overlay.querySelector('.pick-grid');
+      if ($grid){
+        $grid.addEventListener('click', (ev) => {
+          const btn = ev.target.closest('button.pick[data-id]');
+          if (!btn) return;
+          const id = String(btn.getAttribute('data-id') || '').trim();
+          if (!id) return;
+          if (selected.has(id)) selected.delete(id);
+          else selected.add(id);
+          btn.classList.toggle('selected', selected.has(id));
+          sync();
+        });
+      }
+
+      $ok.addEventListener('click', () => close(Array.from(selected)));
+      overlay.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') { ev.preventDefault(); close(null); }
+        if (ev.key === 'Enter') {
+          if (selected.size > 0) { ev.preventDefault(); close(Array.from(selected)); }
+        }
+      });
+
+      document.body.appendChild(overlay);
+      try{ document.body.style.overflow = 'hidden'; }catch(e){}
+      sync();
     });
   }
 

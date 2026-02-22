@@ -1,6 +1,6 @@
 /* Pokerito SW — offline mínimo (cache core) */
-// Etapa 7/7: bump (store Firestore)
-const CACHE_NAME = 'pokerito-v0.1.11-etapa7-store-firestore';
+// Etapa 3/3: cache bump (late joiners hardening)
+const CACHE_NAME = 'pokerito-v0.1.12-late-joiners-hardening';
 const CORE_ASSETS = [
   './',
   './index.html',
