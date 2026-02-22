@@ -1,6 +1,6 @@
 /* Pokerito SW — offline mínimo (cache core) */
 // Etapa 4: cache bump (fecha automática del día al iniciar)
-const CACHE_NAME = 'pokerito-v0.1.12-date-auto-today';
+const CACHE_NAME = 'pokerito-v0.1.13-pdf-global-records-v1';
 const CORE_ASSETS = [
   './',
   './index.html',

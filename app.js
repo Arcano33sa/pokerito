@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.12 — Etapa 3/3: Late Joiners hardening + smoke + cache bump */
+/* Pokerito — v0.1.13 — Etapa 1/3: PDF Ranking Global Top 10 (acumulado) */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -2183,6 +2183,24 @@ function renderHistorialDetalle(){
     const sum = an.summary;
     const rows = an.rows.slice();
 
+    // Etapa 1/3: Ranking GLOBAL acumulado (closed + sesión actual por id, aunque timing)
+    const ga = computeGlobalAnalytics({ includeSessionId: s.id });
+    const top10 = (ga && Array.isArray(ga.ranking) ? ga.ranking.slice(0, 10) : []);
+    const rankTbody = top10.map((r, idx) => {
+      const avg = r.games ? (numOrZero(r.netTotal) / numOrZero(r.games)) : 0;
+      return `
+        <tr>
+          <td class="num">${escapeHtml(String(idx + 1))}</td>
+          <td class="who" title="${escapeAttr(String(r.display || ''))}">${escapeHtml(String(r.display || ''))}</td>
+          <td class="num">${escapeHtml(formatMoney(r.netTotal))}</td>
+          <td class="num">${escapeHtml(String(r.games || 0))}</td>
+          <td class="num">${escapeHtml(String(r.wins1 || 0))}</td>
+          <td class="num">${escapeHtml(formatMoney(avg))}</td>
+          <td class="num">${escapeHtml(formatMoney(r.investedTotal || 0))}</td>
+        </tr>
+      `;
+    }).join('');
+
     const eps = 0.0001;
 
     const reportName = makeReportNameResolver(s);
@@ -2228,6 +2246,330 @@ function renderHistorialDetalle(){
       `;
     }).join('');
 
+    // Etapa 2/3: Estadísticas por jugador (ACTIVOS) — acumulado global (closed + sesión actual)
+    const activePlayers = getPlayers().filter(p => p && p.id && p.active === true);
+    activePlayers.sort((a,b) => {
+      const an = reportName(a.id, playerDisplayName(a));
+      const bn = reportName(b.id, playerDisplayName(b));
+      return String(an).localeCompare(String(bn), 'es', { sensitivity: 'base' });
+    });
+
+    // Opcional (pero útil): rebuys históricos por jugador (cantidad + monto)
+    const rebuysMap = (function computePdfRebuysByPlayer(){
+      const map = new Map();
+      try{
+        const uniq = new Map();
+        getClosedSessions().forEach(ss => { if (ss && ss.id) uniq.set(String(ss.id), ss); });
+        const sid = String(s && s.id ? s.id : '').trim();
+        if (sid){
+          const cur = getSessionById(sid);
+          if (cur && cur.id) uniq.set(String(cur.id), cur);
+        }
+        Array.from(uniq.values()).forEach(ss => {
+          try{
+            const an2 = analyzeSession(ss);
+            (an2.rows || []).forEach(r => {
+              const pid = String(r.id || '').trim();
+              if (!pid) return;
+              const cur = map.get(pid) || { count: 0, amount: 0 };
+              cur.count += Math.max(0, Math.floor(numOrZero(r.rebuysCount)));
+              cur.amount += numOrZero(r.rebuysTotal);
+              map.set(pid, cur);
+            });
+          }catch(e){}
+        });
+      }catch(e){}
+      return map;
+    })();
+
+    // ===== Etapa 3/3: Records globales (TODOS) — extremos (sesiones closed + sesión actual) =====
+    const globalRecords = (function computePdfGlobalRecords(){
+      const sessionsUniq = new Map();
+      try{
+        getClosedSessions().forEach(ss => { if (ss && ss.id) sessionsUniq.set(String(ss.id), ss); });
+      }catch(e){}
+
+      try{
+        const sid = String(s && s.id ? s.id : '').trim();
+        if (sid){
+          const cur = getSessionById(sid);
+          if (cur && cur.id) sessionsUniq.set(String(cur.id), cur);
+          else sessionsUniq.set(sid, s);
+        }
+      }catch(e){}
+
+      const sessions = Array.from(sessionsUniq.values());
+
+      const rec = {
+        // A) Records por sesión (global)
+        maxTotalInvested: null, // { value, date }
+        maxPlayersCount: null,
+        maxRebuysCount: null,
+        maxRebuysAmount: null,
+        maxAbsDelta: null,
+
+        // B) Records de jugador en una sesión
+        maxGain: null, // { value, date, player }
+        maxLoss: null,
+        maxInvested: null,
+        maxPlayerRebuysCount: null,
+        maxPlayerRebuysAmount: null,
+
+        // C) Records históricos por jugador (acumulado global)
+        maxNetTotal: null, // { value, player }
+        minNetTotal: null,
+        maxGames: null,
+        maxWins1: null,
+        bestAvgNetMin3: null, // { value, player, games }
+      };
+
+      function updMax(cur, value, extra){
+        if (!Number.isFinite(value)) return cur;
+        if (!cur || value > cur.value + 0.0001) return { value, ...extra };
+        return cur;
+      }
+      function updMin(cur, value, extra){
+        if (!Number.isFinite(value)) return cur;
+        if (!cur || value < cur.value - 0.0001) return { value, ...extra };
+        return cur;
+      }
+
+      sessions.forEach(ss => {
+        if (!ss) return;
+        try{
+          const date = String(ss.date || '').trim() || '—';
+          const an2 = analyzeSession(ss);
+          const sum2 = an2.summary || calcSessionSummary(ss);
+          const rows2 = Array.isArray(an2.rows) ? an2.rows : [];
+
+          const rbCount = rows2.reduce((a,r) => a + Math.max(0, Math.floor(numOrZero(r.rebuysCount))), 0);
+          const rbAmt = rows2.reduce((a,r) => a + numOrZero(r.rebuysTotal), 0);
+          const absDelta = Math.abs(numOrZero(sum2.delta));
+
+          rec.maxTotalInvested = updMax(rec.maxTotalInvested, numOrZero(sum2.totalInvested), { date });
+          rec.maxPlayersCount = updMax(rec.maxPlayersCount, Math.max(0, Math.floor(numOrZero(sum2.playersCount))), { date });
+          rec.maxRebuysCount = updMax(rec.maxRebuysCount, rbCount, { date });
+          rec.maxRebuysAmount = updMax(rec.maxRebuysAmount, rbAmt, { date });
+          rec.maxAbsDelta = updMax(rec.maxAbsDelta, absDelta, { date });
+
+          const rn = makeReportNameResolver(ss);
+          rows2.forEach(r => {
+            const pid = String(r.id || '').trim();
+            if (!pid) return;
+            const player = rn(pid, r.display);
+            rec.maxGain = updMax(rec.maxGain, numOrZero(r.net), { date, player });
+            rec.maxLoss = updMin(rec.maxLoss, numOrZero(r.net), { date, player });
+            rec.maxInvested = updMax(rec.maxInvested, numOrZero(r.invested), { date, player });
+            rec.maxPlayerRebuysCount = updMax(rec.maxPlayerRebuysCount, Math.max(0, Math.floor(numOrZero(r.rebuysCount))), { date, player });
+            rec.maxPlayerRebuysAmount = updMax(rec.maxPlayerRebuysAmount, numOrZero(r.rebuysTotal), { date, player });
+          });
+        }catch(e){}
+      });
+
+      // C) Records históricos por jugador — desde acumulado global (ga)
+      try{
+        const list = (ga && Array.isArray(ga.ranking)) ? ga.ranking : [];
+        list.forEach(r => {
+          const player = String(r.display || '').trim() || '—';
+          rec.maxNetTotal = updMax(rec.maxNetTotal, numOrZero(r.netTotal), { player });
+          rec.minNetTotal = updMin(rec.minNetTotal, numOrZero(r.netTotal), { player });
+          rec.maxGames = updMax(rec.maxGames, Math.max(0, Math.floor(numOrZero(r.games))), { player });
+          rec.maxWins1 = updMax(rec.maxWins1, Math.max(0, Math.floor(numOrZero(r.wins1))), { player });
+
+          const games = Math.max(0, Math.floor(numOrZero(r.games)));
+          if (games >= 3){
+            const avg = (games ? (numOrZero(r.netTotal) / games) : 0);
+            if (!rec.bestAvgNetMin3 || avg > rec.bestAvgNetMin3.value + 0.0001){
+              rec.bestAvgNetMin3 = { value: avg, player, games };
+            }
+          }
+        });
+      }catch(e){}
+
+      return rec;
+    })();
+
+    function recMoney(item){
+      if (!item) return '—';
+      return formatMoney(numOrZero(item.value));
+    }
+    function recInt(item){
+      if (!item) return '—';
+      return String(Math.max(0, Math.floor(numOrZero(item.value))));
+    }
+    function recDate(item){
+      if (!item) return '—';
+      return String(item.date || '—');
+    }
+    function recDatePlayer(item){
+      if (!item) return '—';
+      return `${String(item.date || '—')} · ${String(item.player || '—')}`;
+    }
+    function recPlayer(item){
+      if (!item) return '—';
+      return String(item.player || '—');
+    }
+
+    const recordsHtml = (function buildPdfRecordsHtml(){
+      const rowsA = [
+        ['Mayor monto total jugado (sesión)', recMoney(globalRecords.maxTotalInvested), recDate(globalRecords.maxTotalInvested)],
+        ['Mayor cantidad de jugadores (sesión)', recInt(globalRecords.maxPlayersCount), recDate(globalRecords.maxPlayersCount)],
+        ['Mayor rebuys (cantidad) (sesión)', recInt(globalRecords.maxRebuysCount), recDate(globalRecords.maxRebuysCount)],
+        ['Mayor rebuys (monto) (sesión)', recMoney(globalRecords.maxRebuysAmount), recDate(globalRecords.maxRebuysAmount)],
+        ['Mayor |Δ| (delta absoluto) (sesión)', recMoney(globalRecords.maxAbsDelta), recDate(globalRecords.maxAbsDelta)],
+      ];
+
+      const rowsB = [
+        ['Mayor ganancia en una sesión', recMoney(globalRecords.maxGain), recDatePlayer(globalRecords.maxGain)],
+        ['Mayor pérdida en una sesión', recMoney(globalRecords.maxLoss), recDatePlayer(globalRecords.maxLoss)],
+        ['Mayor inversión individual en una sesión', recMoney(globalRecords.maxInvested), recDatePlayer(globalRecords.maxInvested)],
+        ['Más rebuys (cantidad) en una sesión', recInt(globalRecords.maxPlayerRebuysCount), recDatePlayer(globalRecords.maxPlayerRebuysCount)],
+        ['Más rebuys (monto) en una sesión', recMoney(globalRecords.maxPlayerRebuysAmount), recDatePlayer(globalRecords.maxPlayerRebuysAmount)],
+      ];
+
+      const rowsC = [
+        ['Mayor neto acumulado', recMoney(globalRecords.maxNetTotal), recPlayer(globalRecords.maxNetTotal)],
+        ['Menor neto acumulado', recMoney(globalRecords.minNetTotal), recPlayer(globalRecords.minNetTotal)],
+        ['Más partidas jugadas', recInt(globalRecords.maxGames), recPlayer(globalRecords.maxGames)],
+        ['Más veces #1', recInt(globalRecords.maxWins1), recPlayer(globalRecords.maxWins1)],
+        [
+          'Mejor promedio neto (mín. 3 partidas)',
+          (globalRecords.bestAvgNetMin3 ? recMoney(globalRecords.bestAvgNetMin3) : '—'),
+          (globalRecords.bestAvgNetMin3 ? `${recPlayer(globalRecords.bestAvgNetMin3)} · ${String(globalRecords.bestAvgNetMin3.games)} partidas` : '—')
+        ],
+      ];
+
+      function tbodyFrom(rows){
+        return rows.map(([label, val, meta]) => {
+          return `
+            <tr>
+              <td>${escapeHtml(String(label))}</td>
+              <td class="num">${escapeHtml(String(val))}</td>
+              <td class="meta">${escapeHtml(String(meta))}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      const tbodyA = tbodyFrom(rowsA);
+      const tbodyB = tbodyFrom(rowsB);
+      const tbodyC = tbodyFrom(rowsC);
+
+      return `
+        <div class="print-records print-pagebreak" role="region" aria-label="Records globales (todos)">
+          <div class="print-section-title">RECORDS GLOBALES (TODOS)</div>
+
+          <div class="print-records-group">
+            <div class="print-records-subtitle">A) Records por sesión (global)</div>
+            <div class="print-table-wrap print-table-wrap--records">
+              <table class="print-table print-table--records">
+                <thead>
+                  <tr>
+                    <th>Record</th>
+                    <th class="num">Valor</th>
+                    <th>Fecha / Detalle</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${tbodyA}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="print-records-group">
+            <div class="print-records-subtitle">B) Records de jugador en una sesión</div>
+            <div class="print-table-wrap print-table-wrap--records">
+              <table class="print-table print-table--records">
+                <thead>
+                  <tr>
+                    <th>Record</th>
+                    <th class="num">Valor</th>
+                    <th>Fecha / Jugador</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${tbodyB}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="print-records-group">
+            <div class="print-records-subtitle">C) Records históricos por jugador</div>
+            <div class="print-table-wrap print-table-wrap--records">
+              <table class="print-table print-table--records">
+                <thead>
+                  <tr>
+                    <th>Record</th>
+                    <th class="num">Valor</th>
+                    <th>Jugador</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${tbodyC}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    })();
+
+    const playerStatsHtml = activePlayers.map(p => {
+      const pid = String(p.id || '').trim();
+      if (!pid) return '';
+
+      const st = (ga && ga.byPlayer && ga.byPlayer.get) ? ga.byPlayer.get(pid) : null;
+      const games = st ? Math.max(0, Math.floor(numOrZero(st.games))) : 0;
+      const netTotal = st ? numOrZero(st.netTotal) : 0;
+      const wins1 = st ? Math.max(0, Math.floor(numOrZero(st.wins1))) : 0;
+      const avgNet = games ? (netTotal / games) : 0;
+      const investedTotal = st ? numOrZero(st.investedTotal) : 0;
+
+      const bestAmt = (st && st.best && Number.isFinite(st.best.net)) ? formatMoney(st.best.net) : '—';
+      const bestDate = (st && st.best && st.best.date) ? String(st.best.date) : '—';
+      const worstAmt = (st && st.worst && Number.isFinite(st.worst.net)) ? formatMoney(st.worst.net) : '—';
+      const worstDate = (st && st.worst && st.worst.date) ? String(st.worst.date) : '—';
+
+      const rb = rebuysMap.get(pid) || { count: 0, amount: 0 };
+      const rbCount = Math.max(0, Math.floor(numOrZero(rb.count)));
+      const rbAmount = numOrZero(rb.amount);
+      const rbLabel = `${rbCount} · ${formatMoney(rbAmount)}`;
+
+      const nick = (p && p.nick ? String(p.nick).trim() : '');
+      const legalName = reportName(pid, playerDisplayName(p));
+      const netClass = Math.abs(netTotal) < 0.0001 ? 'ok' : (netTotal > 0 ? 'pos' : 'neg');
+
+      return `
+        <article class="print-player-block" data-pid="${escapeAttr(pid)}">
+          <div class="print-player-head">
+            <div class="print-player-ident">
+              <div class="print-player-name">${escapeHtml(String(legalName || 'Sin nombre'))}</div>
+              <div class="print-player-sub">${escapeHtml(nick ? ('Apodo: ' + nick) : '')}</div>
+            </div>
+            <div class="print-player-kpi">
+              <div class="k">Neto acumulado</div>
+              <div class="v net ${netClass}">${escapeHtml(formatMoney(netTotal))}</div>
+            </div>
+          </div>
+
+          <div class="print-player-grid">
+            <div class="pp-stat"><div class="k">Partidas jugadas</div><div class="v">${escapeHtml(String(games))}</div></div>
+            <div class="pp-stat"><div class="k">Veces #1</div><div class="v">${escapeHtml(String(wins1))}</div></div>
+            <div class="pp-stat"><div class="k">Promedio neto por partida</div><div class="v">${escapeHtml(formatMoney(avgNet))}</div></div>
+
+            <div class="pp-stat"><div class="k">Invertido total (histórico)</div><div class="v">${escapeHtml(formatMoney(investedTotal))}</div></div>
+            <div class="pp-stat"><div class="k">Mejor noche</div><div class="v">${escapeHtml(String(bestAmt))}</div><div class="s">${escapeHtml(String(bestDate))}</div></div>
+            <div class="pp-stat"><div class="k">Peor noche</div><div class="v">${escapeHtml(String(worstAmt))}</div><div class="s">${escapeHtml(String(worstDate))}</div></div>
+
+            <div class="pp-stat"><div class="k">Rebuys (histórico)</div><div class="v">${escapeHtml(String(rbLabel))}</div></div>
+          </div>
+        </article>
+      `;
+    }).join('');
+
+
     const root = el(`
       <section class="print-screen" aria-label="Reporte PDF">
         <div class="print-actions">
@@ -2269,6 +2611,44 @@ function renderHistorialDetalle(){
             </tbody>
           </table>
         </div>
+
+        <div class="print-global print-pagebreak" role="region" aria-label="Ranking Global">
+          <div class="print-section-title">RANKING GLOBAL (TOP 10 — NETO ACUMULADO)</div>
+
+          ${top10.length ? `
+            <div class="print-table-wrap print-table-wrap--ranking" role="region" aria-label="Tabla ranking global">
+              <table class="print-table print-table--ranking">
+                <thead>
+                  <tr>
+                    <th class="num" style="width:56px">Rank</th>
+                    <th>Jugador</th>
+                    <th class="num">Neto acumulado</th>
+                    <th class="num">Partidas</th>
+                    <th class="num">Veces #1</th>
+                    <th class="num">Promedio neto</th>
+                    <th class="num">Invertido total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rankTbody}
+                </tbody>
+              </table>
+            </div>
+          ` : `<div class="empty" style="margin-top:12px">No hay datos globales todavía.</div>`}
+        </div>
+
+        ${recordsHtml}
+
+        <div class="print-players print-pagebreak" role="region" aria-label="Estadísticas por jugador (activos)">
+          <div class="print-section-title">ESTADÍSTICAS POR JUGADOR (ACTIVOS)</div>
+
+          ${activePlayers.length ? `
+            <div class="print-players-list">
+              ${playerStatsHtml}
+            </div>
+          ` : `<div class="empty" style="margin-top:12px">No hay jugadores activos.</div>`}
+        </div>
+
       </section>
     `);
 
@@ -3658,8 +4038,8 @@ function renderConfiguracion(){
     return { rows, summary: calcSessionSummary(s) };
   }
 
-  function computeAnalytics(){
-    const closed = getClosedSessions();
+  function computeAnalyticsFromSessions(sessions){
+    const list = Array.isArray(sessions) ? sessions : [];
     const byPlayer = new Map();
 
     let maxTotalInvested = null; // { date, amount }
@@ -3669,7 +4049,9 @@ function renderConfiguracion(){
     const detailed = [];
     const summaryRows = [];
 
-    closed.slice().reverse().forEach(s => {
+    // Nota: la app mantiene getClosedSessions() en orden DESC por fecha.
+    // Para exports/estadísticas, procesamos en orden cronológico (ASC).
+    list.slice().reverse().forEach(s => {
       // reverse so export can naturally be chronological
       const date = String(s.date || '');
       const an = analyzeSession(s);
@@ -3770,6 +4152,30 @@ function renderConfiguracion(){
       detailed,
       summaryRows,
     };
+  }
+
+  function computeAnalytics(){
+    // Ranking/records globales “oficiales”: solo sesiones cerradas
+    return computeAnalyticsFromSessions(getClosedSessions());
+  }
+
+  // Etapa 1/3: GLOBAL acumulado para PDF: sesiones closed + (siempre) la sesión actual por id.
+  // No lista sesiones; solo entrega agregados por jugador.
+  function computeGlobalAnalytics({ includeSessionId } = {}){
+    const closed = getClosedSessions();
+    const map = new Map();
+    closed.forEach(s => {
+      if (s && s.id) map.set(String(s.id), s);
+    });
+
+    const sid = String(includeSessionId || '').trim();
+    if (sid){
+      const cur = getSessionById(sid);
+      if (cur && cur.id) map.set(String(cur.id), cur);
+    }
+
+    const sessions = Array.from(map.values()).sort((a,b) => numOrZero(b.closedAt || b.updatedAt) - numOrZero(a.closedAt || a.updatedAt));
+    return computeAnalyticsFromSessions(sessions);
   }
 
   function recalcAndPersistStats(){
