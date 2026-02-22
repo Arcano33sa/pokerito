@@ -1611,7 +1611,9 @@ function setPlayerActive(id, active){
     const activePlayers = getPlayers().filter(p => !!p.active);
     const lastIds = (store.ui && store.ui.juego && Array.isArray(store.ui.juego.lastPlayerIds)) ? store.ui.juego.lastPlayerIds : [];
     const selected = new Set(lastIds.filter(id => activePlayers.some(p => p.id === id)));
-    const defaultDate = (store.ui && store.ui.juego && typeof store.ui.juego.lastDate === 'string' && store.ui.juego.lastDate) ? store.ui.juego.lastDate : todayYMD();
+    // Importante: la fecha por defecto NO debe “pegarse” de una fecha vieja guardada.
+    // Siempre precargar con la fecha real del día (America/Managua) al crear una nueva partida.
+    const defaultDate = todayYMD();
 
     const closedSessions = getClosedSessions();
 
@@ -1718,6 +1720,7 @@ function setPlayerActive(id, active){
     const $grid = document.getElementById('playerPickGrid');
     const $start = document.getElementById('startSessionBtn');
     const $date = document.getElementById('sessionDate');
+    let manualDateTouched = false;
 
     function renderPickGrid(){
       if (!activePlayers.length){
@@ -1760,6 +1763,7 @@ function setPlayerActive(id, active){
 
     $date.addEventListener('change', () => {
       if (roUser) { showToast('Solo ADMIN puede editar'); return; }
+      manualDateTouched = true;
       const v = ($date.value || '').trim();
       if (!store.ui) store.ui = {};
       if (!store.ui.juego) store.ui.juego = {};
@@ -1771,7 +1775,12 @@ function setPlayerActive(id, active){
       if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       if (!requireAdminEdit()) return;
       if (draft) return;
-      const date = ($date.value || '').trim() || todayYMD();
+      const today = todayYMD();
+      let date = ($date.value || '').trim();
+      // Si el usuario no tocó la fecha, forzar que sea “hoy” en el momento real de iniciar.
+      // (Evita el caso de dejar la pantalla abierta y arrancar otro día.)
+      if (!manualDateTouched) date = today;
+      if (!date) date = today;
       const ids = Array.from(selected);
       if (!ids.length) return;
 
@@ -3277,6 +3286,16 @@ function renderConfiguracion(){
 
 
   function todayYMD(){
+    // Forzar TZ Managua para que el “hoy” sea consistente aunque el dispositivo tenga otra zona.
+    try {
+      const s = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Managua',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date());
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    } catch (e) {}
     const d = new Date();
     return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
   }

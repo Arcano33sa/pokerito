@@ -1,6 +1,6 @@
 /* Pokerito SW — offline mínimo (cache core) */
-// Etapa 3/3: cache bump (late joiners hardening)
-const CACHE_NAME = 'pokerito-v0.1.12-late-joiners-hardening';
+// Etapa 4: cache bump (fecha automática del día al iniciar)
+const CACHE_NAME = 'pokerito-v0.1.12-date-auto-today';
 const CORE_ASSETS = [
   './',
   './index.html',
