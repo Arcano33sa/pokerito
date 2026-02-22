@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.8 — Etapa 1/7: USUARIOS + HERO + Compartir App (sin Firebase) */
+/* Pokerito — v0.1.11 — Etapa 7/7: Store Firestore compartido (solicitudes + roles) */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -24,120 +24,984 @@
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
 
+  // Rol + estado (Etapa 7/7): badge de sesión/permiso + estado de store
+  const $roleBadges = document.createElement('div');
+  $roleBadges.id = 'roleBadges';
+  $roleBadges.style.display = 'flex';
+  $roleBadges.style.alignItems = 'center';
+  $roleBadges.style.gap = '8px';
+  if ($headerRight) $headerRight.appendChild($roleBadges);
 
-// Storage (versioned) — local only for now
-const STORE_KEY = 'pokerito_store_v1';
+  // ===== Firebase Auth (Etapa 3/7) =====
+  // Nota: firebaseInit.js expone window.__POKERITO_FIREBASE__ (auth/db) + authApi helpers.
+  let fbRef = null;
+  let authUser = null;
+  let authReady = false;
+  let authInitOnce = false;
+  let authUiError = '';
+
+  // ===== Autorización (Etapa 4/7) =====
+  // Gate TOTAL: sesión válida NO implica acceso aprobado.
+  let authzReady = false;
+  let authzChecking = false;
+  let authorized = false;
+  let authorizedRole = '';
+  let authzUiError = '';
+  let accessRequest = null; // { status, ... } o null
+  let accessRequestReady = false;
+  let authzReqSeq = 0;
+  let allowedDocExists = false;
+
+  // ===== Bootstrap ADMIN (Etapa 5/7) =====
+  // IMPORTANT: Reemplaza este correo por el tuyo (dueño). Debe coincidir EXACTO con el email del login Google.
+  const ADMIN_BOOTSTRAP_EMAIL = 'jcguadamuz@icloud.com';
+
+  // ===== Panel ADMIN (Etapa 6/7) =====
+  let adminDataReady = false;
+  let adminDataLoading = false;
+  let adminActionBusy = false;
+  let adminUiError = '';
+  let adminPending = [];
+  let adminAllowed = [];
+  let adminLastLoadedAt = 0;
+  let adminSeq = 0;
+
+  function resetAdminState(){
+    adminDataReady = false;
+    adminDataLoading = false;
+    adminActionBusy = false;
+    adminUiError = '';
+    adminPending = [];
+    adminAllowed = [];
+    adminLastLoadedAt = 0;
+    adminSeq = 0;
+  }
+
+  function isAdminRole(){
+    return !!(authorized && String(authorizedRole || '').toUpperCase() === 'ADMIN');
+  }
+
+  function isFirestoreAdminEnabled(){
+    const fb = fbRef || window.__POKERITO_FIREBASE__;
+    const api = fb && fb.firestoreApi;
+    return !!(
+      fb && fb.db && api &&
+      typeof api.doc === 'function' &&
+      typeof api.collection === 'function' &&
+      typeof api.query === 'function' &&
+      typeof api.where === 'function' &&
+      typeof api.getDoc === 'function' &&
+      typeof api.getDocs === 'function' &&
+      typeof api.setDoc === 'function' &&
+      typeof api.updateDoc === 'function' &&
+      typeof api.deleteDoc === 'function'
+    );
+  }
+
+  function tsToMs(t){
+    try{
+      if (!t) return 0;
+      if (typeof t.toMillis === 'function') return t.toMillis();
+      if (typeof t.toDate === 'function') return +t.toDate();
+      if (typeof t.seconds === 'number') return Math.round(t.seconds * 1000);
+      if (typeof t === 'number') return Math.round(t);
+      const d = Date.parse(String(t));
+      return (d != d) ? 0 : d;
+    }catch(e){
+      return 0;
+    }
+  }
+
+  function fmtWhen(t){
+    const ms = tsToMs(t);
+    if (!ms) return '';
+    try{ return new Date(ms).toLocaleString(); }
+    catch(e){ return new Date(ms).toISOString(); }
+  }
+
+
+  function isAuthEnabled(){
+    const fb = fbRef || window.__POKERITO_FIREBASE__;
+    return !!(fb && fb.auth && fb.authApi && typeof fb.authApi.onAuthStateChanged === 'function');
+  }
+
+  function isFirestoreAccessEnabled(){
+    const fb = fbRef || window.__POKERITO_FIREBASE__;
+    const api = fb && fb.firestoreApi;
+    return !!(
+      fb && fb.db && api &&
+      typeof api.doc === 'function' &&
+      typeof api.getDoc === 'function' &&
+      typeof api.setDoc === 'function'
+    );
+  }
+
+  function resetAuthorizationState(){
+    authzReady = false;
+    authzChecking = false;
+    authorized = false;
+    authorizedRole = '';
+    authzUiError = '';
+    accessRequest = null;
+    accessRequestReady = false;
+    allowedDocExists = false;
+    resetAdminState();
+  }
+
+  function normEmail(v){
+    return String(v || '').trim().toLowerCase();
+  }
+
+  function isBootstrapEmailConfigured(){
+    const v = String(ADMIN_BOOTSTRAP_EMAIL || '').trim();
+    if (!v) return false;
+    if (v.includes('__SET_')) return false;
+    return v.includes('@');
+  }
+
+  function canBootstrapAdmin(){
+    if (!isBootstrapEmailConfigured()) return false;
+    if (!isAuthEnabled()) return false;
+    if (!authReady || !authUser) return false;
+    if (!isFirestoreAccessEnabled()) return false;
+    if (!authzReady || authzChecking) return false;
+    if (authorized) return false;
+    if (allowedDocExists) return false; // debe NO existir allowedUsers/{uid}
+    return normEmail(authUser.email) === normEmail(ADMIN_BOOTSTRAP_EMAIL);
+  }
+
+  function prettyFsError(err){
+    const code = (err && err.code) ? String(err.code) : '';
+    if (code === 'permission-denied') return 'Permiso denegado en Firestore.';
+    if (code === 'unavailable') return 'Firestore no disponible (red/conexión).';
+    if (code) return 'Error Firestore: ' + code;
+    return 'Error Firestore.';
+  }
+
+  function prettyAuthError(err){
+    const code = (err && err.code) ? String(err.code) : '';
+    if (code === 'auth/unauthorized-domain') return 'Dominio no autorizado en Firebase Auth.';
+    if (code === 'auth/popup-blocked') return 'El navegador bloqueó el popup.';
+    if (code === 'auth/operation-not-supported-in-this-environment') return 'Este entorno no soporta popup.';
+    if (code) return 'Error de login: ' + code;
+    return 'Error de login.';
+  }
+
+  function attachFirebase(fb){
+    fbRef = fb || window.__POKERITO_FIREBASE__ || null;
+    if (authInitOnce) return;
+    if (!isAuthEnabled()) return;
+    authInitOnce = true;
+
+    const auth = fbRef.auth;
+    const api = fbRef.authApi;
+
+    // Completa redirect login (si aplica). No bloquea UI.
+    try{ if (api.getRedirectResult) api.getRedirectResult(auth).catch(() => {}); }catch(e){}
+
+    try{
+      api.onAuthStateChanged(
+        auth,
+        (u) => {
+          authUser = u || null;
+          authReady = true;
+          authUiError = '';
+          resetAdminState();
+
+          if (!authUser) {
+            stopStoreSync();
+            resetAuthorizationState();
+            onRoute();
+            return;
+          }
+
+          authzReady = false;
+          authzChecking = true;
+          authzUiError = '';
+          accessRequest = null;
+          accessRequestReady = false;
+          onRoute();
+          refreshAuthorizationState({ showToastOnError: true });
+        },
+        (err) => {
+          authUser = null;
+          authReady = true;
+          authUiError = prettyAuthError(err);
+          stopStoreSync();
+          resetAuthorizationState();
+          onRoute();
+        }
+      );
+    }catch(err){
+      authUser = null;
+      authReady = true;
+      authUiError = prettyAuthError(err);
+    }
+  }
+
+  async function loginWithGoogle(){
+    if (!isAuthEnabled()) { authUiError = 'Firebase/Auth no está listo.'; onRoute(); return; }
+    const auth = fbRef.auth;
+    const api = fbRef.authApi;
+
+    authUiError = '';
+    const provider = new api.GoogleAuthProvider();
+    try{ provider.setCustomParameters({ prompt: 'select_account' }); }catch(e){}
+
+    try{
+      await api.signInWithPopup(auth, provider);
+    }catch(err){
+      const code = (err && err.code) ? String(err.code) : '';
+      if (code === 'auth/popup-closed-by-user') return; // cancelado por el usuario
+
+      // Fallback: redirect en entornos donde el popup falla (iPad/Safari/PWA)
+      const shouldRedirect = (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment');
+      if (shouldRedirect){
+        try{ await api.signInWithRedirect(auth, provider); return; }catch(e2){}
+      }
+
+      // Último intento: redirect silencioso (si el popup no cuajó por cualquier razón)
+      try{ await api.signInWithRedirect(auth, provider); return; }catch(e3){}
+
+      authUiError = prettyAuthError(err);
+      onRoute();
+    }
+  }
+
+  async function logout(){
+    if (!isAuthEnabled()) return;
+    try{ await fbRef.authApi.signOut(fbRef.auth); }
+    catch(err){ authUiError = prettyAuthError(err); onRoute(); }
+  }
+
+  async function refreshAuthorizationState(opts){
+    const options = opts || {};
+    const seq = ++authzReqSeq;
+
+    if (!authUser) {
+      resetAuthorizationState();
+      onRoute();
+      return;
+    }
+
+    if (!isFirestoreAccessEnabled()) {
+      authorized = false;
+      authorizedRole = '';
+      accessRequest = null;
+      accessRequestReady = false;
+      authzReady = true;
+      authzChecking = false;
+      authzUiError = 'Firestore no está listo.';
+      onRoute();
+      return;
+    }
+
+    authzChecking = true;
+    authzUiError = '';
+    onRoute();
+
+    try {
+      const db = fbRef.db;
+      const fs = fbRef.firestoreApi;
+      const uid = String(authUser.uid || '').trim();
+      if (!uid) throw new Error('uid_missing');
+
+      let nextAuthorized = false;
+      let nextRole = '';
+      let nextAllowedExists = false;
+      let nextReq = null;
+      let nextReqReady = false;
+
+      const allowedRef = fs.doc(db, 'allowedUsers', uid);
+      const allowedSnap = await fs.getDoc(allowedRef);
+      if (allowedSnap && allowedSnap.exists && allowedSnap.exists()) {
+        nextAllowedExists = true;
+        const data = allowedSnap.data ? (allowedSnap.data() || {}) : {};
+        const rol = String(data.rol || '').trim().toUpperCase();
+        if (rol === 'ADMIN' || rol === 'MIEMBRO') {
+          nextAuthorized = true;
+          nextRole = rol;
+        }
+      }
+
+      if (!nextAuthorized) {
+        const reqRef = fs.doc(db, 'accessRequests', uid);
+        const reqSnap = await fs.getDoc(reqRef);
+        nextReqReady = true;
+        if (reqSnap && reqSnap.exists && reqSnap.exists()) {
+          const rd = reqSnap.data ? (reqSnap.data() || {}) : {};
+          const status = String(rd.status || '').trim().toUpperCase();
+          nextReq = Object.assign({}, rd, { status: status || 'PENDING' });
+        }
+      } else {
+        nextReq = null;
+        nextReqReady = true;
+      }
+
+      if (seq !== authzReqSeq) return;
+      authorized = nextAuthorized;
+      authorizedRole = nextRole;
+      allowedDocExists = nextAllowedExists;
+      if (!(authorized && String(authorizedRole || '').toUpperCase() === 'ADMIN')) resetAdminState();
+      accessRequest = nextReq;
+      accessRequestReady = nextReqReady;
+      authzReady = true;
+      authzChecking = false;
+      authzUiError = '';
+
+      // Etapa 7/7: Store compartido (Firestore) — iniciar/parar sync segun autorización
+      if (authorized) startStoreSync();
+      else stopStoreSync();
+
+      onRoute();
+    } catch (err) {
+      if (seq !== authzReqSeq) return;
+      authorized = false;
+      authorizedRole = '';
+      allowedDocExists = false;
+      authzReady = true;
+      authzChecking = false;
+      authzUiError = prettyFsError(err);
+      accessRequestReady = false;
+      if (options.showToastOnError) showToast(authzUiError);
+      // Etapa 7/7: sin autorización, detener sync del store
+      stopStoreSync();
+      onRoute();
+    }
+  }
+
+  async function bootstrapActivateAdmin(){
+    if (!authUser) { showToast('Inicia sesión primero'); return; }
+    if (!isFirestoreAccessEnabled()) { showToast('Firestore no está listo'); return; }
+    if (!isBootstrapEmailConfigured()) { showToast('Bootstrap no configurado (ADMIN_BOOTSTRAP_EMAIL)'); return; }
+    if (normEmail(authUser.email) !== normEmail(ADMIN_BOOTSTRAP_EMAIL)) { showToast('Tu correo no coincide con el ADMIN bootstrap'); return; }
+
+    try {
+      authzUiError = '';
+      authzChecking = true;
+      onRoute();
+
+      const db = fbRef.db;
+      const fs = fbRef.firestoreApi;
+      const uid = String(authUser.uid || '').trim();
+      if (!uid) throw new Error('uid_missing');
+
+      const allowedRef = fs.doc(db, 'allowedUsers', uid);
+      const snap = await fs.getDoc(allowedRef);
+      if (snap && snap.exists && snap.exists()) {
+        authzChecking = false;
+        allowedDocExists = true;
+        authzUiError = 'Ya existe allowedUsers para este usuario. Bootstrap oculto.';
+        showToast(authzUiError);
+        onRoute();
+        return;
+      }
+
+      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
+      const payload = {
+        uid,
+        nombre: String(authUser.displayName || '').trim() || 'Usuario',
+        email: String(authUser.email || '').trim() || '',
+        rol: 'ADMIN',
+        createdAt: nowTs,
+        createdBy: uid,
+        updatedAt: nowTs,
+        updatedBy: uid,
+        bootstrap: true,
+      };
+
+      await fs.setDoc(allowedRef, payload, { merge: false });
+      showToast('ADMIN activado');
+      await refreshAuthorizationState({ showToastOnError: true });
+    } catch (err) {
+      authzChecking = false;
+      authzUiError = prettyFsError(err);
+      showToast(authzUiError);
+      onRoute();
+    }
+  }
+
+  async function submitAccessRequest(mode){
+    const action = String(mode || 'new');
+    if (!authUser) { showToast('Inicia sesión primero'); return; }
+    if (!isFirestoreAccessEnabled()) { showToast('Firestore no está listo'); return; }
+
+    try {
+      authzUiError = '';
+      authzChecking = true;
+      onRoute();
+
+      const db = fbRef.db;
+      const fs = fbRef.firestoreApi;
+      const uid = String(authUser.uid || '').trim();
+      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
+      const payload = {
+        uid,
+        nombre: String(authUser.displayName || '').trim() || 'Usuario',
+        email: String(authUser.email || '').trim() || '',
+        status: 'PENDING',
+        createdAt: nowTs,
+        resolvedAt: null,
+        resolvedBy: null,
+      };
+
+      await fs.setDoc(fs.doc(db, 'accessRequests', uid), payload, { merge: true });
+      showToast(action === 'retry' ? 'Solicitud reenviada' : 'Solicitud enviada');
+      await refreshAuthorizationState({ showToastOnError: true });
+    } catch (err) {
+      authzChecking = false;
+      authzUiError = prettyFsError(err);
+      showToast(authzUiError);
+      onRoute();
+    }
+  }
+
+
+  // ===== Admin helpers (Etapa 6/7) =====
+  async function adminLoadData(opts){
+    if (!authUser || !isAdminRole()) return;
+    if (!isFirestoreAdminEnabled()) {
+      adminUiError = 'Firestore (admin) no está listo.';
+      adminDataReady = true;
+      adminDataLoading = false;
+      onRoute();
+      return;
+    }
+
+    const force = !!(opts && opts.force);
+    const now = Date.now();
+    if (!force && adminDataReady && (now - adminLastLoadedAt) < 15000) return;
+    if (adminDataLoading || adminActionBusy) return;
+
+    adminDataLoading = true;
+    adminUiError = '';
+    onRoute();
+
+    const seq = ++adminSeq;
+
+    try{
+      const db = fbRef.db;
+      const fs = fbRef.firestoreApi;
+
+      // PENDING requests
+      const reqQ = fs.query(fs.collection(db, 'accessRequests'), fs.where('status', '==', 'PENDING'));
+      const reqSnap = await fs.getDocs(reqQ);
+      const pending = [];
+      reqSnap.forEach(ds => {
+        const d = (ds && ds.data) ? (ds.data() || {}) : {};
+        const uid = String(d.uid || ds.id || '').trim();
+        if (!uid) return;
+        pending.push(Object.assign({ __id: ds.id, uid }, d));
+      });
+      pending.sort((a,b) => tsToMs(b.createdAt) - tsToMs(a.createdAt));
+
+      // allowed users
+      const allowedSnap = await fs.getDocs(fs.collection(db, 'allowedUsers'));
+      const allowed = [];
+      allowedSnap.forEach(ds => {
+        const d = (ds && ds.data) ? (ds.data() || {}) : {};
+        const uid = String(d.uid || ds.id || '').trim();
+        if (!uid) return;
+        allowed.push(Object.assign({ __id: ds.id, uid }, d));
+      });
+      allowed.sort((a,b) => {
+        const ra = String(a.rol || '').toUpperCase();
+        const rb = String(b.rol || '').toUpperCase();
+        if (ra != rb) return (ra === 'ADMIN') ? -1 : 1;
+        const na = String(a.nombre || a.email || a.uid || '').toLowerCase();
+        const nb = String(b.nombre || b.email || b.uid || '').toLowerCase();
+        return na.localeCompare(nb);
+      });
+
+      if (seq !== adminSeq) return;
+      adminPending = pending;
+      adminAllowed = allowed;
+      adminDataReady = true;
+      adminDataLoading = false;
+      adminLastLoadedAt = Date.now();
+      adminUiError = '';
+      onRoute();
+    }catch(err){
+      if (seq !== adminSeq) return;
+      adminDataReady = true;
+      adminDataLoading = false;
+      adminUiError = prettyFsError(err);
+      showToast(adminUiError);
+      onRoute();
+    }
+  }
+
+  async function adminCountAdmins(){
+    if (!authUser || !isAdminRole()) return 0;
+    if (!isFirestoreAdminEnabled()) return 0;
+    const db = fbRef.db;
+    const fs = fbRef.firestoreApi;
+    const q = fs.query(fs.collection(db, 'allowedUsers'), fs.where('rol', '==', 'ADMIN'));
+    const snap = await fs.getDocs(q);
+    let n = 0;
+    snap.forEach(() => { n++; });
+    return n;
+  }
+
+  async function adminApproveRequest(uid, role){
+    const targetUid = String(uid || '').trim();
+    const nextRole = String(role || 'MIEMBRO').trim().toUpperCase();
+    if (!targetUid) return;
+    if (!authUser || !isAdminRole()) return;
+    if (!isFirestoreAdminEnabled()) { showToast('Firestore (admin) no está listo'); return; }
+    if (nextRole !== 'ADMIN' && nextRole !== 'MIEMBRO') { showToast('Rol inválido'); return; }
+    if (!confirm(`Aprobar acceso como ${nextRole}?`)) return;
+
+    try{
+      adminActionBusy = true;
+      onRoute();
+
+      const db = fbRef.db;
+      const fs = fbRef.firestoreApi;
+      const myUid = String(authUser.uid || '').trim();
+      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
+
+      const reqRef = fs.doc(db, 'accessRequests', targetUid);
+      const reqSnap = await fs.getDoc(reqRef);
+      const rd = (reqSnap && reqSnap.exists && reqSnap.exists()) ? (reqSnap.data() || {}) : {};
+
+      const nombre = String(rd.nombre || '').trim() || 'Usuario';
+      const email = String(rd.email || '').trim() || '';
+
+      const allowedRef = fs.doc(db, 'allowedUsers', targetUid);
+      const allowedSnap = await fs.getDoc(allowedRef);
+
+      if (allowedSnap && allowedSnap.exists && allowedSnap.exists()) {
+        await fs.updateDoc(allowedRef, { rol: nextRole, updatedAt: nowTs, updatedBy: myUid });
+      } else {
+        await fs.setDoc(allowedRef, {
+          uid: targetUid,
+          nombre,
+          email,
+          rol: nextRole,
+          createdAt: nowTs,
+          createdBy: myUid,
+          updatedAt: nowTs,
+          updatedBy: myUid,
+        }, { merge: false });
+      }
+
+      await fs.setDoc(reqRef, {
+        status: 'APPROVED',
+        resolvedAt: nowTs,
+        resolvedBy: myUid,
+        approvedRole: nextRole,
+      }, { merge: true });
+
+      showToast(`Aprobado como ${nextRole}`);
+      adminActionBusy = false;
+      await adminLoadData({ force: true });
+    }catch(err){
+      adminActionBusy = false;
+      adminUiError = prettyFsError(err);
+      showToast(adminUiError);
+      onRoute();
+    }
+  }
+
+  async function adminRejectRequest(uid){
+    const targetUid = String(uid || '').trim();
+    if (!targetUid) return;
+    if (!authUser || !isAdminRole()) return;
+    if (!isFirestoreAdminEnabled()) { showToast('Firestore (admin) no está listo'); return; }
+    if (!confirm('Rechazar solicitud?')) return;
+
+    try{
+      adminActionBusy = true;
+      onRoute();
+
+      const db = fbRef.db;
+      const fs = fbRef.firestoreApi;
+      const myUid = String(authUser.uid || '').trim();
+      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
+
+      await fs.setDoc(fs.doc(db, 'accessRequests', targetUid), {
+        status: 'REJECTED',
+        resolvedAt: nowTs,
+        resolvedBy: myUid,
+      }, { merge: true });
+
+      showToast('Solicitud rechazada');
+      adminActionBusy = false;
+      await adminLoadData({ force: true });
+    }catch(err){
+      adminActionBusy = false;
+      adminUiError = prettyFsError(err);
+      showToast(adminUiError);
+      onRoute();
+    }
+  }
+
+  async function adminSetRole(uid, newRole){
+    const targetUid = String(uid || '').trim();
+    const role = String(newRole || '').trim().toUpperCase();
+    if (!targetUid) return;
+    if (!authUser || !isAdminRole()) return;
+    if (!isFirestoreAdminEnabled()) { showToast('Firestore (admin) no está listo'); return; }
+    if (role !== 'ADMIN' && role !== 'MIEMBRO') { showToast('Rol inválido'); return; }
+
+    const item = (Array.isArray(adminAllowed) ? adminAllowed : []).find(x => String((x && x.uid) || '').trim() === targetUid) || {};
+    const cur = String(item.rol || '').trim().toUpperCase();
+    if (cur && cur === role) return;
+
+    if (!confirm(`Cambiar rol a ${role}?`)) return;
+
+    try{
+      adminActionBusy = true;
+      onRoute();
+
+      const db = fbRef.db;
+      const fs = fbRef.firestoreApi;
+      const myUid = String(authUser.uid || '').trim();
+      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
+
+      // Regla anti-autogol: no dejar 0 ADMIN
+      if (cur === 'ADMIN' && role === 'MIEMBRO') {
+        const admins = await adminCountAdmins();
+        if (admins <= 1) {
+          adminActionBusy = false;
+          showToast('No puedes dejar la app sin ADMIN.');
+          onRoute();
+          return;
+        }
+      }
+
+      await fs.updateDoc(fs.doc(db, 'allowedUsers', targetUid), {
+        rol: role,
+        updatedAt: nowTs,
+        updatedBy: myUid,
+      });
+
+      showToast(`Rol actualizado: ${role}`);
+      adminActionBusy = false;
+      await adminLoadData({ force: true });
+    }catch(err){
+      adminActionBusy = false;
+      adminUiError = prettyFsError(err);
+      showToast(adminUiError);
+      onRoute();
+    }
+  }
+
+  async function adminRevokeAccess(uid){
+    const targetUid = String(uid || '').trim();
+    if (!targetUid) return;
+    if (!authUser || !isAdminRole()) return;
+    if (!isFirestoreAdminEnabled()) { showToast('Firestore (admin) no está listo'); return; }
+
+    const item = (Array.isArray(adminAllowed) ? adminAllowed : []).find(x => String((x && x.uid) || '').trim() === targetUid) || {};
+    const cur = String(item.rol || '').trim().toUpperCase();
+
+    const selfUid = String(authUser.uid || '').trim();
+    const isSelf = (selfUid && selfUid === targetUid);
+
+    const msg = isSelf ? 'Te vas a revocar a ti mismo. ¿Seguro?' : 'Revocar acceso? El usuario quedará bloqueado.';
+    if (!confirm(msg)) return;
+
+    try{
+      adminActionBusy = true;
+      onRoute();
+
+      const db = fbRef.db;
+      const fs = fbRef.firestoreApi;
+      const myUid = selfUid;
+      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
+
+      // Regla anti-autogol: no dejar 0 ADMIN
+      if (cur === 'ADMIN') {
+        const admins = await adminCountAdmins();
+        if (admins <= 1) {
+          adminActionBusy = false;
+          showToast('No puedes dejar la app sin ADMIN.');
+          onRoute();
+          return;
+        }
+      }
+
+      await fs.deleteDoc(fs.doc(db, 'allowedUsers', targetUid));
+
+      // Dejar su solicitud en REJECTED para permitir que vuelva a solicitar
+      await fs.setDoc(fs.doc(db, 'accessRequests', targetUid), {
+        uid: targetUid,
+        status: 'REJECTED',
+        resolvedAt: nowTs,
+        resolvedBy: myUid,
+        revoked: true,
+      }, { merge: true });
+
+      showToast('Acceso revocado');
+      adminActionBusy = false;
+      await adminLoadData({ force: true });
+
+      if (isSelf) {
+        await refreshAuthorizationState({ showToastOnError: false });
+      }
+    }catch(err){
+      adminActionBusy = false;
+      adminUiError = prettyFsError(err);
+      showToast(adminUiError);
+      onRoute();
+    }
+  }
+
+  function renderAdminPanelBlock(){
+    const busy = !!(adminDataLoading || adminActionBusy);
+    const reqs = Array.isArray(adminPending) ? adminPending : [];
+    const allowed = Array.isArray(adminAllowed) ? adminAllowed : [];
+    const adminsCount = allowed.filter(x => String((x && x.rol) || '').toUpperCase() === 'ADMIN').length;
+    const totalCount = allowed.length;
+
+    const reqList = reqs.length ? reqs.map(r => {
+      const uid = escapeHtml(String(r.uid || '').trim());
+      const name = escapeHtml(String(r.nombre || 'Usuario').trim() || 'Usuario');
+      const email = escapeHtml(String(r.email || '').trim());
+      const when = fmtWhen(r.createdAt);
+      const whenTxt = when ? escapeHtml(when) : '';
+      const meta = (email ? email : '—') + (whenTxt ? ` · ${whenTxt}` : '');
+
+      return `
+        <div class="admin-item">
+          <div class="admin-top">
+            <div class="admin-meta">
+              <div class="admin-name">${name}</div>
+              <div class="admin-sub">${meta}</div>
+            </div>
+            <span class="badge">PENDING</span>
+          </div>
+          <div class="admin-actions">
+            <button class="btn small primary" type="button" data-req-approve data-uid="${uid}" data-role="MIEMBRO" ${busy ? 'disabled' : ''}>Aprobar MIEMBRO</button>
+            <button class="btn small" type="button" data-req-approve data-uid="${uid}" data-role="ADMIN" ${busy ? 'disabled' : ''}>Aprobar ADMIN</button>
+            <button class="btn small danger" type="button" data-req-reject data-uid="${uid}" ${busy ? 'disabled' : ''}>Rechazar</button>
+          </div>
+        </div>
+      `;
+    }).join('') : `<div class="small-note" style="margin-top:10px">No hay solicitudes PENDING.</div>`;
+
+    const allowedList = allowed.length ? allowed.map(u => {
+      const uid = escapeHtml(String(u.uid || '').trim());
+      const role = String(u.rol || '').trim().toUpperCase();
+      const badge = escapeHtml(role || '—');
+      const name = escapeHtml(String(u.nombre || 'Usuario').trim() || 'Usuario');
+      const email = escapeHtml(String(u.email || '').trim());
+      const isSelf = !!(authUser && String(authUser.uid || '').trim() === String(u.uid || '').trim());
+
+      const disableLastAdmin = (role === 'ADMIN' && adminsCount <= 1);
+      const disableDemote = busy || disableLastAdmin;
+      const disableRevoke = busy || disableLastAdmin;
+
+      const roleBtn = (role === 'ADMIN')
+        ? `<button class="btn small" type="button" data-user-role data-uid="${uid}" data-role="MIEMBRO" ${disableDemote ? 'disabled' : ''}>Hacer MIEMBRO</button>`
+        : `<button class="btn small" type="button" data-user-role data-uid="${uid}" data-role="ADMIN" ${busy ? 'disabled' : ''}>Hacer ADMIN</button>`;
+
+      return `
+        <div class="admin-item">
+          <div class="admin-top">
+            <div class="admin-meta">
+              <div class="admin-name">${name} ${isSelf ? '<span class="badge" style="margin-left:6px">TÚ</span>' : ''}</div>
+              <div class="admin-sub">${email ? email : '—'}</div>
+            </div>
+            <span class="badge">${badge}</span>
+          </div>
+          <div class="admin-actions">
+            ${roleBtn}
+            <button class="btn small danger" type="button" data-user-revoke data-uid="${uid}" ${disableRevoke ? 'disabled' : ''}>Revocar acceso</button>
+          </div>
+          ${disableLastAdmin && isSelf ? `<div class="small-note" style="margin-top:10px">Regla anti-autogol: no puedes quedarte sin ADMIN.</div>` : ''}
+        </div>
+      `;
+    }).join('') : `<div class="small-note" style="margin-top:10px">No hay usuarios autorizados todavía.</div>`;
+
+    const statusLine = busy ? `<span class="badge">CARGANDO</span>` : `<span class="badge">OK</span>`;
+
+    return `
+      <div class="panel" role="region" aria-label="Panel ADMIN" style="margin-top:14px">
+        <div class="panel-head">
+          <div class="panel-title" style="margin:0">Panel ADMIN</div>
+          <div class="row" style="gap:10px">
+            ${statusLine}
+            <button class="btn small" type="button" id="adminRefreshBtn" ${busy ? 'disabled' : ''}>Actualizar</button>
+          </div>
+        </div>
+        <div class="small-note" style="margin-top:10px">Solicitudes y roles. Total autorizados: <b>${totalCount}</b> · ADMIN: <b>${adminsCount}</b>.</div>
+        ${adminUiError ? `<div class="small-note" style="margin-top:8px"><span class="badge" style="vertical-align:middle">ERROR</span> <span style="color:var(--muted); font-weight:850">${escapeHtml(adminUiError)}</span></div>` : ''}
+
+        <div class="panel-title" style="margin-top:16px">Solicitudes (PENDING)</div>
+        ${reqList}
+
+        <div class="panel-title" style="margin-top:18px">Autorizados (allowedUsers)</div>
+        ${allowedList}
+      </div>
+    `;
+  }
+
+
+// ===== Shared Store (Etapa 7/7) — Firestore store/main =====
+// Legacy local-only key (Etapas <=6): se mantiene solo para migración.
+const LEGACY_STORE_KEY = 'pokerito_store_v1';
+// Cache local (solo lectura) para arrancar rápido; la fuente de verdad es Firestore.
+const STORE_CACHE_KEY = 'pokerito_store_main_cache_v1';
 const STORE_VERSION = 1;
+
 let store = loadStore();
 
-// Chips defaults (Etapa 3)
-function defaultChips(){
-  return [
-    { id: 'chip_white', name: 'Blanca', value: 1,   color: '#ffffff', active: true, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: 'chip_red',   name: 'Roja',   value: 5,   color: '#d94141', active: true, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: 'chip_green', name: 'Verde',  value: 25,  color: '#2cbf6e', active: true, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: 'chip_black', name: 'Negra',  value: 100, color: '#111116', active: true, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: 'chip_blue',  name: 'Azul',   value: 500, color: '#2f6fff', active: true, createdAt: Date.now(), updatedAt: Date.now() },
-  ];
+// Firestore store sync state
+let storeUnsub = null;
+let storeSyncReady = false;      // ya recibimos al menos 1 snapshot
+let storeRemoteExists = false;
+let storeSyncError = '';
+let storeInitAttempted = false;
+let storeLastAppliedJson = '';
+let storeWriteBusy = false;
+let storeWriteTimer = null;
+let storeWriteSeq = 0;
+
+function isStoreEnabled(){
+  const fb = fbRef || window.__POKERITO_FIREBASE__;
+  const api = fb && fb.firestoreApi;
+  return !!(
+    fb && fb.db && api &&
+    typeof api.doc === 'function' &&
+    typeof api.onSnapshot === 'function' &&
+    typeof api.getDoc === 'function' &&
+    typeof api.setDoc === 'function' &&
+    typeof api.updateDoc === 'function'
+  );
 }
 
-
-// Players defaults (Etapa 4)
-function defaultPlayers(){
-  return [];
+function stopStoreSync(){
+  if (storeUnsub){
+    try{ storeUnsub(); }catch(e){}
+    storeUnsub = null;
+  }
+  storeSyncReady = false;
+  storeRemoteExists = false;
+  storeSyncError = '';
+  storeInitAttempted = false;
+  storeLastAppliedJson = '';
+  storeWriteBusy = false;
+  storeWriteSeq = 0;
+  if (storeWriteTimer){ clearTimeout(storeWriteTimer); storeWriteTimer = null; }
 }
 
-// Sessions defaults (Etapa 5)
-function defaultSessions(){
-  return [];
+function startStoreSync(){
+  if (!authorized || !authUser) return;
+  if (!isStoreEnabled()) return;
+  if (storeUnsub) return;
+
+  storeSyncReady = false;
+  storeRemoteExists = false;
+  storeSyncError = '';
+  storeInitAttempted = false;
+
+  const fb = fbRef || window.__POKERITO_FIREBASE__;
+  const fs = fb.firestoreApi;
+  const db = fb.db;
+  const ref = fs.doc(db, 'store', 'main');
+
+  storeUnsub = fs.onSnapshot(ref, (snap) => {
+    storeSyncReady = true;
+    storeSyncError = '';
+
+    if (snap && snap.exists && snap.exists()){
+      storeRemoteExists = true;
+      const docData = snap.data ? (snap.data() || {}) : {};
+      const incoming = docData && docData.data ? docData.data : null;
+
+      if (incoming && typeof incoming === 'object'){
+        const normalized = normalizeStore(incoming);
+        const json = safeJson(normalized);
+        if (json && json !== storeLastAppliedJson){
+          store = normalized;
+          storeLastAppliedJson = json;
+          persistStore(store); // cache local
+        }
+      }
+    } else {
+      storeRemoteExists = false;
+      if (isAdminRole() && !storeInitAttempted){
+        storeInitAttempted = true;
+        bootstrapCreateStoreMain().catch(() => {});
+      }
+    }
+
+    onRoute();
+  }, (err) => {
+    storeSyncReady = true;
+    storeRemoteExists = false;
+    storeSyncError = prettyFsError(err);
+    showToast('Store: ' + storeSyncError);
+    onRoute();
+  });
+}
+
+function safeJson(obj){
+  try{ return JSON.stringify(obj); }catch(e){ return ''; }
+}
+
+async function bootstrapCreateStoreMain(){
+  if (!isAdminRole() || !authUser) return;
+  if (!isStoreEnabled()) return;
+
+  const fb = fbRef || window.__POKERITO_FIREBASE__;
+  const fs = fb.firestoreApi;
+  const db = fb.db;
+  const ref = fs.doc(db, 'store', 'main');
+
+  // Re-check existence (avoid races)
+  const snap = await fs.getDoc(ref);
+  if (snap && snap.exists && snap.exists()) return;
+
+  const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
+  const uid = String(authUser.uid || '').trim() || 'admin';
+
+  const payload = {
+    data: normalizeStore(store || initStore(false)),
+    updatedAt: nowTs,
+    updatedBy: uid,
+  };
+
+  await fs.setDoc(ref, payload, { merge: false });
+  showToast('Store inicializado');
+}
+
+function canEditData(){
+  return !!(authorized && authUser && isAdminRole() && storeSyncReady && storeRemoteExists && !storeSyncError);
+}
+
+function canReadData(){
+  return !!(authorized && authUser && storeSyncReady && storeRemoteExists && !storeSyncError);
+}
+
+function requireAdminEdit(){
+  if (!authorized || !authUser){ showToast('Inicia sesión'); return false; }
+  if (!storeSyncReady){ showToast('Store cargando…'); return false; }
+  if (storeSyncError){ showToast('Store: ' + storeSyncError); return false; }
+  if (!storeRemoteExists){ showToast('Store no inicializado'); return false; }
+  if (!isAdminRole()){ showToast('Solo ADMIN puede editar'); return false; }
+  return true;
 }
 
 function loadStore(){
   try{
-    const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return initStore();
+    let raw = localStorage.getItem(STORE_CACHE_KEY);
+    if (!raw) raw = localStorage.getItem(LEGACY_STORE_KEY);
+    if (!raw) return initStore(true);
     const obj = JSON.parse(raw);
-    if (!obj || obj.v !== STORE_VERSION) return initStore();
-    if (!Array.isArray(obj.chips) || !obj.chips.length){
-      obj.chips = defaultChips();
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-    if (!Array.isArray(obj.players)){
-      obj.players = defaultPlayers();
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-    if (!Array.isArray(obj.sessions)){
-      obj.sessions = defaultSessions();
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-
-    // Etapa 6: asegurar forma de sesiones existentes (migración suave)
-    if (Array.isArray(obj.sessions)){
-      let changed = false;
-      obj.sessions.forEach(s => {
-        const before = JSON.stringify(s);
-        try{ ensureSessionGame(s); }catch(e){}
-        if (JSON.stringify(s) !== before) changed = true;
-      });
-      // si el draft apuntado ya no es draft, limpiar
-      if (obj.draftSessionId){
-        const ds = obj.sessions.find(x => x && x.id === obj.draftSessionId) || null;
-        if (ds && ds.status !== 'draft') { obj.draftSessionId = ''; changed = true; }
-      }
-      if (changed){
-        obj.updatedAt = Date.now();
-        persistStore(obj);
-      }
-    }
-    if (!obj.ui || typeof obj.ui !== 'object'){
-      obj.ui = {};
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-    if (!obj.ui.juego || typeof obj.ui.juego !== 'object'){
-      obj.ui.juego = {};
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-        if (typeof obj.draftSessionId !== 'string'){
-      obj.draftSessionId = '';
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-
-    // Etapa 1: PDF consecutivo global (pdfSeqNext) — migración suave
-    try{
-      let next = obj.pdfSeqNext;
-      let changedPdf = false;
-
-      if (!Number.isFinite(next) || next < 1){ next = 1; changedPdf = true; }
-      next = Math.floor(next);
-
-      let maxSeq = 0;
-      (Array.isArray(obj.sessions) ? obj.sessions : []).forEach(s => {
-        const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
-        if (n > maxSeq) maxSeq = n;
-      });
-      if (next <= maxSeq){ next = maxSeq + 1; changedPdf = true; }
-
-      if (obj.pdfSeqNext !== next){ obj.pdfSeqNext = next; changedPdf = true; }
-
-      if (changedPdf){
-        obj.updatedAt = Date.now();
-        persistStore(obj);
-      }
-    }catch(e){}
-
-    return obj;
+    if (!obj || obj.v !== STORE_VERSION) return initStore(true);
+    const normalized = normalizeStore(obj);
+    persistStore(normalized);
+    return normalized;
   }catch(e){
-    return initStore();
+    return initStore(true);
   }
 }
 
-function initStore(){
+function initStore(persist){
   const obj = {
     v: STORE_VERSION,
     chips: defaultChips(),
@@ -149,17 +1013,121 @@ function initStore(){
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
-  persistStore(obj);
+  if (persist !== false) persistStore(obj);
   return obj;
 }
 
 function persistStore(obj){
-  try{ localStorage.setItem(STORE_KEY, JSON.stringify(obj)); }catch(e){}
+  try{ localStorage.setItem(STORE_CACHE_KEY, JSON.stringify(obj)); }catch(e){}
 }
 
 function saveStore(){
   store.updatedAt = Date.now();
   persistStore(store);
+  if (!canEditData()) return;
+  scheduleStoreWrite('save');
+}
+
+function scheduleStoreWrite(reason){
+  if (!canEditData()) return;
+  storeWriteSeq++;
+  const seq = storeWriteSeq;
+  if (storeWriteTimer) clearTimeout(storeWriteTimer);
+  storeWriteTimer = setTimeout(() => {
+    if (seq !== storeWriteSeq) return;
+    writeStoreNow(reason || 'update');
+  }, 350);
+}
+
+async function writeStoreNow(reason){
+  if (storeWriteBusy) return;
+  if (!canEditData()) return;
+  storeWriteBusy = true;
+
+  const fb = fbRef || window.__POKERITO_FIREBASE__;
+  const fs = fb.firestoreApi;
+  const db = fb.db;
+  const uid = String(authUser.uid || '').trim();
+  const ref = fs.doc(db, 'store', 'main');
+  const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
+
+  const payload = { data: store, updatedAt: nowTs, updatedBy: uid };
+
+  try{
+    await fs.updateDoc(ref, payload);
+    storeWriteBusy = false;
+    storeLastAppliedJson = safeJson(normalizeStore(store));
+  }catch(err){
+    // fallback: doc missing
+    try{
+      await fs.setDoc(ref, payload, { merge: true });
+      storeWriteBusy = false;
+      storeLastAppliedJson = safeJson(normalizeStore(store));
+    }catch(err2){
+      storeWriteBusy = false;
+      showToast('Guardar: ' + prettyFsError(err2));
+    }
+  }
+}
+
+function normalizeStore(obj){
+  // copiar para evitar mutaciones cruzadas con snapshots
+  let out = null;
+  try{ out = JSON.parse(JSON.stringify(obj || {})); }
+  catch(e){ out = (obj && typeof obj === 'object') ? Object.assign({}, obj) : {}; }
+
+  if (!out || typeof out !== 'object') out = {};
+  out.v = STORE_VERSION;
+
+  if (!Array.isArray(out.chips) || !out.chips.length) out.chips = defaultChips();
+  if (!Array.isArray(out.players)) out.players = defaultPlayers();
+  if (!Array.isArray(out.sessions)) out.sessions = defaultSessions();
+
+  // ui es opcional (preferencia). Se mantiene para no romper UX.
+  if (!out.ui || typeof out.ui !== 'object') out.ui = {};
+  if (!out.ui.juego || typeof out.ui.juego !== 'object') out.ui.juego = {};
+
+  if (typeof out.draftSessionId !== 'string') out.draftSessionId = '';
+
+  // Etapa 6: asegurar forma de sesiones existentes (migración suave)
+  if (Array.isArray(out.sessions)){
+    let changed = false;
+    out.sessions.forEach(s => {
+      const before = safeJson(s);
+      try{ ensureSessionGame(s); }catch(e){}
+      if (safeJson(s) != before) changed = true;
+    });
+    if (out.draftSessionId){
+      const ds = out.sessions.find(x => x && x.id === out.draftSessionId) || null;
+      if (ds && ds.status !== 'draft') { out.draftSessionId = ''; changed = true; }
+    }
+    if (changed) out.updatedAt = Date.now();
+  }
+
+  // Etapa 1: PDF consecutivo global (pdfSeqNext) — migración suave
+  try{
+    let next = out.pdfSeqNext;
+    let changedPdf = false;
+
+    if (!Number.isFinite(next) || next < 1){ next = 1; changedPdf = true; }
+    next = Math.floor(next);
+
+    let maxSeq = 0;
+    (Array.isArray(out.sessions) ? out.sessions : []).forEach(s => {
+      const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
+      if (n > maxSeq) maxSeq = n;
+    });
+    if (next <= maxSeq){ next = maxSeq + 1; changedPdf = true; }
+
+    if (out.pdfSeqNext !== next){ out.pdfSeqNext = next; changedPdf = true; }
+
+    if (changedPdf){ out.updatedAt = Date.now(); }
+  }catch(e){}
+
+  if (!out.createdAt) out.createdAt = Date.now();
+  if (!out.updatedAt) out.updatedAt = Date.now();
+
+  return out;
 }
 
 function uid(prefix){
@@ -246,6 +1214,7 @@ function getChips(){
 }
 
 function upsertChip(chip){
+  if (!requireAdminEdit()) return;
   const idx = store.chips.findIndex(c => c.id === chip.id);
   if (idx >= 0) store.chips[idx] = chip;
   else store.chips.push(chip);
@@ -253,6 +1222,7 @@ function upsertChip(chip){
 }
 
 function setChipActive(id, active){
+  if (!requireAdminEdit()) return;
   const c = store.chips.find(x => x.id === id);
   if (!c) return;
   c.active = !!active;
@@ -303,6 +1273,7 @@ function makeReportNameResolver(session){
 
 
 function upsertPlayer(player){
+  if (!requireAdminEdit()) return;
   if (!store.players) store.players = [];
   const idx = store.players.findIndex(p => p.id === player.id);
   if (idx >= 0) store.players[idx] = player;
@@ -311,6 +1282,7 @@ function upsertPlayer(player){
 }
 
 function setPlayerActive(id, active){
+  if (!requireAdminEdit()) return;
   const p = (store.players || []).find(x => x.id === id);
   if (!p) return;
   p.active = !!active;
@@ -351,6 +1323,105 @@ function setPlayerActive(id, active){
     window.location.hash = '#' + path;
   }
 
+  function shouldGate(path){
+    // Etapa 4/7 — Gate TOTAL:
+    // 1) Sin sesión => solo USUARIOS
+    // 2) Con sesión pero sin autorización aprobada (o aún verificando) => solo USUARIOS
+    if (!isAuthEnabled()) return false;
+    if (!authReady) return false;
+    if (!authUser) return (path !== '/usuarios');
+    if (!authzReady) return (path !== '/usuarios');
+    if (!authorized) return (path !== '/usuarios');
+    return false;
+  }
+
+  // ===== Etapa 7/7: Gate de STORE (Firestore) para pantallas de datos =====
+  function routeNeedsStore(path){
+    return !(path === '/inicio' || path === '/usuarios');
+  }
+
+  function getStoreGate(path){
+    if (!authorized || !authUser) return null;
+    if (!routeNeedsStore(path)) return null;
+    if (!storeSyncReady) return { kind: 'loading' };
+    if (storeSyncError) return { kind: 'error', msg: storeSyncError };
+    if (!storeRemoteExists) return { kind: 'missing' };
+    return null;
+  }
+
+  function renderStoreGate(path, gate){
+    const kind = gate && gate.kind ? String(gate.kind) : 'loading';
+    const isAdmin = isAdminRole();
+
+    let title = 'Datos compartidos';
+    let body = '';
+    let showRetry = false;
+    let showInit = false;
+
+    if (kind === 'loading'){
+      title = 'Cargando datos…';
+      body = 'Conectando a Firestore y sincronizando el store compartido.';
+      showRetry = true;
+    } else if (kind === 'error'){
+      title = 'Error de datos';
+      body = 'No se pudo leer el store compartido.\n\n' + String(gate.msg || '');
+      showRetry = true;
+    } else if (kind === 'missing'){
+      title = 'Store no inicializado';
+      body = isAdmin
+        ? 'No existe store/main todavía. Solo un ADMIN puede crearlo.'
+        : 'Store no inicializado, espera a un ADMIN.';
+      showInit = isAdmin;
+      showRetry = isAdmin;
+    }
+
+    const root = el(`
+      <section class="screen" aria-label="${escapeAttr(title)}">
+        <h1 class="screen-title">${escapeHtml(title)}</h1>
+        <p class="screen-sub">${escapeHtml(body)}</p>
+
+        <div class="panel" role="region" aria-label="Estado" style="margin-top:10px">
+          <div class="small-note" style="margin-top:0">
+            Ruta: <b>${escapeHtml(path)}</b> · Rol: <b>${escapeHtml(String(authorizedRole || ''))}</b>
+          </div>
+          ${kind === 'loading' ? `<div class="small-note" style="margin-top:10px">Tip: si estás en iPad/PWA y esto tarda, revisa conexión o dominio autorizado.</div>` : ''}
+        </div>
+
+        <div class="row" style="margin-top:14px; gap:10px; flex-wrap:wrap">
+          <button class="btn" type="button" id="storeBackBtn">Volver</button>
+          ${showInit ? `<button class="btn primary" type="button" id="storeInitBtn">Inicializar store</button>` : ''}
+          ${showRetry ? `<button class="btn" type="button" id="storeRetryBtn">Reintentar</button>` : ''}
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = '';
+    $app.appendChild(root);
+
+    const $back = document.getElementById('storeBackBtn');
+    if ($back) $back.addEventListener('click', () => navigate('/inicio'));
+
+    const $init = document.getElementById('storeInitBtn');
+    if ($init) $init.addEventListener('click', async () => {
+      if (!authorized || !authUser) { showToast('Inicia sesión'); return; }
+      if (!isAdminRole()) { showToast('Solo ADMIN puede editar'); return; }
+      if (!isStoreEnabled()) { showToast('Firestore no está listo'); return; }
+      try{
+        await bootstrapCreateStoreMain();
+      }catch(e){
+        showToast('Init: ' + prettyFsError(e));
+      }
+    });
+
+    const $retry = document.getElementById('storeRetryBtn');
+    if ($retry) $retry.addEventListener('click', () => {
+      // Reiniciar sync (sin loops)
+      stopStoreSync();
+      startStoreSync();
+      onRoute();
+    });
+  }
+
   // ===== Etapa 2: Export PDF (sin dependencias) =====
   function exportSessionPDF(sessionId){
     const id = String(sessionId || '').trim();
@@ -370,11 +1441,30 @@ function setPlayerActive(id, active){
 
   function onRoute(){
     const path = getRoute();
+    if (shouldGate(path)) {
+      // Evitar loops: solo redirigir si realmente no estamos ya en /usuarios
+      navigate('/usuarios');
+      return;
+    }
+
+    // Etapa 7/7: sin store listo, bloquear pantallas de datos (pero NO /inicio ni /usuarios)
+    if (authorized && routeNeedsStore(path)) {
+      const gate = getStoreGate(path);
+      if (gate) {
+        renderStoreGate(path, gate);
+        updateHeaderControls(path);
+        try{ updateHeaderRoleBadge(); }catch(e){}
+        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
+        return;
+      }
+    }
+
     const isPrint = (path === '/pdf');
     try{ document.body.classList.toggle('print-mode', isPrint); }catch(e){}
     const fn = routes[path] || routes['/inicio'];
     fn();
     updateHeaderControls(path);
+    updateHeaderRoleBadge();
     // keep header fixed and scroll main to top per navigation
     try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
   }
@@ -513,6 +1603,7 @@ function setPlayerActive(id, active){
   }
 
   function renderJuego(){
+    const roUser = !isAdminRole();
     const draft = getDraftSession();
     const activePlayers = getPlayers().filter(p => !!p.active);
     const lastIds = (store.ui && store.ui.juego && Array.isArray(store.ui.juego.lastPlayerIds)) ? store.ui.juego.lastPlayerIds : [];
@@ -526,13 +1617,15 @@ function setPlayerActive(id, active){
         <h1 class="screen-title">Juego</h1>
         <p class="screen-sub">Crea una partida del día o retoma el borrador. (Tu “yo del futuro” te lo agradecerá.)</p>
 
+        ${roUser ? `<div class="small-note" style="margin-top:10px"><span class="badge" style="vertical-align:middle">SOLO LECTURA</span> <span style="color:var(--muted); font-weight:850">Solo ADMIN puede crear/editar. Tú puedes ver historial y exportar.</span></div>` : ''}
+
         ${draft ? `
           <div class="panel" role="region" aria-label="Partida en borrador">
             <div class="panel-head">
               <div class="panel-title" style="margin:0">Partida en borrador</div>
               <div class="row">
-                <button class="btn primary" type="button" id="continueDraftBtn">Continuar</button>
-                <button class="btn danger" type="button" id="discardDraftBtn">Descartar</button>
+                <button class="btn primary" type="button" id="continueDraftBtn" ${roUser ? 'disabled' : ''}>Continuar</button>
+                <button class="btn danger" type="button" id="discardDraftBtn" ${roUser ? 'disabled' : ''}>Descartar</button>
               </div>
             </div>
 
@@ -554,7 +1647,7 @@ function setPlayerActive(id, active){
           <div class="form" style="margin-top:12px">
             <label class="field">
               <span>Fecha</span>
-              <input id="sessionDate" type="date" value="${escapeAttr(defaultDate)}" ${draft ? 'disabled' : ''} />
+              <input id="sessionDate" type="date" value="${escapeAttr(defaultDate)}" ${(draft || roUser) ? 'disabled' : ''} />
             </label>
           </div>
 
@@ -637,7 +1730,7 @@ function setPlayerActive(id, active){
           const name = (p.name || '').trim();
           const sel = selected.has(p.id);
           return `
-            <button class="pick ${sel ? 'selected' : ''}" type="button" data-id="${p.id}" ${draft ? 'disabled' : ''}>
+            <button class="pick ${sel ? 'selected' : ''}" type="button" data-id="${p.id}" ${(draft || roUser) ? 'disabled' : ''}>
               <div class="pick-nick">${escapeHtml(disp)}</div>
               <div class="pick-name">${escapeHtml(name || '')}</div>
             </button>
@@ -646,13 +1739,14 @@ function setPlayerActive(id, active){
     }
 
     function syncStartDisabled(){
-      const can = !draft && selected.size > 0 && activePlayers.length > 0;
+      const can = !draft && !roUser && selected.size > 0 && activePlayers.length > 0;
       $start.disabled = !can;
     }
 
     $grid.addEventListener('click', (ev) => {
       const btn = ev.target.closest('button.pick');
       if (!btn || btn.disabled) return;
+      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       const id = btn.getAttribute('data-id');
       if (!id) return;
       if (selected.has(id)) selected.delete(id);
@@ -662,6 +1756,7 @@ function setPlayerActive(id, active){
     });
 
     $date.addEventListener('change', () => {
+      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       const v = ($date.value || '').trim();
       if (!store.ui) store.ui = {};
       if (!store.ui.juego) store.ui.juego = {};
@@ -670,6 +1765,8 @@ function setPlayerActive(id, active){
     });
 
     $start.addEventListener('click', () => {
+      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
+      if (!requireAdminEdit()) return;
       if (draft) return;
       const date = ($date.value || '').trim() || todayYMD();
       const ids = Array.from(selected);
@@ -692,6 +1789,8 @@ function setPlayerActive(id, active){
       const $discard = document.getElementById('discardDraftBtn');
       if ($continue) $continue.addEventListener('click', () => navigate('/juego/mesa'));
       if ($discard) $discard.addEventListener('click', async () => {
+        if (roUser) { showToast('Solo ADMIN puede editar'); return; }
+        if (!requireAdminEdit()) return;
         const ok = await confirmDialog({
           title: 'Descartar borrador',
           body: 'Esto eliminará la sesión en borrador. No hay “Ctrl+Z” (aún).',
@@ -735,7 +1834,7 @@ function setPlayerActive(id, active){
       return;
     }
     ensureSessionGame(s);
-    renderMesaSession(s, { readOnly: false, backPath: '/juego', badge: 'Draft' });
+    renderMesaSession(s, { readOnly: (!canEditData()), backPath: '/juego', badge: 'Draft' });
   }
 
   function renderJuegoSesion(){
@@ -747,7 +1846,7 @@ function setPlayerActive(id, active){
       return;
     }
     ensureSessionGame(s);
-    renderMesaSession(s, { readOnly: (s.status === 'closed'), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : 'Draft') });
+    renderMesaSession(s, { readOnly: (s.status === 'closed' || !canEditData()), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : 'Draft') });
   }
 
     // ===== Etapa 7: Historial (navegable) =====
@@ -1514,10 +2613,13 @@ function renderHistorialDetalle(){
 
   
 function renderConfiguracion(){
+    const roUser = !isAdminRole();
     const root = el(`
       <section class="screen" aria-label="Configuración">
         <h1 class="screen-title">Configuración</h1>
         <p class="screen-sub">Configuras una vez y luego solo juegas. (Ok, también discutes. Pero con estilo.)</p>
+
+        ${roUser ? `<div class="small-note" style="margin-top:10px"><span class="badge" style="vertical-align:middle">SOLO LECTURA</span> <span style="color:var(--muted); font-weight:850">Solo ADMIN puede editar. Tú puedes ver y exportar.</span></div>` : ''}
 
         <div class="panel" role="region" aria-label="Ranking global">
           <div class="panel-head">
@@ -1542,7 +2644,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Jugadores">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Jugadores</div>
-            <button class="btn primary" type="button" id="addPlayerBtn">Agregar jugador</button>
+            <button class="btn primary" type="button" id="addPlayerBtn" ${roUser ? 'disabled' : ''}>Agregar jugador</button>
           </div>
 
           <div class="player-grid" id="playerGrid" aria-live="polite"></div>
@@ -1553,7 +2655,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Fichas" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Fichas</div>
-            <button class="btn primary" type="button" id="addChipBtn">Agregar ficha</button>
+            <button class="btn primary" type="button" id="addChipBtn" ${roUser ? 'disabled' : ''}>Agregar ficha</button>
           </div>
 
           <div class="chip-grid" id="chipGrid" aria-live="polite"></div>
@@ -1653,8 +2755,8 @@ function renderConfiguracion(){
             </div>
 
             <div class="player-actions">
-              <button class="btn" type="button" data-act="edit">Editar</button>
-              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
+              <button class="btn" type="button" data-act="edit" ${roUser ? 'disabled' : ''}>Editar</button>
+              <button class="btn" type="button" data-act="toggle" ${roUser ? 'disabled' : ''}>${actionLabel}</button>
             </div>
           </article>
         `;
@@ -1662,6 +2764,7 @@ function renderConfiguracion(){
     }
 
     $pgrid.addEventListener('click', (ev) => {
+      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       const btn = ev.target.closest('button[data-act]');
       if (!btn) return;
       const card = ev.target.closest('.player-card');
@@ -1684,6 +2787,7 @@ function renderConfiguracion(){
     });
 
     document.getElementById('addPlayerBtn').addEventListener('click', () => {
+      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       openPlayerModal({ mode: 'add', onSave: renderPlayers });
     });
 
@@ -1730,8 +2834,8 @@ function renderConfiguracion(){
             </div>
 
             <div class="chip-actions">
-              <button class="btn" type="button" data-act="edit">Editar</button>
-              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
+              <button class="btn" type="button" data-act="edit" ${roUser ? 'disabled' : ''}>Editar</button>
+              <button class="btn" type="button" data-act="toggle" ${roUser ? 'disabled' : ''}>${actionLabel}</button>
             </div>
           </article>
         `;
@@ -1739,6 +2843,7 @@ function renderConfiguracion(){
     }
 
     $cgrid.addEventListener('click', (ev) => {
+      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       const btn = ev.target.closest('button[data-act]');
       if (!btn) return;
       const card = ev.target.closest('.chip-card');
@@ -1761,6 +2866,7 @@ function renderConfiguracion(){
     });
 
     document.getElementById('addChipBtn').addEventListener('click', () => {
+      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       openChipModal({ mode: 'add', onSave: renderChips });
     });
 
@@ -1771,6 +2877,7 @@ function renderConfiguracion(){
   }
 
   function openChipModal({ mode, chip, onSave }){
+    if (!requireAdminEdit()) return;
     const isEdit = (mode === 'edit');
     const base = chip || { id: uid('chip'), name: '', value: '', color: '#808080', active: true };
 
@@ -1916,6 +3023,7 @@ function renderConfiguracion(){
 
   
   function openPlayerModal({ mode, player, onSave }){
+    if (!requireAdminEdit()) return;
     const isEdit = (mode === 'edit');
     const base = player || { id: uid('player'), name: '', nick: '', active: true, stats: {} };
 
@@ -2132,6 +3240,7 @@ function renderConfiguracion(){
   }
 
   function saveSession(s){
+  if (!requireAdminEdit()) return;
     if (!s || !s.id) return;
     if (!Array.isArray(store.sessions)) store.sessions = [];
     const idx = store.sessions.findIndex(x => x && x.id === s.id);
@@ -2191,6 +3300,7 @@ function renderConfiguracion(){
 
 
   function closeSession(id){
+  if (!requireAdminEdit()) return;
     const s = getSessionById(id);
     if (!s) return;
     if (s.status === 'closed') return;
@@ -2450,6 +3560,7 @@ function renderConfiguracion(){
   }
 
   function recalcAndPersistStats(){
+  if (!requireAdminEdit()) return;
     const a = computeAnalytics();
     // persist into players.stats (for convenience) + global block
     const players = getPlayers();
@@ -2678,6 +3789,7 @@ function renderConfiguracion(){
   }
 
   async function importBackupJson(text, { mode }){
+    if (!requireAdminEdit()) return;
     let obj = null;
     try{ obj = JSON.parse(text); }catch(e){ obj = null; }
     if (!obj || typeof obj !== 'object'){
@@ -2717,7 +3829,7 @@ function renderConfiguracion(){
       mergeStore(normalized);
     } else {
       store = normalized;
-      persistStore(store);
+      saveStore();
     }
     if (incomingTheme){
       themePref = (incomingTheme === 'auto' || incomingTheme === 'light' || incomingTheme === 'dark') ? incomingTheme : themePref;
@@ -2780,11 +3892,12 @@ function renderConfiguracion(){
     cur.players = Array.from(players.values());
     cur.sessions = Array.from(sessions.values());
     cur.updatedAt = Date.now();
-    persistStore(cur);
+    saveStore();
   }
 
   function resetAllData(){
-    try{ localStorage.removeItem(STORE_KEY); }catch(e){}
+    try{ localStorage.removeItem(STORE_CACHE_KEY); }catch(e){}
+    try{ localStorage.removeItem(LEGACY_STORE_KEY); }catch(e){}
     try{ localStorage.removeItem(THEME_KEY); }catch(e){}
     themePref = 'auto';
     store = initStore();
@@ -3099,14 +4212,18 @@ function renderConfiguracion(){
     if (!s){
       s = sessions.find(x => x && x.status === 'draft') || null;
       if (s && s.id && s.id !== store.draftSessionId){
-        store.draftSessionId = s.id;
-        saveStore();
+        // Evitar que MIEMBRO escriba punteros globales: solo ADMIN corrige el draftSessionId
+        if (isAdminRole() && storeSyncReady && storeRemoteExists){
+          store.draftSessionId = s.id;
+          saveStore();
+        }
       }
     }
     return s;
   }
 
   function discardDraftSession(){
+  if (!requireAdminEdit()) return;
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
     const id = store.draftSessionId;
     if (!id) return;
@@ -3225,12 +4342,140 @@ function renderConfiguracion(){
 
 
   function renderUsuarios(){
+    const enabled = isAuthEnabled();
+    const fsEnabled = isFirestoreAccessEnabled();
+    const ready = authReady;
+    const u = authUser;
+    const displayName = u ? escapeHtml(u.displayName || '') : '';
+    const email = u ? escapeHtml(u.email || '') : '';
+
+    const gateActive = !!(enabled && ready && u && (!authzReady || !authorized));
+    const sessBadge = (!enabled) ? 'OFF' : (!ready ? '...' : (u ? 'OK' : 'LOGIN'));
+    const sessTitle = (!enabled) ? 'Sesión' : (!ready ? 'Cargando sesión' : (u ? 'Sesión activa' : 'Iniciar sesión'));
+
+    let sessMsg = '';
+    if (!enabled) sessMsg = 'Firebase/Auth no está listo (revisa firebaseConfig.js y que firebaseInit.js cargue sin errores).';
+    else if (!ready) sessMsg = 'Cargando sesión…';
+    else if (u) sessMsg = `Conectado como <b>${displayName || 'Usuario'}</b>${email ? ` (${email})` : ''}.`;
+    else sessMsg = 'Inicia sesión con Google para usar la app.';
+
+    let authzBadge = 'BLOQUEADO';
+    let authzTitle = 'Acceso';
+    let authzMsg = '';
+    if (!enabled) {
+      authzBadge = 'OFF';
+      authzTitle = 'Autorización';
+      authzMsg = 'Activa Firebase/Auth + Firestore para habilitar autorización por usuario.';
+    } else if (!ready) {
+      authzBadge = '...';
+      authzTitle = 'Autorización';
+      authzMsg = 'Esperando estado de sesión…';
+    } else if (!u) {
+      authzBadge = 'LOGIN';
+      authzTitle = 'Autorización';
+      authzMsg = 'Primero inicia sesión para validar si tu usuario está autorizado.';
+    } else if (!fsEnabled) {
+      authzBadge = 'ERROR';
+      authzTitle = 'Autorización';
+      authzMsg = 'Firestore no está listo. No se puede validar allowedUsers/accessRequests.';
+    } else if (!authzReady || authzChecking) {
+      authzBadge = 'CHECK';
+      authzTitle = 'Verificando autorización';
+      authzMsg = 'Comprobando allowedUsers…';
+    } else if (authorized) {
+      authzBadge = escapeHtml(authorizedRole || 'OK');
+      authzTitle = 'Acceso aprobado';
+      authzMsg = `Tu usuario está autorizado${authorizedRole ? ` como <b>${escapeHtml(authorizedRole)}</b>` : ''}.`;
+    } else {
+      const st = String((accessRequest && accessRequest.status) || '').toUpperCase();
+      if (st === 'PENDING') {
+        authzBadge = 'PENDING';
+        authzTitle = 'Solicitud enviada';
+        authzMsg = 'Tu solicitud está pendiente de aprobación por un ADMIN.';
+      } else if (st === 'REJECTED') {
+        authzBadge = 'REJECTED';
+        authzTitle = 'Acceso no aprobado';
+        authzMsg = 'Tu solicitud fue rechazada. Puedes volver a solicitar acceso.';
+      } else if (st === 'APPROVED') {
+        authzBadge = 'APPROVED';
+        authzTitle = 'Solicitud aprobada';
+        authzMsg = 'Tu solicitud aparece aprobada. Si aún no entras, toca “Revisar estado” para detectar allowedUsers.';
+      } else if (accessRequestReady) {
+        authzBadge = 'SOLICITAR';
+        authzTitle = 'Solicitar acceso';
+        authzMsg = 'Tu usuario aún no está autorizado. Solicita acceso para que un ADMIN te apruebe.';
+      } else {
+        authzBadge = 'CHECK';
+        authzTitle = 'Verificando acceso';
+        authzMsg = 'Consultando estado de solicitud…';
+      }
+    }
+
+    const requestStatus = String((accessRequest && accessRequest.status) || '').toUpperCase();
+    const canBootstrap = canBootstrapAdmin();
+    const canRequest = !!(enabled && ready && u && fsEnabled && authzReady && !authorized && !authzChecking && (!requestStatus || requestStatus === 'REJECTED') && !canBootstrap);
+    const canRefreshAccess = !!(enabled && ready && u && fsEnabled && !authzChecking);
+    const showAccessPanel = !!(enabled && ready && u);
+    const canBack = !!(enabled && ready && u && authzReady && authorized);
+
     const root = el(`
       <section class="screen" aria-label="Usuarios">
         <h1 class="screen-title">Usuarios</h1>
-        <p class="screen-sub">Acceso y permisos. (En próximas etapas: login, mesa, roles e invitaciones.)</p>
+        <p class="screen-sub">Acceso y permisos. Si no estás autorizado, la app se queda aquí. Sin drama, así debe ser.</p>
 
-        <div class="panel" role="region" aria-label="Compartir app">
+        ${gateActive ? `
+          <div class="panel" role="region" aria-label="Bloqueo por autorización" style="margin-top:10px">
+            <div class="panel-head">
+              <div class="panel-title" style="margin:0">Acceso restringido</div>
+              <span class="badge">GATE</span>
+            </div>
+            <div class="small-note" style="margin-top:10px">Tu sesión existe, pero el acceso a la app está bloqueado hasta que aparezcas en <b>allowedUsers</b>.</div>
+          </div>
+        ` : ''}
+
+        <div class="panel" role="region" aria-label="Sesión" style="margin-top:${gateActive ? '14px' : '10px'}">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">${sessTitle}</div>
+            <span class="badge">${sessBadge}</span>
+          </div>
+          <div class="small-note" style="margin-top:10px">${sessMsg}</div>
+          ${authUiError ? `<div class="small-note" style="margin-top:8px"><span class="badge" style="vertical-align:middle">ERROR</span> <span style="color:var(--muted); font-weight:850">${escapeHtml(authUiError)}</span></div>` : ''}
+          <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
+            ${enabled ? (u ? `<button class="btn danger" type="button" id="logoutBtn">Cerrar sesión</button>` : `<button class="btn primary" type="button" id="loginBtn">Iniciar sesión con Google</button>`) : ''}
+            ${canRefreshAccess ? `<button class="btn" type="button" id="refreshAccessBtn">Revisar estado</button>` : ''}
+          </div>
+          ${enabled ? `<div class="small-note" style="margin-top:10px">Si el popup falla (iPad/Safari/PWA), se usará redirección automática.</div>` : ''}
+        </div>
+
+        ${showAccessPanel ? `
+          <div class="panel" role="region" aria-label="Autorización" style="margin-top:14px">
+            <div class="panel-head">
+              <div class="panel-title" style="margin:0">${authzTitle}</div>
+              <span class="badge">${authzBadge}</span>
+            </div>
+            <div class="small-note" style="margin-top:10px">${authzMsg}</div>
+            ${authzUiError ? `<div class="small-note" style="margin-top:8px"><span class="badge" style="vertical-align:middle">ERROR</span> <span style="color:var(--muted); font-weight:850">${escapeHtml(authzUiError)}</span></div>` : ''}
+
+            ${canBootstrap ? `
+              <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
+                <button class="btn primary" type="button" id="bootstrapAdminBtn">Activar ADMIN (bootstrap)</button>
+              </div>
+              <div class="small-note" style="margin-top:10px">Esto crea tu registro en <b>allowedUsers</b> como <b>ADMIN</b>. Solo aparece para el correo bootstrap y solo si aún no existe tu allowedUsers.</div>
+            ` : ''}
+
+            ${(!authorized && authzReady) ? `
+              <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
+                <button class="btn primary" type="button" id="requestAccessBtn" ${canRequest ? '' : 'disabled'}>${requestStatus === 'REJECTED' ? 'Volver a solicitar' : 'Solicitar acceso'}</button>
+                ${canRefreshAccess ? `<button class="btn" type="button" id="refreshAccessBtn2">Revisar estado</button>` : ''}
+              </div>
+            ` : ''}
+            ${(!authorized && authzReady) ? `<div class="small-note" style="margin-top:10px">Estados soportados: PENDING / REJECTED / APPROVED. El acceso real se habilita cuando tu UID exista en <b>allowedUsers</b>.</div>` : ''}
+          </div>
+        ` : ''}
+
+        ${(authorized && String(authorizedRole || '').toUpperCase() === 'ADMIN') ? renderAdminPanelBlock() : ''}
+
+        <div class="panel" role="region" aria-label="Compartir app" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Compartir app</div>
             <button class="btn primary" type="button" id="shareBtn">COMPARTIR APP</button>
@@ -3238,35 +4483,8 @@ function renderConfiguracion(){
           <div class="small-note" style="margin-top:10px">Comparte el link para abrir Pokerito en otro dispositivo.</div>
         </div>
 
-        <div class="panel" role="region" aria-label="Acceso" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">No autorizado</div>
-            <span class="badge">SOLICITAR</span>
-          </div>
-          <div class="small-note" style="margin-top:10px">Placeholder: aquí irá el flujo para pedir acceso a la mesa.</div>
-          <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
-            <button class="btn" type="button" disabled>Solicitar acceso</button>
-          </div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Solicitud" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Solicitud enviada</div>
-            <span class="badge">PENDING</span>
-          </div>
-          <div class="small-note" style="margin-top:10px">Placeholder: esperando aprobación del ADMIN.</div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Rechazo" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Acceso no aprobado</div>
-            <span class="badge">REJECTED</span>
-          </div>
-          <div class="small-note" style="margin-top:10px">Placeholder: el ADMIN rechazó la solicitud.</div>
-        </div>
-
         <div class="row" style="margin-top:14px">
-          <button class="btn primary" type="button" id="backBtn">Volver</button>
+          <button class="btn primary" type="button" id="backBtn" ${canBack ? '' : 'disabled'}>Volver</button>
         </div>
       </section>
     `);
@@ -3279,12 +4497,74 @@ function renderConfiguracion(){
 
     const sb = document.getElementById('shareBtn');
     if (sb) sb.addEventListener('click', () => shareAppLink());
+
+    const lb = document.getElementById('loginBtn');
+    if (lb) lb.addEventListener('click', () => loginWithGoogle());
+
+    const lob = document.getElementById('logoutBtn');
+    if (lob) lob.addEventListener('click', () => logout());
+
+    const rb1 = document.getElementById('refreshAccessBtn');
+    if (rb1) rb1.addEventListener('click', () => refreshAuthorizationState({ showToastOnError: true }));
+    const rb2 = document.getElementById('refreshAccessBtn2');
+    if (rb2) rb2.addEventListener('click', () => refreshAuthorizationState({ showToastOnError: true }));
+
+    const bb = document.getElementById('bootstrapAdminBtn');
+    if (bb) bb.addEventListener('click', () => bootstrapActivateAdmin());
+
+    const reqBtn = document.getElementById('requestAccessBtn');
+    if (reqBtn) {
+      reqBtn.addEventListener('click', () => {
+        const st = String((accessRequest && accessRequest.status) || '').toUpperCase();
+        submitAccessRequest(st === 'REJECTED' ? 'retry' : 'new');
+      });
+    }
+
+    // Panel ADMIN (Etapa 6/7)
+    if (authorized && String(authorizedRole || '').toUpperCase() === 'ADMIN') {
+      const ab = document.getElementById('adminRefreshBtn');
+      if (ab) ab.addEventListener('click', () => adminLoadData({ force: true }));
+
+      root.querySelectorAll('[data-req-approve]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const uid = btn.getAttribute('data-uid');
+          const role = btn.getAttribute('data-role');
+          adminApproveRequest(uid, role);
+        });
+      });
+      root.querySelectorAll('[data-req-reject]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const uid = btn.getAttribute('data-uid');
+          adminRejectRequest(uid);
+        });
+      });
+      root.querySelectorAll('[data-user-role]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const uid = btn.getAttribute('data-uid');
+          const role = btn.getAttribute('data-role');
+          adminSetRole(uid, role);
+        });
+      });
+      root.querySelectorAll('[data-user-revoke]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const uid = btn.getAttribute('data-uid');
+          adminRevokeAccess(uid);
+        });
+      });
+
+      if (!adminDataReady && !adminDataLoading && !adminActionBusy) {
+        adminLoadData({ force: true });
+      }
+    }
   }
   function renderSoporte(){
+    const roUser = !isAdminRole();
     const root = el(`
       <section class="screen" aria-label="Soporte">
         <h1 class="screen-title">Soporte</h1>
         <p class="screen-sub">Herramientas y ajustes generales. (Sí, aquí vive el “modo oscuro”.)</p>
+
+        ${roUser ? `<div class="small-note" style="margin-top:10px"><span class="badge" style="vertical-align:middle">SOLO LECTURA</span> <span style="color:var(--muted); font-weight:850">Importar, recalcular y cambios están reservados a ADMIN.</span></div>` : ''}
 
         <div class="panel" role="region" aria-label="Compartir" style="margin-top:10px">
           <div class="panel-head">
@@ -3312,8 +4592,8 @@ function renderConfiguracion(){
             <button class="btn" type="button" id="exportJsonBtn">Exportar JSON</button>
           </div>
           <div class="row" style="margin-top:10px; gap:10px; flex-wrap:wrap">
-            <button class="btn primary" type="button" id="importJsonBtn">Importar (Reemplazar)</button>
-            <button class="btn" type="button" id="importMergeJsonBtn">Importar (Fusionar)</button>
+            <button class="btn primary" type="button" id="importJsonBtn" ${roUser ? 'disabled' : ''}>Importar (Reemplazar)</button>
+            <button class="btn" type="button" id="importMergeJsonBtn" ${roUser ? 'disabled' : ''}>Importar (Fusionar)</button>
             <input id="importFile" type="file" accept="application/json" style="display:none" />
           </div>
           <div class="small-note" style="margin-top:10px">Importar muestra un resumen (fichas/jugadores/partidas) antes de aplicar. Fusionar solo agrega IDs nuevos (modo seguro).</div>
@@ -3322,7 +4602,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Mantenimiento" style="margin-top:14px">
           <div class="panel-title">Mantenimiento</div>
           <div class="row" style="gap:10px; flex-wrap:wrap">
-            <button class="btn" type="button" id="recalcBtn">Recalcular estadísticas</button>
+            <button class="btn" type="button" id="recalcBtn" ${roUser ? 'disabled' : ''}>Recalcular estadísticas</button>
             <button class="btn danger" type="button" id="clearBtn">Borrar datos locales</button>
           </div>
           <div class="small-note" style="margin-top:10px">“Borrar” elimina jugadores, fichas y sesiones guardadas en este dispositivo.</div>
@@ -3355,6 +4635,7 @@ function renderConfiguracion(){
     document.getElementById('exportJsonBtn').addEventListener('click', () => exportBackupJson());
 
     function openPicker(mode){
+      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       importMode = mode;
       if ($file) { $file.value = ''; $file.click(); }
     }
@@ -3373,6 +4654,8 @@ function renderConfiguracion(){
 
     // Maintenance
     document.getElementById('recalcBtn').addEventListener('click', async () => {
+      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
+      if (!requireAdminEdit()) return;
       const ok = await confirmDialog({
         title: 'Recalcular estadísticas',
         body: 'Reconstruye stats desde todas las sesiones cerradas.',
@@ -3486,6 +4769,37 @@ function renderConfiguracion(){
     }
   }
 
+  function updateHeaderRoleBadge(){
+    try{
+      if (!$roleBadges) return;
+      // limpiar siempre
+      $roleBadges.innerHTML = '';
+
+      if (!authReady || !authUser) return;
+      if (!authzReady) {
+        $roleBadges.innerHTML = '<span class="badge">AUTH…</span>';
+        return;
+      }
+      if (!authorized) return;
+
+      const role = String(authorizedRole || '').toUpperCase();
+      const isAdmin = (role === 'ADMIN');
+      const ro = !isAdmin;
+
+      const roleHtml = `<span class="badge">${escapeHtml(role || 'USUARIO')}</span>`;
+      const roHtml = ro ? `<span class="badge">SOLO LECTURA</span>` : '';
+
+      let storeHtml = '';
+      if (routeNeedsStore(getRoute()) && authorized){
+        if (!storeSyncReady) storeHtml = '<span class="badge">STORE…</span>';
+        else if (storeSyncError) storeHtml = '<span class="badge">STORE ERROR</span>';
+        else if (!storeRemoteExists) storeHtml = '<span class="badge">STORE</span>';
+      }
+
+      $roleBadges.innerHTML = roleHtml + roHtml + storeHtml;
+    }catch(e){}
+  }
+
   function updateHeaderControls(path){
     if (!$themeToggle) return;
     const show = (path === '/juego' || path === '/juego/mesa' || path === '/juego/sesion' || path.startsWith('/historial') || path === '/ranking');
@@ -3523,12 +4837,29 @@ function renderConfiguracion(){
     catch(e){ try { mqDark.addListener(onSysThemeChange); } catch(e2){} }
   }
 
+  // Firebase ready (Auth + Firestore)
+  window.addEventListener('pokerito:firebase-ready', (ev) => {
+    try{ attachFirebase(ev && ev.detail ? ev.detail : window.__POKERITO_FIREBASE__); }catch(e){}
+  });
+  if (window.__POKERITO_FIREBASE__) {
+    try{ attachFirebase(window.__POKERITO_FIREBASE__); }catch(e){}
+  }
+
   window.addEventListener('hashchange', onRoute);
   window.addEventListener('DOMContentLoaded', () => {
     // ensure default route
     if (!window.location.hash) window.location.hash = '#/inicio';
     applyTheme();
     onRoute();
+
+    // Fallback: si Firebase no llega (config faltante, bloqueo de red, etc.),
+    // no dejar la UI en “cargando” para siempre.
+    setTimeout(() => {
+      if (!authInitOnce && !authReady) {
+        authReady = true;
+        onRoute();
+      }
+    }, 1200);
   });
 
 })();

@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===== Pokerito — Reglas de referencia (Etapa 5/7) =====
+    // Reemplaza el correo bootstrap por el tuyo (dueño). Debe coincidir EXACTO con tu email Google.
+    function bootstrapEmail() {
+      return "jcguadamuz@icloud.com";
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function myAllowedDoc() {
+      return get(/databases/$(database)/documents/allowedUsers/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/allowedUsers/$(request.auth.uid))
+        && myAllowedDoc().data.rol == "ADMIN";
+    }
+
+    function isBootstrapOwner(uid) {
+      return signedIn()
+        && request.auth.token.email != null
+        && lower(request.auth.token.email) == lower(bootstrapEmail())
+        && request.auth.uid == uid;
+    }
+
+    // allowedUsers/{uid}
+    match /allowedUsers/{uid} {
+      // Lectura: el propio usuario (para gate) o ADMIN.
+      allow get: if isSelf(uid) || isAdmin();
+      allow list: if isAdmin();
+
+      // Bootstrap: SOLO el dueño por email puede crear su propio allowedUsers si aún no existe.
+      allow create: if isBootstrapOwner(uid)
+        && !exists(/databases/$(database)/documents/allowedUsers/$(uid))
+        && request.resource.data.uid == uid
+        && request.resource.data.rol == "ADMIN";
+
+      // Administración: solo ADMIN puede crear/editar/borrar usuarios permitidos.
+      allow create, update, delete: if isAdmin();
+    }
+
+    // accessRequests/{uid}
+    match /accessRequests/{uid} {
+      // El usuario puede leer su propia solicitud; ADMIN puede leer/listar todo.
+      allow get: if isSelf(uid) || isAdmin();
+      allow list: if isAdmin();
+
+      // Crear / reenviar: solo el propio usuario y siempre PENDING.
+      allow create, update: if isSelf(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.status == "PENDING"
+        && request.resource.data.resolvedAt == null
+        && request.resource.data.resolvedBy == null;
+
+      // Resolver (approve/reject) y borrar: solo ADMIN.
+      allow update, delete: if isAdmin();
+    }
+
+
+    // store/main — estado compartido (Etapa 7/7)
+    match /store/{docId} {
+      // Lectura: cualquier usuario autorizado (allowedUsers).
+      allow get: if signedIn()
+        && docId == "main"
+        && exists(/databases/$(database)/documents/allowedUsers/$(request.auth.uid));
+
+      // Escritura: SOLO ADMIN.
+      allow create, update, delete: if isAdmin()
+        && docId == "main"
+        && request.resource.data.data is map
+        && request.resource.data.updatedBy == request.auth.uid;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
