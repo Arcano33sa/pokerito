@@ -1,4 +1,4 @@
-/* Pokerito — v0.1.13 — Etapa 1/3: PDF Ranking Global Top 10 (acumulado) */
+/* Pokerito — limpieza final y caché saneada */
 (function(){
   const $app = document.getElementById('app');
   const $headerRight = document.getElementById('headerRight');
@@ -8,6 +8,9 @@
   const THEME_VALUES = new Set(['auto','light','dark']);
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
+
+  const APP_CACHE_NAME = 'pokerito-v0.1.9-forense-final';
+  const SW_URL = './sw.js?v=0.1.9-forense-final';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -24,987 +27,120 @@
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
 
-  // Rol + estado (Etapa 7/7): badge de sesión/permiso + estado de store
-  const $roleBadges = document.createElement('div');
-  $roleBadges.id = 'roleBadges';
-  $roleBadges.style.display = 'flex';
-  $roleBadges.style.alignItems = 'center';
-  $roleBadges.style.gap = '8px';
-  if ($headerRight) $headerRight.appendChild($roleBadges);
 
-  // ===== Firebase Auth (Etapa 3/7) =====
-  // Nota: firebaseInit.js expone window.__POKERITO_FIREBASE__ (auth/db) + authApi helpers.
-  let fbRef = null;
-  let authUser = null;
-  let authReady = false;
-  let authInitOnce = false;
-  let authUiError = '';
-
-  // ===== Autorización (Etapa 4/7) =====
-  // Gate TOTAL: sesión válida NO implica acceso aprobado.
-  let authzReady = false;
-  let authzChecking = false;
-  let authorized = false;
-  let authorizedRole = '';
-  let authzUiError = '';
-  let accessRequest = null; // { status, ... } o null
-  let accessRequestReady = false;
-  let authzReqSeq = 0;
-  let allowedDocExists = false;
-
-  // ===== Bootstrap ADMIN (Etapa 5/7) =====
-  // IMPORTANT: Reemplaza este correo por el tuyo (dueño). Debe coincidir EXACTO con el email del login Google.
-  const ADMIN_BOOTSTRAP_EMAIL = 'jcguadamuz@icloud.com';
-
-  // ===== Panel ADMIN (Etapa 6/7) =====
-  let adminDataReady = false;
-  let adminDataLoading = false;
-  let adminActionBusy = false;
-  let adminUiError = '';
-  let adminPending = [];
-  let adminAllowed = [];
-  let adminLastLoadedAt = 0;
-  let adminSeq = 0;
-
-  function resetAdminState(){
-    adminDataReady = false;
-    adminDataLoading = false;
-    adminActionBusy = false;
-    adminUiError = '';
-    adminPending = [];
-    adminAllowed = [];
-    adminLastLoadedAt = 0;
-    adminSeq = 0;
-  }
-
-  function isAdminRole(){
-    return !!(authorized && String(authorizedRole || '').toUpperCase() === 'ADMIN');
-  }
-
-  function isFirestoreAdminEnabled(){
-    const fb = fbRef || window.__POKERITO_FIREBASE__;
-    const api = fb && fb.firestoreApi;
-    return !!(
-      fb && fb.db && api &&
-      typeof api.doc === 'function' &&
-      typeof api.collection === 'function' &&
-      typeof api.query === 'function' &&
-      typeof api.where === 'function' &&
-      typeof api.getDoc === 'function' &&
-      typeof api.getDocs === 'function' &&
-      typeof api.setDoc === 'function' &&
-      typeof api.updateDoc === 'function' &&
-      typeof api.deleteDoc === 'function'
-    );
-  }
-
-  function tsToMs(t){
-    try{
-      if (!t) return 0;
-      if (typeof t.toMillis === 'function') return t.toMillis();
-      if (typeof t.toDate === 'function') return +t.toDate();
-      if (typeof t.seconds === 'number') return Math.round(t.seconds * 1000);
-      if (typeof t === 'number') return Math.round(t);
-      const d = Date.parse(String(t));
-      return (d != d) ? 0 : d;
-    }catch(e){
-      return 0;
-    }
-  }
-
-  function fmtWhen(t){
-    const ms = tsToMs(t);
-    if (!ms) return '';
-    try{ return new Date(ms).toLocaleString(); }
-    catch(e){ return new Date(ms).toISOString(); }
-  }
-
-
-  function isAuthEnabled(){
-    const fb = fbRef || window.__POKERITO_FIREBASE__;
-    return !!(fb && fb.auth && fb.authApi && typeof fb.authApi.onAuthStateChanged === 'function');
-  }
-
-  function isFirestoreAccessEnabled(){
-    const fb = fbRef || window.__POKERITO_FIREBASE__;
-    const api = fb && fb.firestoreApi;
-    return !!(
-      fb && fb.db && api &&
-      typeof api.doc === 'function' &&
-      typeof api.getDoc === 'function' &&
-      typeof api.setDoc === 'function'
-    );
-  }
-
-  function resetAuthorizationState(){
-    authzReady = false;
-    authzChecking = false;
-    authorized = false;
-    authorizedRole = '';
-    authzUiError = '';
-    accessRequest = null;
-    accessRequestReady = false;
-    allowedDocExists = false;
-    resetAdminState();
-  }
-
-  function normEmail(v){
-    return String(v || '').trim().toLowerCase();
-  }
-
-  function isBootstrapEmailConfigured(){
-    const v = String(ADMIN_BOOTSTRAP_EMAIL || '').trim();
-    if (!v) return false;
-    if (v.includes('__SET_')) return false;
-    return v.includes('@');
-  }
-
-  function canBootstrapAdmin(){
-    if (!isBootstrapEmailConfigured()) return false;
-    if (!isAuthEnabled()) return false;
-    if (!authReady || !authUser) return false;
-    if (!isFirestoreAccessEnabled()) return false;
-    if (!authzReady || authzChecking) return false;
-    if (authorized) return false;
-    if (allowedDocExists) return false; // debe NO existir allowedUsers/{uid}
-    return normEmail(authUser.email) === normEmail(ADMIN_BOOTSTRAP_EMAIL);
-  }
-
-  function prettyFsError(err){
-    const code = (err && err.code) ? String(err.code) : '';
-    if (code === 'permission-denied') return 'Permiso denegado en Firestore.';
-    if (code === 'unavailable') return 'Firestore no disponible (red/conexión).';
-    if (code) return 'Error Firestore: ' + code;
-    return 'Error Firestore.';
-  }
-
-  function prettyAuthError(err){
-    const code = (err && err.code) ? String(err.code) : '';
-    if (code === 'auth/unauthorized-domain') return 'Dominio no autorizado en Firebase Auth.';
-    if (code === 'auth/popup-blocked') return 'El navegador bloqueó el popup.';
-    if (code === 'auth/operation-not-supported-in-this-environment') return 'Este entorno no soporta popup.';
-    if (code) return 'Error de login: ' + code;
-    return 'Error de login.';
-  }
-
-  function attachFirebase(fb){
-    fbRef = fb || window.__POKERITO_FIREBASE__ || null;
-    if (authInitOnce) return;
-    if (!isAuthEnabled()) return;
-    authInitOnce = true;
-
-    const auth = fbRef.auth;
-    const api = fbRef.authApi;
-
-    // Completa redirect login (si aplica). No bloquea UI.
-    try{ if (api.getRedirectResult) api.getRedirectResult(auth).catch(() => {}); }catch(e){}
-
-    try{
-      api.onAuthStateChanged(
-        auth,
-        (u) => {
-          authUser = u || null;
-          authReady = true;
-          authUiError = '';
-          resetAdminState();
-
-          if (!authUser) {
-            stopStoreSync();
-            resetAuthorizationState();
-            onRoute();
-            return;
-          }
-
-          authzReady = false;
-          authzChecking = true;
-          authzUiError = '';
-          accessRequest = null;
-          accessRequestReady = false;
-          onRoute();
-          refreshAuthorizationState({ showToastOnError: true });
-        },
-        (err) => {
-          authUser = null;
-          authReady = true;
-          authUiError = prettyAuthError(err);
-          stopStoreSync();
-          resetAuthorizationState();
-          onRoute();
-        }
-      );
-    }catch(err){
-      authUser = null;
-      authReady = true;
-      authUiError = prettyAuthError(err);
-    }
-  }
-
-  async function loginWithGoogle(){
-    if (!isAuthEnabled()) { authUiError = 'Firebase/Auth no está listo.'; onRoute(); return; }
-    const auth = fbRef.auth;
-    const api = fbRef.authApi;
-
-    authUiError = '';
-    const provider = new api.GoogleAuthProvider();
-    try{ provider.setCustomParameters({ prompt: 'select_account' }); }catch(e){}
-
-    try{
-      await api.signInWithPopup(auth, provider);
-    }catch(err){
-      const code = (err && err.code) ? String(err.code) : '';
-      if (code === 'auth/popup-closed-by-user') return; // cancelado por el usuario
-
-      // Fallback: redirect en entornos donde el popup falla (iPad/Safari/PWA)
-      const shouldRedirect = (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment');
-      if (shouldRedirect){
-        try{ await api.signInWithRedirect(auth, provider); return; }catch(e2){}
-      }
-
-      // Último intento: redirect silencioso (si el popup no cuajó por cualquier razón)
-      try{ await api.signInWithRedirect(auth, provider); return; }catch(e3){}
-
-      authUiError = prettyAuthError(err);
-      onRoute();
-    }
-  }
-
-  async function logout(){
-    if (!isAuthEnabled()) return;
-    try{ await fbRef.authApi.signOut(fbRef.auth); }
-    catch(err){ authUiError = prettyAuthError(err); onRoute(); }
-  }
-
-  async function refreshAuthorizationState(opts){
-    const options = opts || {};
-    const seq = ++authzReqSeq;
-
-    if (!authUser) {
-      resetAuthorizationState();
-      onRoute();
-      return;
-    }
-
-    if (!isFirestoreAccessEnabled()) {
-      authorized = false;
-      authorizedRole = '';
-      accessRequest = null;
-      accessRequestReady = false;
-      authzReady = true;
-      authzChecking = false;
-      authzUiError = 'Firestore no está listo.';
-      onRoute();
-      return;
-    }
-
-    authzChecking = true;
-    authzUiError = '';
-    onRoute();
-
-    try {
-      const db = fbRef.db;
-      const fs = fbRef.firestoreApi;
-      const uid = String(authUser.uid || '').trim();
-      if (!uid) throw new Error('uid_missing');
-
-      let nextAuthorized = false;
-      let nextRole = '';
-      let nextAllowedExists = false;
-      let nextReq = null;
-      let nextReqReady = false;
-
-      const allowedRef = fs.doc(db, 'allowedUsers', uid);
-      const allowedSnap = await fs.getDoc(allowedRef);
-      if (allowedSnap && allowedSnap.exists && allowedSnap.exists()) {
-        nextAllowedExists = true;
-        const data = allowedSnap.data ? (allowedSnap.data() || {}) : {};
-        const rol = String(data.rol || '').trim().toUpperCase();
-        if (rol === 'ADMIN' || rol === 'MIEMBRO') {
-          nextAuthorized = true;
-          nextRole = rol;
-        }
-      }
-
-      if (!nextAuthorized) {
-        const reqRef = fs.doc(db, 'accessRequests', uid);
-        const reqSnap = await fs.getDoc(reqRef);
-        nextReqReady = true;
-        if (reqSnap && reqSnap.exists && reqSnap.exists()) {
-          const rd = reqSnap.data ? (reqSnap.data() || {}) : {};
-          const status = String(rd.status || '').trim().toUpperCase();
-          nextReq = Object.assign({}, rd, { status: status || 'PENDING' });
-        }
-      } else {
-        nextReq = null;
-        nextReqReady = true;
-      }
-
-      if (seq !== authzReqSeq) return;
-      authorized = nextAuthorized;
-      authorizedRole = nextRole;
-      allowedDocExists = nextAllowedExists;
-      if (!(authorized && String(authorizedRole || '').toUpperCase() === 'ADMIN')) resetAdminState();
-      accessRequest = nextReq;
-      accessRequestReady = nextReqReady;
-      authzReady = true;
-      authzChecking = false;
-      authzUiError = '';
-
-      // Etapa 7/7: Store compartido (Firestore) — iniciar/parar sync segun autorización
-      if (authorized) startStoreSync();
-      else stopStoreSync();
-
-      onRoute();
-    } catch (err) {
-      if (seq !== authzReqSeq) return;
-      authorized = false;
-      authorizedRole = '';
-      allowedDocExists = false;
-      authzReady = true;
-      authzChecking = false;
-      authzUiError = prettyFsError(err);
-      accessRequestReady = false;
-      if (options.showToastOnError) showToast(authzUiError);
-      // Etapa 7/7: sin autorización, detener sync del store
-      stopStoreSync();
-      onRoute();
-    }
-  }
-
-  async function bootstrapActivateAdmin(){
-    if (!authUser) { showToast('Inicia sesión primero'); return; }
-    if (!isFirestoreAccessEnabled()) { showToast('Firestore no está listo'); return; }
-    if (!isBootstrapEmailConfigured()) { showToast('Bootstrap no configurado (ADMIN_BOOTSTRAP_EMAIL)'); return; }
-    if (normEmail(authUser.email) !== normEmail(ADMIN_BOOTSTRAP_EMAIL)) { showToast('Tu correo no coincide con el ADMIN bootstrap'); return; }
-
-    try {
-      authzUiError = '';
-      authzChecking = true;
-      onRoute();
-
-      const db = fbRef.db;
-      const fs = fbRef.firestoreApi;
-      const uid = String(authUser.uid || '').trim();
-      if (!uid) throw new Error('uid_missing');
-
-      const allowedRef = fs.doc(db, 'allowedUsers', uid);
-      const snap = await fs.getDoc(allowedRef);
-      if (snap && snap.exists && snap.exists()) {
-        authzChecking = false;
-        allowedDocExists = true;
-        authzUiError = 'Ya existe allowedUsers para este usuario. Bootstrap oculto.';
-        showToast(authzUiError);
-        onRoute();
-        return;
-      }
-
-      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
-      const payload = {
-        uid,
-        nombre: String(authUser.displayName || '').trim() || 'Usuario',
-        email: String(authUser.email || '').trim() || '',
-        rol: 'ADMIN',
-        createdAt: nowTs,
-        createdBy: uid,
-        updatedAt: nowTs,
-        updatedBy: uid,
-        bootstrap: true,
-      };
-
-      await fs.setDoc(allowedRef, payload, { merge: false });
-      showToast('ADMIN activado');
-      await refreshAuthorizationState({ showToastOnError: true });
-    } catch (err) {
-      authzChecking = false;
-      authzUiError = prettyFsError(err);
-      showToast(authzUiError);
-      onRoute();
-    }
-  }
-
-  async function submitAccessRequest(mode){
-    const action = String(mode || 'new');
-    if (!authUser) { showToast('Inicia sesión primero'); return; }
-    if (!isFirestoreAccessEnabled()) { showToast('Firestore no está listo'); return; }
-
-    try {
-      authzUiError = '';
-      authzChecking = true;
-      onRoute();
-
-      const db = fbRef.db;
-      const fs = fbRef.firestoreApi;
-      const uid = String(authUser.uid || '').trim();
-      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
-      const payload = {
-        uid,
-        nombre: String(authUser.displayName || '').trim() || 'Usuario',
-        email: String(authUser.email || '').trim() || '',
-        status: 'PENDING',
-        createdAt: nowTs,
-        resolvedAt: null,
-        resolvedBy: null,
-      };
-
-      await fs.setDoc(fs.doc(db, 'accessRequests', uid), payload, { merge: true });
-      showToast(action === 'retry' ? 'Solicitud reenviada' : 'Solicitud enviada');
-      await refreshAuthorizationState({ showToastOnError: true });
-    } catch (err) {
-      authzChecking = false;
-      authzUiError = prettyFsError(err);
-      showToast(authzUiError);
-      onRoute();
-    }
-  }
-
-
-  // ===== Admin helpers (Etapa 6/7) =====
-  async function adminLoadData(opts){
-    if (!authUser || !isAdminRole()) return;
-    if (!isFirestoreAdminEnabled()) {
-      adminUiError = 'Firestore (admin) no está listo.';
-      adminDataReady = true;
-      adminDataLoading = false;
-      onRoute();
-      return;
-    }
-
-    const force = !!(opts && opts.force);
-    const now = Date.now();
-    if (!force && adminDataReady && (now - adminLastLoadedAt) < 15000) return;
-    if (adminDataLoading || adminActionBusy) return;
-
-    adminDataLoading = true;
-    adminUiError = '';
-    onRoute();
-
-    const seq = ++adminSeq;
-
-    try{
-      const db = fbRef.db;
-      const fs = fbRef.firestoreApi;
-
-      // PENDING requests
-      const reqQ = fs.query(fs.collection(db, 'accessRequests'), fs.where('status', '==', 'PENDING'));
-      const reqSnap = await fs.getDocs(reqQ);
-      const pending = [];
-      reqSnap.forEach(ds => {
-        const d = (ds && ds.data) ? (ds.data() || {}) : {};
-        const uid = String(d.uid || ds.id || '').trim();
-        if (!uid) return;
-        pending.push(Object.assign({ __id: ds.id, uid }, d));
-      });
-      pending.sort((a,b) => tsToMs(b.createdAt) - tsToMs(a.createdAt));
-
-      // allowed users
-      const allowedSnap = await fs.getDocs(fs.collection(db, 'allowedUsers'));
-      const allowed = [];
-      allowedSnap.forEach(ds => {
-        const d = (ds && ds.data) ? (ds.data() || {}) : {};
-        const uid = String(d.uid || ds.id || '').trim();
-        if (!uid) return;
-        allowed.push(Object.assign({ __id: ds.id, uid }, d));
-      });
-      allowed.sort((a,b) => {
-        const ra = String(a.rol || '').toUpperCase();
-        const rb = String(b.rol || '').toUpperCase();
-        if (ra != rb) return (ra === 'ADMIN') ? -1 : 1;
-        const na = String(a.nombre || a.email || a.uid || '').toLowerCase();
-        const nb = String(b.nombre || b.email || b.uid || '').toLowerCase();
-        return na.localeCompare(nb);
-      });
-
-      if (seq !== adminSeq) return;
-      adminPending = pending;
-      adminAllowed = allowed;
-      adminDataReady = true;
-      adminDataLoading = false;
-      adminLastLoadedAt = Date.now();
-      adminUiError = '';
-      onRoute();
-    }catch(err){
-      if (seq !== adminSeq) return;
-      adminDataReady = true;
-      adminDataLoading = false;
-      adminUiError = prettyFsError(err);
-      showToast(adminUiError);
-      onRoute();
-    }
-  }
-
-  async function adminCountAdmins(){
-    if (!authUser || !isAdminRole()) return 0;
-    if (!isFirestoreAdminEnabled()) return 0;
-    const db = fbRef.db;
-    const fs = fbRef.firestoreApi;
-    const q = fs.query(fs.collection(db, 'allowedUsers'), fs.where('rol', '==', 'ADMIN'));
-    const snap = await fs.getDocs(q);
-    let n = 0;
-    snap.forEach(() => { n++; });
-    return n;
-  }
-
-  async function adminApproveRequest(uid, role){
-    const targetUid = String(uid || '').trim();
-    const nextRole = String(role || 'MIEMBRO').trim().toUpperCase();
-    if (!targetUid) return;
-    if (!authUser || !isAdminRole()) return;
-    if (!isFirestoreAdminEnabled()) { showToast('Firestore (admin) no está listo'); return; }
-    if (nextRole !== 'ADMIN' && nextRole !== 'MIEMBRO') { showToast('Rol inválido'); return; }
-    if (!confirm(`Aprobar acceso como ${nextRole}?`)) return;
-
-    try{
-      adminActionBusy = true;
-      onRoute();
-
-      const db = fbRef.db;
-      const fs = fbRef.firestoreApi;
-      const myUid = String(authUser.uid || '').trim();
-      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
-
-      const reqRef = fs.doc(db, 'accessRequests', targetUid);
-      const reqSnap = await fs.getDoc(reqRef);
-      const rd = (reqSnap && reqSnap.exists && reqSnap.exists()) ? (reqSnap.data() || {}) : {};
-
-      const nombre = String(rd.nombre || '').trim() || 'Usuario';
-      const email = String(rd.email || '').trim() || '';
-
-      const allowedRef = fs.doc(db, 'allowedUsers', targetUid);
-      const allowedSnap = await fs.getDoc(allowedRef);
-
-      if (allowedSnap && allowedSnap.exists && allowedSnap.exists()) {
-        await fs.updateDoc(allowedRef, { rol: nextRole, updatedAt: nowTs, updatedBy: myUid });
-      } else {
-        await fs.setDoc(allowedRef, {
-          uid: targetUid,
-          nombre,
-          email,
-          rol: nextRole,
-          createdAt: nowTs,
-          createdBy: myUid,
-          updatedAt: nowTs,
-          updatedBy: myUid,
-        }, { merge: false });
-      }
-
-      await fs.setDoc(reqRef, {
-        status: 'APPROVED',
-        resolvedAt: nowTs,
-        resolvedBy: myUid,
-        approvedRole: nextRole,
-      }, { merge: true });
-
-      showToast(`Aprobado como ${nextRole}`);
-      adminActionBusy = false;
-      await adminLoadData({ force: true });
-    }catch(err){
-      adminActionBusy = false;
-      adminUiError = prettyFsError(err);
-      showToast(adminUiError);
-      onRoute();
-    }
-  }
-
-  async function adminRejectRequest(uid){
-    const targetUid = String(uid || '').trim();
-    if (!targetUid) return;
-    if (!authUser || !isAdminRole()) return;
-    if (!isFirestoreAdminEnabled()) { showToast('Firestore (admin) no está listo'); return; }
-    if (!confirm('Rechazar solicitud?')) return;
-
-    try{
-      adminActionBusy = true;
-      onRoute();
-
-      const db = fbRef.db;
-      const fs = fbRef.firestoreApi;
-      const myUid = String(authUser.uid || '').trim();
-      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
-
-      await fs.setDoc(fs.doc(db, 'accessRequests', targetUid), {
-        status: 'REJECTED',
-        resolvedAt: nowTs,
-        resolvedBy: myUid,
-      }, { merge: true });
-
-      showToast('Solicitud rechazada');
-      adminActionBusy = false;
-      await adminLoadData({ force: true });
-    }catch(err){
-      adminActionBusy = false;
-      adminUiError = prettyFsError(err);
-      showToast(adminUiError);
-      onRoute();
-    }
-  }
-
-  async function adminSetRole(uid, newRole){
-    const targetUid = String(uid || '').trim();
-    const role = String(newRole || '').trim().toUpperCase();
-    if (!targetUid) return;
-    if (!authUser || !isAdminRole()) return;
-    if (!isFirestoreAdminEnabled()) { showToast('Firestore (admin) no está listo'); return; }
-    if (role !== 'ADMIN' && role !== 'MIEMBRO') { showToast('Rol inválido'); return; }
-
-    const item = (Array.isArray(adminAllowed) ? adminAllowed : []).find(x => String((x && x.uid) || '').trim() === targetUid) || {};
-    const cur = String(item.rol || '').trim().toUpperCase();
-    if (cur && cur === role) return;
-
-    if (!confirm(`Cambiar rol a ${role}?`)) return;
-
-    try{
-      adminActionBusy = true;
-      onRoute();
-
-      const db = fbRef.db;
-      const fs = fbRef.firestoreApi;
-      const myUid = String(authUser.uid || '').trim();
-      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
-
-      // Regla anti-autogol: no dejar 0 ADMIN
-      if (cur === 'ADMIN' && role === 'MIEMBRO') {
-        const admins = await adminCountAdmins();
-        if (admins <= 1) {
-          adminActionBusy = false;
-          showToast('No puedes dejar la app sin ADMIN.');
-          onRoute();
-          return;
-        }
-      }
-
-      await fs.updateDoc(fs.doc(db, 'allowedUsers', targetUid), {
-        rol: role,
-        updatedAt: nowTs,
-        updatedBy: myUid,
-      });
-
-      showToast(`Rol actualizado: ${role}`);
-      adminActionBusy = false;
-      await adminLoadData({ force: true });
-    }catch(err){
-      adminActionBusy = false;
-      adminUiError = prettyFsError(err);
-      showToast(adminUiError);
-      onRoute();
-    }
-  }
-
-  async function adminRevokeAccess(uid){
-    const targetUid = String(uid || '').trim();
-    if (!targetUid) return;
-    if (!authUser || !isAdminRole()) return;
-    if (!isFirestoreAdminEnabled()) { showToast('Firestore (admin) no está listo'); return; }
-
-    const item = (Array.isArray(adminAllowed) ? adminAllowed : []).find(x => String((x && x.uid) || '').trim() === targetUid) || {};
-    const cur = String(item.rol || '').trim().toUpperCase();
-
-    const selfUid = String(authUser.uid || '').trim();
-    const isSelf = (selfUid && selfUid === targetUid);
-
-    const msg = isSelf ? 'Te vas a revocar a ti mismo. ¿Seguro?' : 'Revocar acceso? El usuario quedará bloqueado.';
-    if (!confirm(msg)) return;
-
-    try{
-      adminActionBusy = true;
-      onRoute();
-
-      const db = fbRef.db;
-      const fs = fbRef.firestoreApi;
-      const myUid = selfUid;
-      const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
-
-      // Regla anti-autogol: no dejar 0 ADMIN
-      if (cur === 'ADMIN') {
-        const admins = await adminCountAdmins();
-        if (admins <= 1) {
-          adminActionBusy = false;
-          showToast('No puedes dejar la app sin ADMIN.');
-          onRoute();
-          return;
-        }
-      }
-
-      await fs.deleteDoc(fs.doc(db, 'allowedUsers', targetUid));
-
-      // Dejar su solicitud en REJECTED para permitir que vuelva a solicitar
-      await fs.setDoc(fs.doc(db, 'accessRequests', targetUid), {
-        uid: targetUid,
-        status: 'REJECTED',
-        resolvedAt: nowTs,
-        resolvedBy: myUid,
-        revoked: true,
-      }, { merge: true });
-
-      showToast('Acceso revocado');
-      adminActionBusy = false;
-      await adminLoadData({ force: true });
-
-      if (isSelf) {
-        await refreshAuthorizationState({ showToastOnError: false });
-      }
-    }catch(err){
-      adminActionBusy = false;
-      adminUiError = prettyFsError(err);
-      showToast(adminUiError);
-      onRoute();
-    }
-  }
-
-  function renderAdminPanelBlock(){
-    const busy = !!(adminDataLoading || adminActionBusy);
-    const reqs = Array.isArray(adminPending) ? adminPending : [];
-    const allowed = Array.isArray(adminAllowed) ? adminAllowed : [];
-    const adminsCount = allowed.filter(x => String((x && x.rol) || '').toUpperCase() === 'ADMIN').length;
-    const totalCount = allowed.length;
-
-    const reqList = reqs.length ? reqs.map(r => {
-      const uid = escapeHtml(String(r.uid || '').trim());
-      const name = escapeHtml(String(r.nombre || 'Usuario').trim() || 'Usuario');
-      const email = escapeHtml(String(r.email || '').trim());
-      const when = fmtWhen(r.createdAt);
-      const whenTxt = when ? escapeHtml(when) : '';
-      const meta = (email ? email : '—') + (whenTxt ? ` · ${whenTxt}` : '');
-
-      return `
-        <div class="admin-item">
-          <div class="admin-top">
-            <div class="admin-meta">
-              <div class="admin-name">${name}</div>
-              <div class="admin-sub">${meta}</div>
-            </div>
-            <span class="badge">PENDING</span>
-          </div>
-          <div class="admin-actions">
-            <button class="btn small primary" type="button" data-req-approve data-uid="${uid}" data-role="MIEMBRO" ${busy ? 'disabled' : ''}>Aprobar MIEMBRO</button>
-            <button class="btn small" type="button" data-req-approve data-uid="${uid}" data-role="ADMIN" ${busy ? 'disabled' : ''}>Aprobar ADMIN</button>
-            <button class="btn small danger" type="button" data-req-reject data-uid="${uid}" ${busy ? 'disabled' : ''}>Rechazar</button>
-          </div>
-        </div>
-      `;
-    }).join('') : `<div class="small-note" style="margin-top:10px">No hay solicitudes PENDING.</div>`;
-
-    const allowedList = allowed.length ? allowed.map(u => {
-      const uid = escapeHtml(String(u.uid || '').trim());
-      const role = String(u.rol || '').trim().toUpperCase();
-      const badge = escapeHtml(role || '—');
-      const name = escapeHtml(String(u.nombre || 'Usuario').trim() || 'Usuario');
-      const email = escapeHtml(String(u.email || '').trim());
-      const isSelf = !!(authUser && String(authUser.uid || '').trim() === String(u.uid || '').trim());
-
-      const disableLastAdmin = (role === 'ADMIN' && adminsCount <= 1);
-      const disableDemote = busy || disableLastAdmin;
-      const disableRevoke = busy || disableLastAdmin;
-
-      const roleBtn = (role === 'ADMIN')
-        ? `<button class="btn small" type="button" data-user-role data-uid="${uid}" data-role="MIEMBRO" ${disableDemote ? 'disabled' : ''}>Hacer MIEMBRO</button>`
-        : `<button class="btn small" type="button" data-user-role data-uid="${uid}" data-role="ADMIN" ${busy ? 'disabled' : ''}>Hacer ADMIN</button>`;
-
-      return `
-        <div class="admin-item">
-          <div class="admin-top">
-            <div class="admin-meta">
-              <div class="admin-name">${name} ${isSelf ? '<span class="badge" style="margin-left:6px">TÚ</span>' : ''}</div>
-              <div class="admin-sub">${email ? email : '—'}</div>
-            </div>
-            <span class="badge">${badge}</span>
-          </div>
-          <div class="admin-actions">
-            ${roleBtn}
-            <button class="btn small danger" type="button" data-user-revoke data-uid="${uid}" ${disableRevoke ? 'disabled' : ''}>Revocar acceso</button>
-          </div>
-          ${disableLastAdmin && isSelf ? `<div class="small-note" style="margin-top:10px">Regla anti-autogol: no puedes quedarte sin ADMIN.</div>` : ''}
-        </div>
-      `;
-    }).join('') : `<div class="small-note" style="margin-top:10px">No hay usuarios autorizados todavía.</div>`;
-
-    const statusLine = busy ? `<span class="badge">CARGANDO</span>` : `<span class="badge">OK</span>`;
-
-    return `
-      <div class="panel" role="region" aria-label="Panel ADMIN" style="margin-top:14px">
-        <div class="panel-head">
-          <div class="panel-title" style="margin:0">Panel ADMIN</div>
-          <div class="row" style="gap:10px">
-            ${statusLine}
-            <button class="btn small" type="button" id="adminRefreshBtn" ${busy ? 'disabled' : ''}>Actualizar</button>
-          </div>
-        </div>
-        <div class="small-note" style="margin-top:10px">Solicitudes y roles. Total autorizados: <b>${totalCount}</b> · ADMIN: <b>${adminsCount}</b>.</div>
-        ${adminUiError ? `<div class="small-note" style="margin-top:8px"><span class="badge" style="vertical-align:middle">ERROR</span> <span style="color:var(--muted); font-weight:850">${escapeHtml(adminUiError)}</span></div>` : ''}
-
-        <div class="panel-title" style="margin-top:16px">Solicitudes (PENDING)</div>
-        ${reqList}
-
-        <div class="panel-title" style="margin-top:18px">Autorizados (allowedUsers)</div>
-        ${allowedList}
-      </div>
-    `;
-  }
-
-
-// ===== Shared Store (Etapa 7/7) — Firestore store/main =====
-// Legacy local-only key (Etapas <=6): se mantiene solo para migración.
-const LEGACY_STORE_KEY = 'pokerito_store_v1';
-// Cache local (solo lectura) para arrancar rápido; la fuente de verdad es Firestore.
-const STORE_CACHE_KEY = 'pokerito_store_main_cache_v1';
+// Storage (versioned) — local only for now
+const STORE_KEY = 'pokerito_store_v1';
 const STORE_VERSION = 1;
-
 let store = loadStore();
 
-// Firestore store sync state
-let storeUnsub = null;
-let storeSyncReady = false;      // ya recibimos al menos 1 snapshot
-let storeRemoteExists = false;
-let storeSyncError = '';
-let storeInitAttempted = false;
-let storeLastAppliedJson = '';
-let storeWriteBusy = false;
-let storeWriteTimer = null;
-let storeWriteSeq = 0;
-
-function isStoreEnabled(){
-  const fb = fbRef || window.__POKERITO_FIREBASE__;
-  const api = fb && fb.firestoreApi;
-  return !!(
-    fb && fb.db && api &&
-    typeof api.doc === 'function' &&
-    typeof api.onSnapshot === 'function' &&
-    typeof api.getDoc === 'function' &&
-    typeof api.setDoc === 'function' &&
-    typeof api.updateDoc === 'function'
-  );
+// Chips defaults (Etapa 3)
+function defaultChips(){
+  return [
+    { id: 'chip_white', name: 'Blanca', value: 1,   color: '#ffffff', active: true, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: 'chip_red',   name: 'Roja',   value: 5,   color: '#d94141', active: true, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: 'chip_green', name: 'Verde',  value: 25,  color: '#2cbf6e', active: true, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: 'chip_black', name: 'Negra',  value: 100, color: '#111116', active: true, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: 'chip_blue',  name: 'Azul',   value: 500, color: '#2f6fff', active: true, createdAt: Date.now(), updatedAt: Date.now() },
+  ];
 }
 
-function stopStoreSync(){
-  if (storeUnsub){
-    try{ storeUnsub(); }catch(e){}
-    storeUnsub = null;
-  }
-  storeSyncReady = false;
-  storeRemoteExists = false;
-  storeSyncError = '';
-  storeInitAttempted = false;
-  storeLastAppliedJson = '';
-  storeWriteBusy = false;
-  storeWriteSeq = 0;
-  if (storeWriteTimer){ clearTimeout(storeWriteTimer); storeWriteTimer = null; }
+
+// Players defaults (Etapa 4)
+function defaultPlayers(){
+  return [];
 }
 
-function startStoreSync(){
-  if (!authorized || !authUser) return;
-  if (!isStoreEnabled()) return;
-  if (storeUnsub) return;
-
-  storeSyncReady = false;
-  storeRemoteExists = false;
-  storeSyncError = '';
-  storeInitAttempted = false;
-
-  const fb = fbRef || window.__POKERITO_FIREBASE__;
-  const fs = fb.firestoreApi;
-  const db = fb.db;
-  const ref = fs.doc(db, 'store', 'main');
-
-  storeUnsub = fs.onSnapshot(ref, (snap) => {
-    storeSyncReady = true;
-    storeSyncError = '';
-
-    if (snap && snap.exists && snap.exists()){
-      storeRemoteExists = true;
-      const docData = snap.data ? (snap.data() || {}) : {};
-      const incoming = docData && docData.data ? docData.data : null;
-
-      if (incoming && typeof incoming === 'object'){
-        const normalized = normalizeStore(incoming);
-        const json = safeJson(normalized);
-        if (json && json !== storeLastAppliedJson){
-          store = normalized;
-          storeLastAppliedJson = json;
-          persistStore(store); // cache local
-        }
-      }
-    } else {
-      storeRemoteExists = false;
-      if (isAdminRole() && !storeInitAttempted){
-        storeInitAttempted = true;
-        bootstrapCreateStoreMain().catch(() => {});
-      }
-    }
-
-    onRoute();
-  }, (err) => {
-    storeSyncReady = true;
-    storeRemoteExists = false;
-    storeSyncError = prettyFsError(err);
-    showToast('Store: ' + storeSyncError);
-    onRoute();
-  });
-}
-
-function safeJson(obj){
-  try{ return JSON.stringify(obj); }catch(e){ return ''; }
-}
-
-async function bootstrapCreateStoreMain(){
-  if (!isAdminRole() || !authUser) return;
-  if (!isStoreEnabled()) return;
-
-  const fb = fbRef || window.__POKERITO_FIREBASE__;
-  const fs = fb.firestoreApi;
-  const db = fb.db;
-  const ref = fs.doc(db, 'store', 'main');
-
-  // Re-check existence (avoid races)
-  const snap = await fs.getDoc(ref);
-  if (snap && snap.exists && snap.exists()) return;
-
-  const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
-  const uid = String(authUser.uid || '').trim() || 'admin';
-
-  const payload = {
-    data: normalizeStore(store || initStore(false)),
-    updatedAt: nowTs,
-    updatedBy: uid,
-  };
-
-  await fs.setDoc(ref, payload, { merge: false });
-  showToast('Store inicializado');
-}
-
-function canEditData(){
-  return !!(authorized && authUser && isAdminRole() && storeSyncReady && storeRemoteExists && !storeSyncError);
-}
-
-function canReadData(){
-  return !!(authorized && authUser && storeSyncReady && storeRemoteExists && !storeSyncError);
-}
-
-function requireAdminEdit(ctx){
-  const prefix = (ctx === undefined || ctx === null) ? '' : String(ctx).trim();
-  const withCtx = (m) => prefix ? (prefix + ': ' + m) : m;
-
-  if (!authorized || !authUser){ showToast(withCtx('Inicia sesión')); return false; }
-  if (!storeSyncReady){ showToast(withCtx('Store cargando…')); return false; }
-  if (storeSyncError){ showToast(withCtx('Store: ' + storeSyncError)); return false; }
-  if (!storeRemoteExists){ showToast(withCtx('Store no inicializado')); return false; }
-  if (!isAdminRole()){ showToast(withCtx('Solo ADMIN puede editar')); return false; }
-  return true;
+// Sessions defaults (Etapa 5)
+function defaultSessions(){
+  return [];
 }
 
 function loadStore(){
   try{
-    let raw = localStorage.getItem(STORE_CACHE_KEY);
-    if (!raw) raw = localStorage.getItem(LEGACY_STORE_KEY);
-    if (!raw) return initStore(true);
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return initStore();
     const obj = JSON.parse(raw);
-    if (!obj || obj.v !== STORE_VERSION) return initStore(true);
-    const normalized = normalizeStore(obj);
-    persistStore(normalized);
-    return normalized;
+    if (!obj || obj.v !== STORE_VERSION) return initStore();
+    if (!Array.isArray(obj.chips) || !obj.chips.length){
+      obj.chips = defaultChips();
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
+    if (!Array.isArray(obj.players)){
+      obj.players = defaultPlayers();
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
+    if (!Array.isArray(obj.sessions)){
+      obj.sessions = defaultSessions();
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
+
+    // Etapa 6: asegurar forma de sesiones existentes (migración suave)
+    if (Array.isArray(obj.sessions)){
+      let changed = false;
+      obj.sessions.forEach(s => {
+        const before = JSON.stringify(s);
+        try{ ensureSessionGame(s); }catch(e){}
+        if (JSON.stringify(s) !== before) changed = true;
+      });
+      // si el draft apuntado ya no es draft, limpiar
+      if (obj.draftSessionId){
+        const ds = obj.sessions.find(x => x && x.id === obj.draftSessionId) || null;
+        if (ds && ds.status !== 'draft') { obj.draftSessionId = ''; changed = true; }
+      }
+      if (changed){
+        obj.updatedAt = Date.now();
+        persistStore(obj);
+      }
+    }
+    if (!obj.ui || typeof obj.ui !== 'object'){
+      obj.ui = {};
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
+    if (!obj.ui.juego || typeof obj.ui.juego !== 'object'){
+      obj.ui.juego = {};
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
+        if (typeof obj.draftSessionId !== 'string'){
+      obj.draftSessionId = '';
+      obj.updatedAt = Date.now();
+      persistStore(obj);
+    }
+
+    // Etapa 1: PDF consecutivo global (pdfSeqNext) — migración suave
+    try{
+      let next = obj.pdfSeqNext;
+      let changedPdf = false;
+
+      if (!Number.isFinite(next) || next < 1){ next = 1; changedPdf = true; }
+      next = Math.floor(next);
+
+      let maxSeq = 0;
+      (Array.isArray(obj.sessions) ? obj.sessions : []).forEach(s => {
+        const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
+        if (n > maxSeq) maxSeq = n;
+      });
+      if (next <= maxSeq){ next = maxSeq + 1; changedPdf = true; }
+
+      if (obj.pdfSeqNext !== next){ obj.pdfSeqNext = next; changedPdf = true; }
+
+      if (changedPdf){
+        obj.updatedAt = Date.now();
+        persistStore(obj);
+      }
+    }catch(e){}
+
+    return obj;
   }catch(e){
-    return initStore(true);
+    return initStore();
   }
 }
 
-function initStore(persist){
+function initStore(){
   const obj = {
     v: STORE_VERSION,
     chips: defaultChips(),
@@ -1016,121 +152,59 @@ function initStore(persist){
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
-  if (persist !== false) persistStore(obj);
+  persistStore(obj);
   return obj;
 }
 
 function persistStore(obj){
-  try{ localStorage.setItem(STORE_CACHE_KEY, JSON.stringify(obj)); }catch(e){}
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(obj)); }catch(e){}
 }
 
 function saveStore(){
   store.updatedAt = Date.now();
   persistStore(store);
-  if (!canEditData()) return;
-  scheduleStoreWrite('save');
 }
 
-function scheduleStoreWrite(reason){
-  if (!canEditData()) return;
-  storeWriteSeq++;
-  const seq = storeWriteSeq;
-  if (storeWriteTimer) clearTimeout(storeWriteTimer);
-  storeWriteTimer = setTimeout(() => {
-    if (seq !== storeWriteSeq) return;
-    writeStoreNow(reason || 'update');
-  }, 350);
-}
 
-async function writeStoreNow(reason){
-  if (storeWriteBusy) return;
-  if (!canEditData()) return;
-  storeWriteBusy = true;
-
-  const fb = fbRef || window.__POKERITO_FIREBASE__;
-  const fs = fb.firestoreApi;
-  const db = fb.db;
-  const uid = String(authUser.uid || '').trim();
-  const ref = fs.doc(db, 'store', 'main');
-  const nowTs = (fs.serverTimestamp ? fs.serverTimestamp() : Date.now());
-
-  const payload = { data: store, updatedAt: nowTs, updatedBy: uid };
+function purgeLegacyStorageResidue(){
+  const keep = new Set([STORE_KEY, THEME_KEY]);
 
   try{
-    await fs.updateDoc(ref, payload);
-    storeWriteBusy = false;
-    storeLastAppliedJson = safeJson(normalizeStore(store));
-  }catch(err){
-    // fallback: doc missing
-    try{
-      await fs.setDoc(ref, payload, { merge: true });
-      storeWriteBusy = false;
-      storeLastAppliedJson = safeJson(normalizeStore(store));
-    }catch(err2){
-      storeWriteBusy = false;
-      showToast('Guardar: ' + prettyFsError(err2));
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++){
+      const key = localStorage.key(i);
+      if (!key || keep.has(key)) continue;
+      keys.push(key);
     }
-  }
-}
-
-function normalizeStore(obj){
-  // copiar para evitar mutaciones cruzadas con snapshots
-  let out = null;
-  try{ out = JSON.parse(JSON.stringify(obj || {})); }
-  catch(e){ out = (obj && typeof obj === 'object') ? Object.assign({}, obj) : {}; }
-
-  if (!out || typeof out !== 'object') out = {};
-  out.v = STORE_VERSION;
-
-  if (!Array.isArray(out.chips) || !out.chips.length) out.chips = defaultChips();
-  if (!Array.isArray(out.players)) out.players = defaultPlayers();
-  if (!Array.isArray(out.sessions)) out.sessions = defaultSessions();
-
-  // ui es opcional (preferencia). Se mantiene para no romper UX.
-  if (!out.ui || typeof out.ui !== 'object') out.ui = {};
-  if (!out.ui.juego || typeof out.ui.juego !== 'object') out.ui.juego = {};
-
-  if (typeof out.draftSessionId !== 'string') out.draftSessionId = '';
-
-  // Etapa 6: asegurar forma de sesiones existentes (migración suave)
-  if (Array.isArray(out.sessions)){
-    let changed = false;
-    out.sessions.forEach(s => {
-      const before = safeJson(s);
-      try{ ensureSessionGame(s); }catch(e){}
-      if (safeJson(s) != before) changed = true;
-    });
-    if (out.draftSessionId){
-      const ds = out.sessions.find(x => x && x.id === out.draftSessionId) || null;
-      if (ds && ds.status !== 'draft') { out.draftSessionId = ''; changed = true; }
-    }
-    if (changed) out.updatedAt = Date.now();
-  }
-
-  // Etapa 1: PDF consecutivo global (pdfSeqNext) — migración suave
-  try{
-    let next = out.pdfSeqNext;
-    let changedPdf = false;
-
-    if (!Number.isFinite(next) || next < 1){ next = 1; changedPdf = true; }
-    next = Math.floor(next);
-
-    let maxSeq = 0;
-    (Array.isArray(out.sessions) ? out.sessions : []).forEach(s => {
-      const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
-      if (n > maxSeq) maxSeq = n;
-    });
-    if (next <= maxSeq){ next = maxSeq + 1; changedPdf = true; }
-
-    if (out.pdfSeqNext !== next){ out.pdfSeqNext = next; changedPdf = true; }
-
-    if (changedPdf){ out.updatedAt = Date.now(); }
+    keys.forEach(key => localStorage.removeItem(key));
   }catch(e){}
 
-  if (!out.createdAt) out.createdAt = Date.now();
-  if (!out.updatedAt) out.updatedAt = Date.now();
+  try{
+    const keys = [];
+    for (let i = 0; i < sessionStorage.length; i++){
+      const key = sessionStorage.key(i);
+      if (!key || keep.has(key)) continue;
+      keys.push(key);
+    }
+    keys.forEach(key => sessionStorage.removeItem(key));
+  }catch(e){}
+}
 
-  return out;
+async function purgeLegacyCaches(){
+  if (!('caches' in window)) return;
+
+  try{
+    const names = await caches.keys();
+    await Promise.all(names.map((name) => {
+      if (name !== APP_CACHE_NAME) return caches.delete(name);
+      return Promise.resolve();
+    }));
+  }catch(e){}
+}
+
+function purgeLegacyClientResidue(){
+  purgeLegacyStorageResidue();
+  purgeLegacyCaches();
 }
 
 function uid(prefix){
@@ -1217,7 +291,6 @@ function getChips(){
 }
 
 function upsertChip(chip){
-  if (!requireAdminEdit()) return;
   const idx = store.chips.findIndex(c => c.id === chip.id);
   if (idx >= 0) store.chips[idx] = chip;
   else store.chips.push(chip);
@@ -1225,7 +298,6 @@ function upsertChip(chip){
 }
 
 function setChipActive(id, active){
-  if (!requireAdminEdit()) return;
   const c = store.chips.find(x => x.id === id);
   if (!c) return;
   c.active = !!active;
@@ -1276,7 +348,6 @@ function makeReportNameResolver(session){
 
 
 function upsertPlayer(player){
-  if (!requireAdminEdit()) return;
   if (!store.players) store.players = [];
   const idx = store.players.findIndex(p => p.id === player.id);
   if (idx >= 0) store.players[idx] = player;
@@ -1285,7 +356,6 @@ function upsertPlayer(player){
 }
 
 function setPlayerActive(id, active){
-  if (!requireAdminEdit()) return;
   const p = (store.players || []).find(x => x.id === id);
   if (!p) return;
   p.active = !!active;
@@ -1303,7 +373,6 @@ function setPlayerActive(id, active){
     '/historial/detalle': renderHistorialDetalle,
     '/ranking': renderRanking,
     '/configuracion': renderConfiguracion,
-    '/usuarios': renderUsuarios,
     '/soporte': renderSoporte,
     '/pdf': renderPdf,
   };
@@ -1326,105 +395,6 @@ function setPlayerActive(id, active){
     window.location.hash = '#' + path;
   }
 
-  function shouldGate(path){
-    // Etapa 4/7 — Gate TOTAL:
-    // 1) Sin sesión => solo USUARIOS
-    // 2) Con sesión pero sin autorización aprobada (o aún verificando) => solo USUARIOS
-    if (!isAuthEnabled()) return false;
-    if (!authReady) return false;
-    if (!authUser) return (path !== '/usuarios');
-    if (!authzReady) return (path !== '/usuarios');
-    if (!authorized) return (path !== '/usuarios');
-    return false;
-  }
-
-  // ===== Etapa 7/7: Gate de STORE (Firestore) para pantallas de datos =====
-  function routeNeedsStore(path){
-    return !(path === '/inicio' || path === '/usuarios');
-  }
-
-  function getStoreGate(path){
-    if (!authorized || !authUser) return null;
-    if (!routeNeedsStore(path)) return null;
-    if (!storeSyncReady) return { kind: 'loading' };
-    if (storeSyncError) return { kind: 'error', msg: storeSyncError };
-    if (!storeRemoteExists) return { kind: 'missing' };
-    return null;
-  }
-
-  function renderStoreGate(path, gate){
-    const kind = gate && gate.kind ? String(gate.kind) : 'loading';
-    const isAdmin = isAdminRole();
-
-    let title = 'Datos compartidos';
-    let body = '';
-    let showRetry = false;
-    let showInit = false;
-
-    if (kind === 'loading'){
-      title = 'Cargando datos…';
-      body = 'Conectando a Firestore y sincronizando el store compartido.';
-      showRetry = true;
-    } else if (kind === 'error'){
-      title = 'Error de datos';
-      body = 'No se pudo leer el store compartido.\n\n' + String(gate.msg || '');
-      showRetry = true;
-    } else if (kind === 'missing'){
-      title = 'Store no inicializado';
-      body = isAdmin
-        ? 'No existe store/main todavía. Solo un ADMIN puede crearlo.'
-        : 'Store no inicializado, espera a un ADMIN.';
-      showInit = isAdmin;
-      showRetry = isAdmin;
-    }
-
-    const root = el(`
-      <section class="screen" aria-label="${escapeAttr(title)}">
-        <h1 class="screen-title">${escapeHtml(title)}</h1>
-        <p class="screen-sub">${escapeHtml(body)}</p>
-
-        <div class="panel" role="region" aria-label="Estado" style="margin-top:10px">
-          <div class="small-note" style="margin-top:0">
-            Ruta: <b>${escapeHtml(path)}</b> · Rol: <b>${escapeHtml(String(authorizedRole || ''))}</b>
-          </div>
-          ${kind === 'loading' ? `<div class="small-note" style="margin-top:10px">Tip: si estás en iPad/PWA y esto tarda, revisa conexión o dominio autorizado.</div>` : ''}
-        </div>
-
-        <div class="row" style="margin-top:14px; gap:10px; flex-wrap:wrap">
-          <button class="btn" type="button" id="storeBackBtn">Volver</button>
-          ${showInit ? `<button class="btn primary" type="button" id="storeInitBtn">Inicializar store</button>` : ''}
-          ${showRetry ? `<button class="btn" type="button" id="storeRetryBtn">Reintentar</button>` : ''}
-        </div>
-      </section>
-    `);
-
-    $app.innerHTML = '';
-    $app.appendChild(root);
-
-    const $back = document.getElementById('storeBackBtn');
-    if ($back) $back.addEventListener('click', () => navigate('/inicio'));
-
-    const $init = document.getElementById('storeInitBtn');
-    if ($init) $init.addEventListener('click', async () => {
-      if (!authorized || !authUser) { showToast('Inicia sesión'); return; }
-      if (!isAdminRole()) { showToast('Solo ADMIN puede editar'); return; }
-      if (!isStoreEnabled()) { showToast('Firestore no está listo'); return; }
-      try{
-        await bootstrapCreateStoreMain();
-      }catch(e){
-        showToast('Init: ' + prettyFsError(e));
-      }
-    });
-
-    const $retry = document.getElementById('storeRetryBtn');
-    if ($retry) $retry.addEventListener('click', () => {
-      // Reiniciar sync (sin loops)
-      stopStoreSync();
-      startStoreSync();
-      onRoute();
-    });
-  }
-
   // ===== Etapa 2: Export PDF (sin dependencias) =====
   function exportSessionPDF(sessionId){
     const id = String(sessionId || '').trim();
@@ -1444,30 +414,11 @@ function setPlayerActive(id, active){
 
   function onRoute(){
     const path = getRoute();
-    if (shouldGate(path)) {
-      // Evitar loops: solo redirigir si realmente no estamos ya en /usuarios
-      navigate('/usuarios');
-      return;
-    }
-
-    // Etapa 7/7: sin store listo, bloquear pantallas de datos (pero NO /inicio ni /usuarios)
-    if (authorized && routeNeedsStore(path)) {
-      const gate = getStoreGate(path);
-      if (gate) {
-        renderStoreGate(path, gate);
-        updateHeaderControls(path);
-        try{ updateHeaderRoleBadge(); }catch(e){}
-        try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
-        return;
-      }
-    }
-
     const isPrint = (path === '/pdf');
     try{ document.body.classList.toggle('print-mode', isPrint); }catch(e){}
     const fn = routes[path] || routes['/inicio'];
     fn();
     updateHeaderControls(path);
-    updateHeaderRoleBadge();
     // keep header fixed and scroll main to top per navigation
     try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
   }
@@ -1508,19 +459,6 @@ function setPlayerActive(id, active){
             <div class="home-body">
               <div class="home-title">Configuración</div>
               <p class="home-desc">Fichas, jugadores, estadísticas, ranking global y exportación a Excel.</p>
-            </div>
-          </button>
-
-          <button class="card home-card home-card--usuarios" data-go="/usuarios" type="button">
-            <div class="card-hero" aria-hidden="true">
-              <div class="card-hero-slot">
-                <img class="card-hero-img" data-hero="usuarios" alt="" decoding="async" loading="lazy" />
-                <img class="card-hero-fallback" src="assets/hero/usuarios.svg" alt="" decoding="async" loading="lazy" />
-              </div>
-            </div>
-            <div class="home-body">
-              <div class="home-title">Usuarios</div>
-              <p class="home-desc">Acceso, roles y mesa. (Por ahora: mock + compartir app.)</p>
             </div>
           </button>
 
@@ -1606,14 +544,11 @@ function setPlayerActive(id, active){
   }
 
   function renderJuego(){
-    const roUser = !isAdminRole();
     const draft = getDraftSession();
     const activePlayers = getPlayers().filter(p => !!p.active);
     const lastIds = (store.ui && store.ui.juego && Array.isArray(store.ui.juego.lastPlayerIds)) ? store.ui.juego.lastPlayerIds : [];
     const selected = new Set(lastIds.filter(id => activePlayers.some(p => p.id === id)));
-    // Importante: la fecha por defecto NO debe “pegarse” de una fecha vieja guardada.
-    // Siempre precargar con la fecha real del día (America/Managua) al crear una nueva partida.
-    const defaultDate = todayYMD();
+    const defaultDate = (store.ui && store.ui.juego && typeof store.ui.juego.lastDate === 'string' && store.ui.juego.lastDate) ? store.ui.juego.lastDate : todayYMD();
 
     const closedSessions = getClosedSessions();
 
@@ -1622,15 +557,13 @@ function setPlayerActive(id, active){
         <h1 class="screen-title">Juego</h1>
         <p class="screen-sub">Crea una partida del día o retoma el borrador. (Tu “yo del futuro” te lo agradecerá.)</p>
 
-        ${roUser ? `<div class="small-note" style="margin-top:10px"><span class="badge" style="vertical-align:middle">SOLO LECTURA</span> <span style="color:var(--muted); font-weight:850">Solo ADMIN puede crear/editar. Tú puedes ver historial y exportar.</span></div>` : ''}
-
         ${draft ? `
           <div class="panel" role="region" aria-label="Partida en borrador">
             <div class="panel-head">
               <div class="panel-title" style="margin:0">Partida en borrador</div>
               <div class="row">
-                <button class="btn primary" type="button" id="continueDraftBtn" ${roUser ? 'disabled' : ''}>Continuar</button>
-                <button class="btn danger" type="button" id="discardDraftBtn" ${roUser ? 'disabled' : ''}>Descartar</button>
+                <button class="btn primary" type="button" id="continueDraftBtn">Continuar</button>
+                <button class="btn danger" type="button" id="discardDraftBtn">Descartar</button>
               </div>
             </div>
 
@@ -1652,7 +585,7 @@ function setPlayerActive(id, active){
           <div class="form" style="margin-top:12px">
             <label class="field">
               <span>Fecha</span>
-              <input id="sessionDate" type="date" value="${escapeAttr(defaultDate)}" ${(draft || roUser) ? 'disabled' : ''} />
+              <input id="sessionDate" type="date" value="${escapeAttr(defaultDate)}" ${draft ? 'disabled' : ''} />
             </label>
           </div>
 
@@ -1720,7 +653,6 @@ function setPlayerActive(id, active){
     const $grid = document.getElementById('playerPickGrid');
     const $start = document.getElementById('startSessionBtn');
     const $date = document.getElementById('sessionDate');
-    let manualDateTouched = false;
 
     function renderPickGrid(){
       if (!activePlayers.length){
@@ -1736,7 +668,7 @@ function setPlayerActive(id, active){
           const name = (p.name || '').trim();
           const sel = selected.has(p.id);
           return `
-            <button class="pick ${sel ? 'selected' : ''}" type="button" data-id="${p.id}" ${(draft || roUser) ? 'disabled' : ''}>
+            <button class="pick ${sel ? 'selected' : ''}" type="button" data-id="${p.id}" ${draft ? 'disabled' : ''}>
               <div class="pick-nick">${escapeHtml(disp)}</div>
               <div class="pick-name">${escapeHtml(name || '')}</div>
             </button>
@@ -1745,14 +677,13 @@ function setPlayerActive(id, active){
     }
 
     function syncStartDisabled(){
-      const can = !draft && !roUser && selected.size > 0 && activePlayers.length > 0;
+      const can = !draft && selected.size > 0 && activePlayers.length > 0;
       $start.disabled = !can;
     }
 
     $grid.addEventListener('click', (ev) => {
       const btn = ev.target.closest('button.pick');
       if (!btn || btn.disabled) return;
-      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       const id = btn.getAttribute('data-id');
       if (!id) return;
       if (selected.has(id)) selected.delete(id);
@@ -1762,8 +693,6 @@ function setPlayerActive(id, active){
     });
 
     $date.addEventListener('change', () => {
-      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
-      manualDateTouched = true;
       const v = ($date.value || '').trim();
       if (!store.ui) store.ui = {};
       if (!store.ui.juego) store.ui.juego = {};
@@ -1772,15 +701,8 @@ function setPlayerActive(id, active){
     });
 
     $start.addEventListener('click', () => {
-      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
-      if (!requireAdminEdit()) return;
       if (draft) return;
-      const today = todayYMD();
-      let date = ($date.value || '').trim();
-      // Si el usuario no tocó la fecha, forzar que sea “hoy” en el momento real de iniciar.
-      // (Evita el caso de dejar la pantalla abierta y arrancar otro día.)
-      if (!manualDateTouched) date = today;
-      if (!date) date = today;
+      const date = ($date.value || '').trim() || todayYMD();
       const ids = Array.from(selected);
       if (!ids.length) return;
 
@@ -1801,8 +723,6 @@ function setPlayerActive(id, active){
       const $discard = document.getElementById('discardDraftBtn');
       if ($continue) $continue.addEventListener('click', () => navigate('/juego/mesa'));
       if ($discard) $discard.addEventListener('click', async () => {
-        if (roUser) { showToast('Solo ADMIN puede editar'); return; }
-        if (!requireAdminEdit()) return;
         const ok = await confirmDialog({
           title: 'Descartar borrador',
           body: 'Esto eliminará la sesión en borrador. No hay “Ctrl+Z” (aún).',
@@ -1846,7 +766,7 @@ function setPlayerActive(id, active){
       return;
     }
     ensureSessionGame(s);
-    renderMesaSession(s, { readOnly: (!canEditData()), backPath: '/juego', badge: 'Draft' });
+    renderMesaSession(s, { readOnly: false, backPath: '/juego', badge: 'Draft' });
   }
 
   function renderJuegoSesion(){
@@ -1858,7 +778,7 @@ function setPlayerActive(id, active){
       return;
     }
     ensureSessionGame(s);
-    renderMesaSession(s, { readOnly: (s.status === 'closed' || !canEditData()), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : 'Draft') });
+    renderMesaSession(s, { readOnly: (s.status === 'closed'), backPath: '/juego', badge: (s.status === 'closed' ? 'Cerrada' : 'Draft') });
   }
 
     // ===== Etapa 7: Historial (navegable) =====
@@ -2183,24 +1103,6 @@ function renderHistorialDetalle(){
     const sum = an.summary;
     const rows = an.rows.slice();
 
-    // Etapa 1/3: Ranking GLOBAL acumulado (closed + sesión actual por id, aunque timing)
-    const ga = computeGlobalAnalytics({ includeSessionId: s.id });
-    const top10 = (ga && Array.isArray(ga.ranking) ? ga.ranking.slice(0, 10) : []);
-    const rankTbody = top10.map((r, idx) => {
-      const avg = r.games ? (numOrZero(r.netTotal) / numOrZero(r.games)) : 0;
-      return `
-        <tr>
-          <td class="num">${escapeHtml(String(idx + 1))}</td>
-          <td class="who" title="${escapeAttr(String(r.display || ''))}">${escapeHtml(String(r.display || ''))}</td>
-          <td class="num">${escapeHtml(formatMoney(r.netTotal))}</td>
-          <td class="num">${escapeHtml(String(r.games || 0))}</td>
-          <td class="num">${escapeHtml(String(r.wins1 || 0))}</td>
-          <td class="num">${escapeHtml(formatMoney(avg))}</td>
-          <td class="num">${escapeHtml(formatMoney(r.investedTotal || 0))}</td>
-        </tr>
-      `;
-    }).join('');
-
     const eps = 0.0001;
 
     const reportName = makeReportNameResolver(s);
@@ -2246,330 +1148,6 @@ function renderHistorialDetalle(){
       `;
     }).join('');
 
-    // Etapa 2/3: Estadísticas por jugador (ACTIVOS) — acumulado global (closed + sesión actual)
-    const activePlayers = getPlayers().filter(p => p && p.id && p.active === true);
-    activePlayers.sort((a,b) => {
-      const an = reportName(a.id, playerDisplayName(a));
-      const bn = reportName(b.id, playerDisplayName(b));
-      return String(an).localeCompare(String(bn), 'es', { sensitivity: 'base' });
-    });
-
-    // Opcional (pero útil): rebuys históricos por jugador (cantidad + monto)
-    const rebuysMap = (function computePdfRebuysByPlayer(){
-      const map = new Map();
-      try{
-        const uniq = new Map();
-        getClosedSessions().forEach(ss => { if (ss && ss.id) uniq.set(String(ss.id), ss); });
-        const sid = String(s && s.id ? s.id : '').trim();
-        if (sid){
-          const cur = getSessionById(sid);
-          if (cur && cur.id) uniq.set(String(cur.id), cur);
-        }
-        Array.from(uniq.values()).forEach(ss => {
-          try{
-            const an2 = analyzeSession(ss);
-            (an2.rows || []).forEach(r => {
-              const pid = String(r.id || '').trim();
-              if (!pid) return;
-              const cur = map.get(pid) || { count: 0, amount: 0 };
-              cur.count += Math.max(0, Math.floor(numOrZero(r.rebuysCount)));
-              cur.amount += numOrZero(r.rebuysTotal);
-              map.set(pid, cur);
-            });
-          }catch(e){}
-        });
-      }catch(e){}
-      return map;
-    })();
-
-    // ===== Etapa 3/3: Records globales (TODOS) — extremos (sesiones closed + sesión actual) =====
-    const globalRecords = (function computePdfGlobalRecords(){
-      const sessionsUniq = new Map();
-      try{
-        getClosedSessions().forEach(ss => { if (ss && ss.id) sessionsUniq.set(String(ss.id), ss); });
-      }catch(e){}
-
-      try{
-        const sid = String(s && s.id ? s.id : '').trim();
-        if (sid){
-          const cur = getSessionById(sid);
-          if (cur && cur.id) sessionsUniq.set(String(cur.id), cur);
-          else sessionsUniq.set(sid, s);
-        }
-      }catch(e){}
-
-      const sessions = Array.from(sessionsUniq.values());
-
-      const rec = {
-        // A) Records por sesión (global)
-        maxTotalInvested: null, // { value, date }
-        maxPlayersCount: null,
-        maxRebuysCount: null,
-        maxRebuysAmount: null,
-        maxAbsDelta: null,
-
-        // B) Records de jugador en una sesión
-        maxGain: null, // { value, date, player }
-        maxLoss: null,
-        maxInvested: null,
-        maxPlayerRebuysCount: null,
-        maxPlayerRebuysAmount: null,
-
-        // C) Records históricos por jugador (acumulado global)
-        maxNetTotal: null, // { value, player }
-        minNetTotal: null,
-        maxGames: null,
-        maxWins1: null,
-        bestAvgNetMin3: null, // { value, player, games }
-      };
-
-      function updMax(cur, value, extra){
-        if (!Number.isFinite(value)) return cur;
-        if (!cur || value > cur.value + 0.0001) return { value, ...extra };
-        return cur;
-      }
-      function updMin(cur, value, extra){
-        if (!Number.isFinite(value)) return cur;
-        if (!cur || value < cur.value - 0.0001) return { value, ...extra };
-        return cur;
-      }
-
-      sessions.forEach(ss => {
-        if (!ss) return;
-        try{
-          const date = String(ss.date || '').trim() || '—';
-          const an2 = analyzeSession(ss);
-          const sum2 = an2.summary || calcSessionSummary(ss);
-          const rows2 = Array.isArray(an2.rows) ? an2.rows : [];
-
-          const rbCount = rows2.reduce((a,r) => a + Math.max(0, Math.floor(numOrZero(r.rebuysCount))), 0);
-          const rbAmt = rows2.reduce((a,r) => a + numOrZero(r.rebuysTotal), 0);
-          const absDelta = Math.abs(numOrZero(sum2.delta));
-
-          rec.maxTotalInvested = updMax(rec.maxTotalInvested, numOrZero(sum2.totalInvested), { date });
-          rec.maxPlayersCount = updMax(rec.maxPlayersCount, Math.max(0, Math.floor(numOrZero(sum2.playersCount))), { date });
-          rec.maxRebuysCount = updMax(rec.maxRebuysCount, rbCount, { date });
-          rec.maxRebuysAmount = updMax(rec.maxRebuysAmount, rbAmt, { date });
-          rec.maxAbsDelta = updMax(rec.maxAbsDelta, absDelta, { date });
-
-          const rn = makeReportNameResolver(ss);
-          rows2.forEach(r => {
-            const pid = String(r.id || '').trim();
-            if (!pid) return;
-            const player = rn(pid, r.display);
-            rec.maxGain = updMax(rec.maxGain, numOrZero(r.net), { date, player });
-            rec.maxLoss = updMin(rec.maxLoss, numOrZero(r.net), { date, player });
-            rec.maxInvested = updMax(rec.maxInvested, numOrZero(r.invested), { date, player });
-            rec.maxPlayerRebuysCount = updMax(rec.maxPlayerRebuysCount, Math.max(0, Math.floor(numOrZero(r.rebuysCount))), { date, player });
-            rec.maxPlayerRebuysAmount = updMax(rec.maxPlayerRebuysAmount, numOrZero(r.rebuysTotal), { date, player });
-          });
-        }catch(e){}
-      });
-
-      // C) Records históricos por jugador — desde acumulado global (ga)
-      try{
-        const list = (ga && Array.isArray(ga.ranking)) ? ga.ranking : [];
-        list.forEach(r => {
-          const player = String(r.display || '').trim() || '—';
-          rec.maxNetTotal = updMax(rec.maxNetTotal, numOrZero(r.netTotal), { player });
-          rec.minNetTotal = updMin(rec.minNetTotal, numOrZero(r.netTotal), { player });
-          rec.maxGames = updMax(rec.maxGames, Math.max(0, Math.floor(numOrZero(r.games))), { player });
-          rec.maxWins1 = updMax(rec.maxWins1, Math.max(0, Math.floor(numOrZero(r.wins1))), { player });
-
-          const games = Math.max(0, Math.floor(numOrZero(r.games)));
-          if (games >= 3){
-            const avg = (games ? (numOrZero(r.netTotal) / games) : 0);
-            if (!rec.bestAvgNetMin3 || avg > rec.bestAvgNetMin3.value + 0.0001){
-              rec.bestAvgNetMin3 = { value: avg, player, games };
-            }
-          }
-        });
-      }catch(e){}
-
-      return rec;
-    })();
-
-    function recMoney(item){
-      if (!item) return '—';
-      return formatMoney(numOrZero(item.value));
-    }
-    function recInt(item){
-      if (!item) return '—';
-      return String(Math.max(0, Math.floor(numOrZero(item.value))));
-    }
-    function recDate(item){
-      if (!item) return '—';
-      return String(item.date || '—');
-    }
-    function recDatePlayer(item){
-      if (!item) return '—';
-      return `${String(item.date || '—')} · ${String(item.player || '—')}`;
-    }
-    function recPlayer(item){
-      if (!item) return '—';
-      return String(item.player || '—');
-    }
-
-    const recordsHtml = (function buildPdfRecordsHtml(){
-      const rowsA = [
-        ['Mayor monto total jugado (sesión)', recMoney(globalRecords.maxTotalInvested), recDate(globalRecords.maxTotalInvested)],
-        ['Mayor cantidad de jugadores (sesión)', recInt(globalRecords.maxPlayersCount), recDate(globalRecords.maxPlayersCount)],
-        ['Mayor rebuys (cantidad) (sesión)', recInt(globalRecords.maxRebuysCount), recDate(globalRecords.maxRebuysCount)],
-        ['Mayor rebuys (monto) (sesión)', recMoney(globalRecords.maxRebuysAmount), recDate(globalRecords.maxRebuysAmount)],
-        ['Mayor |Δ| (delta absoluto) (sesión)', recMoney(globalRecords.maxAbsDelta), recDate(globalRecords.maxAbsDelta)],
-      ];
-
-      const rowsB = [
-        ['Mayor ganancia en una sesión', recMoney(globalRecords.maxGain), recDatePlayer(globalRecords.maxGain)],
-        ['Mayor pérdida en una sesión', recMoney(globalRecords.maxLoss), recDatePlayer(globalRecords.maxLoss)],
-        ['Mayor inversión individual en una sesión', recMoney(globalRecords.maxInvested), recDatePlayer(globalRecords.maxInvested)],
-        ['Más rebuys (cantidad) en una sesión', recInt(globalRecords.maxPlayerRebuysCount), recDatePlayer(globalRecords.maxPlayerRebuysCount)],
-        ['Más rebuys (monto) en una sesión', recMoney(globalRecords.maxPlayerRebuysAmount), recDatePlayer(globalRecords.maxPlayerRebuysAmount)],
-      ];
-
-      const rowsC = [
-        ['Mayor neto acumulado', recMoney(globalRecords.maxNetTotal), recPlayer(globalRecords.maxNetTotal)],
-        ['Menor neto acumulado', recMoney(globalRecords.minNetTotal), recPlayer(globalRecords.minNetTotal)],
-        ['Más partidas jugadas', recInt(globalRecords.maxGames), recPlayer(globalRecords.maxGames)],
-        ['Más veces #1', recInt(globalRecords.maxWins1), recPlayer(globalRecords.maxWins1)],
-        [
-          'Mejor promedio neto (mín. 3 partidas)',
-          (globalRecords.bestAvgNetMin3 ? recMoney(globalRecords.bestAvgNetMin3) : '—'),
-          (globalRecords.bestAvgNetMin3 ? `${recPlayer(globalRecords.bestAvgNetMin3)} · ${String(globalRecords.bestAvgNetMin3.games)} partidas` : '—')
-        ],
-      ];
-
-      function tbodyFrom(rows){
-        return rows.map(([label, val, meta]) => {
-          return `
-            <tr>
-              <td>${escapeHtml(String(label))}</td>
-              <td class="num">${escapeHtml(String(val))}</td>
-              <td class="meta">${escapeHtml(String(meta))}</td>
-            </tr>
-          `;
-        }).join('');
-      }
-
-      const tbodyA = tbodyFrom(rowsA);
-      const tbodyB = tbodyFrom(rowsB);
-      const tbodyC = tbodyFrom(rowsC);
-
-      return `
-        <div class="print-records print-pagebreak" role="region" aria-label="Records globales (todos)">
-          <div class="print-section-title">RECORDS GLOBALES (TODOS)</div>
-
-          <div class="print-records-group">
-            <div class="print-records-subtitle">A) Records por sesión (global)</div>
-            <div class="print-table-wrap print-table-wrap--records">
-              <table class="print-table print-table--records">
-                <thead>
-                  <tr>
-                    <th>Record</th>
-                    <th class="num">Valor</th>
-                    <th>Fecha / Detalle</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${tbodyA}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="print-records-group">
-            <div class="print-records-subtitle">B) Records de jugador en una sesión</div>
-            <div class="print-table-wrap print-table-wrap--records">
-              <table class="print-table print-table--records">
-                <thead>
-                  <tr>
-                    <th>Record</th>
-                    <th class="num">Valor</th>
-                    <th>Fecha / Jugador</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${tbodyB}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="print-records-group">
-            <div class="print-records-subtitle">C) Records históricos por jugador</div>
-            <div class="print-table-wrap print-table-wrap--records">
-              <table class="print-table print-table--records">
-                <thead>
-                  <tr>
-                    <th>Record</th>
-                    <th class="num">Valor</th>
-                    <th>Jugador</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${tbodyC}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      `;
-    })();
-
-    const playerStatsHtml = activePlayers.map(p => {
-      const pid = String(p.id || '').trim();
-      if (!pid) return '';
-
-      const st = (ga && ga.byPlayer && ga.byPlayer.get) ? ga.byPlayer.get(pid) : null;
-      const games = st ? Math.max(0, Math.floor(numOrZero(st.games))) : 0;
-      const netTotal = st ? numOrZero(st.netTotal) : 0;
-      const wins1 = st ? Math.max(0, Math.floor(numOrZero(st.wins1))) : 0;
-      const avgNet = games ? (netTotal / games) : 0;
-      const investedTotal = st ? numOrZero(st.investedTotal) : 0;
-
-      const bestAmt = (st && st.best && Number.isFinite(st.best.net)) ? formatMoney(st.best.net) : '—';
-      const bestDate = (st && st.best && st.best.date) ? String(st.best.date) : '—';
-      const worstAmt = (st && st.worst && Number.isFinite(st.worst.net)) ? formatMoney(st.worst.net) : '—';
-      const worstDate = (st && st.worst && st.worst.date) ? String(st.worst.date) : '—';
-
-      const rb = rebuysMap.get(pid) || { count: 0, amount: 0 };
-      const rbCount = Math.max(0, Math.floor(numOrZero(rb.count)));
-      const rbAmount = numOrZero(rb.amount);
-      const rbLabel = `${rbCount} · ${formatMoney(rbAmount)}`;
-
-      const nick = (p && p.nick ? String(p.nick).trim() : '');
-      const legalName = reportName(pid, playerDisplayName(p));
-      const netClass = Math.abs(netTotal) < 0.0001 ? 'ok' : (netTotal > 0 ? 'pos' : 'neg');
-
-      return `
-        <article class="print-player-block" data-pid="${escapeAttr(pid)}">
-          <div class="print-player-head">
-            <div class="print-player-ident">
-              <div class="print-player-name">${escapeHtml(String(legalName || 'Sin nombre'))}</div>
-              <div class="print-player-sub">${escapeHtml(nick ? ('Apodo: ' + nick) : '')}</div>
-            </div>
-            <div class="print-player-kpi">
-              <div class="k">Neto acumulado</div>
-              <div class="v net ${netClass}">${escapeHtml(formatMoney(netTotal))}</div>
-            </div>
-          </div>
-
-          <div class="print-player-grid">
-            <div class="pp-stat"><div class="k">Partidas jugadas</div><div class="v">${escapeHtml(String(games))}</div></div>
-            <div class="pp-stat"><div class="k">Veces #1</div><div class="v">${escapeHtml(String(wins1))}</div></div>
-            <div class="pp-stat"><div class="k">Promedio neto por partida</div><div class="v">${escapeHtml(formatMoney(avgNet))}</div></div>
-
-            <div class="pp-stat"><div class="k">Invertido total (histórico)</div><div class="v">${escapeHtml(formatMoney(investedTotal))}</div></div>
-            <div class="pp-stat"><div class="k">Mejor noche</div><div class="v">${escapeHtml(String(bestAmt))}</div><div class="s">${escapeHtml(String(bestDate))}</div></div>
-            <div class="pp-stat"><div class="k">Peor noche</div><div class="v">${escapeHtml(String(worstAmt))}</div><div class="s">${escapeHtml(String(worstDate))}</div></div>
-
-            <div class="pp-stat"><div class="k">Rebuys (histórico)</div><div class="v">${escapeHtml(String(rbLabel))}</div></div>
-          </div>
-        </article>
-      `;
-    }).join('');
-
-
     const root = el(`
       <section class="print-screen" aria-label="Reporte PDF">
         <div class="print-actions">
@@ -2611,44 +1189,6 @@ function renderHistorialDetalle(){
             </tbody>
           </table>
         </div>
-
-        <div class="print-global print-pagebreak" role="region" aria-label="Ranking Global">
-          <div class="print-section-title">RANKING GLOBAL (TOP 10 — NETO ACUMULADO)</div>
-
-          ${top10.length ? `
-            <div class="print-table-wrap print-table-wrap--ranking" role="region" aria-label="Tabla ranking global">
-              <table class="print-table print-table--ranking">
-                <thead>
-                  <tr>
-                    <th class="num" style="width:56px">Rank</th>
-                    <th>Jugador</th>
-                    <th class="num">Neto acumulado</th>
-                    <th class="num">Partidas</th>
-                    <th class="num">Veces #1</th>
-                    <th class="num">Promedio neto</th>
-                    <th class="num">Invertido total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rankTbody}
-                </tbody>
-              </table>
-            </div>
-          ` : `<div class="empty" style="margin-top:12px">No hay datos globales todavía.</div>`}
-        </div>
-
-        ${recordsHtml}
-
-        <div class="print-players print-pagebreak" role="region" aria-label="Estadísticas por jugador (activos)">
-          <div class="print-section-title">ESTADÍSTICAS POR JUGADOR (ACTIVOS)</div>
-
-          ${activePlayers.length ? `
-            <div class="print-players-list">
-              ${playerStatsHtml}
-            </div>
-          ` : `<div class="empty" style="margin-top:12px">No hay jugadores activos.</div>`}
-        </div>
-
       </section>
     `);
 
@@ -2764,7 +1304,6 @@ function renderHistorialDetalle(){
             <div class="mesa-sub">${escapeHtml(String(s.date || ''))} · ${escapeHtml(String(players.length))} jugadores · snapshot ${escapeHtml(String(chips.length))} fichas</div>
           </div>
           <div class="row">
-            ${(!readOnly && canEditData() && String(s.status || '').toLowerCase() === 'draft') ? `<button class="btn" type="button" id="addPlayersBtn">Agregar jugadores</button>` : ``}
             <button class="btn" type="button" id="backBtn">Volver</button>
             ${readOnly ? `<button class="btn primary" type="button" id="toInicioBtn">Inicio</button>` : `<button class="btn danger" type="button" id="closeBtn">Cerrar Partida</button>`}
           </div>
@@ -2873,94 +1412,6 @@ function renderHistorialDetalle(){
         if (!ok) return;
         closeSession(s.id);
         navigate('/juego');
-      });
-    }
-
-    const $addPlayers = document.getElementById('addPlayersBtn');
-    if ($addPlayers){
-      $addPlayers.addEventListener('click', async () => {
-        const ctx = 'Agregar jugadores';
-        let rerender = false;
-        try{
-          if (readOnly) return;
-
-          const sid = String(s && s.id ? s.id : '').trim();
-          if (!sid){ showToast(ctx + ': Sesión no válida'); return; }
-
-          // Sesión fresca (evitar objeto stale para elegibles)
-          const base = getSessionById(sid);
-          if (!base){ showToast(ctx + ': Sesión no encontrada'); return; }
-          if (String(base.status || '').toLowerCase() !== 'draft') return;
-          if (!requireAdminEdit(ctx)) return;
-
-          const existing = new Set();
-          (Array.isArray(base.playerIds) ? base.playerIds : []).forEach(pid => existing.add(String(pid)));
-          (Array.isArray(base.playersSnapshot) ? base.playersSnapshot : []).forEach(p => { if (p && p.id) existing.add(String(p.id)); });
-          (base.game && Array.isArray(base.game.players) ? base.game.players : []).forEach(p => { if (p && p.id) existing.add(String(p.id)); });
-
-          const eligible = getPlayers()
-            .filter(p => p && p.id && p.active === true)
-            .map(p => ({
-              id: String(p.id),
-              display: playerDisplayName(p),
-              name: (p && p.name ? String(p.name).trim() : ''),
-              nick: (p && p.nick ? String(p.nick).trim() : ''),
-            }))
-            .filter(p => !existing.has(p.id))
-            .sort((a,b) => {
-              const ad = String(a.display || '').toLowerCase();
-              const bd = String(b.display || '').toLowerCase();
-              if (ad < bd) return -1;
-              if (ad > bd) return 1;
-              return String(a.id).localeCompare(String(b.id));
-            });
-
-          if (!eligible.length){
-            showToast(ctx + ': No hay jugadores nuevos. Agrégalos en Configuración y actívalos.');
-            return;
-          }
-
-          const selected = await multiSelectPlayersDialog({
-            title: 'Agregar jugadores',
-            body: 'Selecciona jugadores activos que no estén en la sesión.',
-            players: eligible,
-            okText: 'Agregar',
-            cancelText: 'Cancelar'
-          });
-          if (!Array.isArray(selected) || !selected.length) return;
-
-          // Re-leer sesión antes de aplicar (concurrencia mínima)
-          const latest = getSessionById(sid);
-          if (!latest){ showToast(ctx + ': Sesión no encontrada'); return; }
-          if (String(latest.status || '').toLowerCase() !== 'draft'){ showToast(ctx + ': Sesión cerrada: no se pueden agregar jugadores'); return; }
-          if (!requireAdminEdit(ctx)) return;
-
-          const existing2 = new Set();
-          (Array.isArray(latest.playerIds) ? latest.playerIds : []).forEach(pid => existing2.add(String(pid)));
-          (Array.isArray(latest.playersSnapshot) ? latest.playersSnapshot : []).forEach(p => { if (p && p.id) existing2.add(String(p.id)); });
-          (latest.game && Array.isArray(latest.game.players) ? latest.game.players : []).forEach(p => { if (p && p.id) existing2.add(String(p.id)); });
-
-          const filtered = selected
-            .map(x => String(x || '').trim())
-            .filter(pid => pid && !existing2.has(pid));
-
-          if (!filtered.length){
-            showToast(ctx + ': Ya estaban en la sesión (actualizada).');
-            return;
-          }
-
-          const res = addPlayersToDraftSession(sid, filtered);
-          rerender = true;
-
-          if (res && res.addedCount > 0) showToast('Jugadores agregados: ' + String(res.addedCount));
-        }catch(err){
-          const msg = (err && err.message) ? err.message : String(err || 'Error');
-          showToast(ctx + ': ' + msg);
-        }finally{
-          if (rerender){
-            try{ onRoute(); }catch(e){}
-          }
-        }
       });
     }
 
@@ -3094,13 +1545,10 @@ function renderHistorialDetalle(){
 
   
 function renderConfiguracion(){
-    const roUser = !isAdminRole();
     const root = el(`
       <section class="screen" aria-label="Configuración">
         <h1 class="screen-title">Configuración</h1>
         <p class="screen-sub">Configuras una vez y luego solo juegas. (Ok, también discutes. Pero con estilo.)</p>
-
-        ${roUser ? `<div class="small-note" style="margin-top:10px"><span class="badge" style="vertical-align:middle">SOLO LECTURA</span> <span style="color:var(--muted); font-weight:850">Solo ADMIN puede editar. Tú puedes ver y exportar.</span></div>` : ''}
 
         <div class="panel" role="region" aria-label="Ranking global">
           <div class="panel-head">
@@ -3125,7 +1573,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Jugadores">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Jugadores</div>
-            <button class="btn primary" type="button" id="addPlayerBtn" ${roUser ? 'disabled' : ''}>Agregar jugador</button>
+            <button class="btn primary" type="button" id="addPlayerBtn">Agregar jugador</button>
           </div>
 
           <div class="player-grid" id="playerGrid" aria-live="polite"></div>
@@ -3136,7 +1584,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Fichas" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Fichas</div>
-            <button class="btn primary" type="button" id="addChipBtn" ${roUser ? 'disabled' : ''}>Agregar ficha</button>
+            <button class="btn primary" type="button" id="addChipBtn">Agregar ficha</button>
           </div>
 
           <div class="chip-grid" id="chipGrid" aria-live="polite"></div>
@@ -3236,8 +1684,8 @@ function renderConfiguracion(){
             </div>
 
             <div class="player-actions">
-              <button class="btn" type="button" data-act="edit" ${roUser ? 'disabled' : ''}>Editar</button>
-              <button class="btn" type="button" data-act="toggle" ${roUser ? 'disabled' : ''}>${actionLabel}</button>
+              <button class="btn" type="button" data-act="edit">Editar</button>
+              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
             </div>
           </article>
         `;
@@ -3245,7 +1693,6 @@ function renderConfiguracion(){
     }
 
     $pgrid.addEventListener('click', (ev) => {
-      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       const btn = ev.target.closest('button[data-act]');
       if (!btn) return;
       const card = ev.target.closest('.player-card');
@@ -3268,7 +1715,6 @@ function renderConfiguracion(){
     });
 
     document.getElementById('addPlayerBtn').addEventListener('click', () => {
-      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       openPlayerModal({ mode: 'add', onSave: renderPlayers });
     });
 
@@ -3315,8 +1761,8 @@ function renderConfiguracion(){
             </div>
 
             <div class="chip-actions">
-              <button class="btn" type="button" data-act="edit" ${roUser ? 'disabled' : ''}>Editar</button>
-              <button class="btn" type="button" data-act="toggle" ${roUser ? 'disabled' : ''}>${actionLabel}</button>
+              <button class="btn" type="button" data-act="edit">Editar</button>
+              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
             </div>
           </article>
         `;
@@ -3324,7 +1770,6 @@ function renderConfiguracion(){
     }
 
     $cgrid.addEventListener('click', (ev) => {
-      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       const btn = ev.target.closest('button[data-act]');
       if (!btn) return;
       const card = ev.target.closest('.chip-card');
@@ -3347,7 +1792,6 @@ function renderConfiguracion(){
     });
 
     document.getElementById('addChipBtn').addEventListener('click', () => {
-      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       openChipModal({ mode: 'add', onSave: renderChips });
     });
 
@@ -3358,7 +1802,6 @@ function renderConfiguracion(){
   }
 
   function openChipModal({ mode, chip, onSave }){
-    if (!requireAdminEdit()) return;
     const isEdit = (mode === 'edit');
     const base = chip || { id: uid('chip'), name: '', value: '', color: '#808080', active: true };
 
@@ -3504,7 +1947,6 @@ function renderConfiguracion(){
 
   
   function openPlayerModal({ mode, player, onSave }){
-    if (!requireAdminEdit()) return;
     const isEdit = (mode === 'edit');
     const base = player || { id: uid('player'), name: '', nick: '', active: true, stats: {} };
 
@@ -3666,16 +2108,6 @@ function renderConfiguracion(){
 
 
   function todayYMD(){
-    // Forzar TZ Managua para que el “hoy” sea consistente aunque el dispositivo tenga otra zona.
-    try {
-      const s = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Managua',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date());
-      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    } catch (e) {}
     const d = new Date();
     return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
   }
@@ -3731,7 +2163,6 @@ function renderConfiguracion(){
   }
 
   function saveSession(s){
-  if (!requireAdminEdit()) return;
     if (!s || !s.id) return;
     if (!Array.isArray(store.sessions)) store.sessions = [];
     const idx = store.sessions.findIndex(x => x && x.id === s.id);
@@ -3744,108 +2175,6 @@ function renderConfiguracion(){
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
     return sessions.find(x => x && x.id === id) || null;
   }
-
-  // ===== Etapa 1/3: Late joiners (agregar jugadores a Draft sin re-snapshot completo) =====
-  // Regla de negocio:
-  // - Los jugadores a agregar deben existir en Configuración (store.players) y estar active=true
-  // - Solo en sesiones status='draft'
-  // - Solo ADMIN (requireAdminEdit)
-  // Nota: NO recalcula el playersSnapshot completo; solo anexa snapshots nuevos al final.
-  function addPlayersToDraftSession(sessionId, newPlayerIds){
-    const ctx = 'Agregar jugadores';
-    if (!requireAdminEdit(ctx)) return { addedCount: 0, ignoredCount: 0, addedIds: [], ignoredIds: [] };
-
-    const toast = (m) => showToast(ctx + ': ' + m);
-
-    const sid = String(sessionId || '').trim() || String(store.draftSessionId || '').trim();
-    if (!sid){
-      toast('Sesión no válida');
-      return { addedCount: 0, ignoredCount: 0, addedIds: [], ignoredIds: [] };
-    }
-
-    // Obtener la sesión más reciente desde store (evitar objeto stale)
-    const s = getSessionById(sid);
-    if (!s){
-      toast('Sesión no encontrada');
-      return { addedCount: 0, ignoredCount: 0, addedIds: [], ignoredIds: [] };
-    }
-    if (String(s.status || '').toLowerCase() !== 'draft'){
-      toast('Sesión cerrada: no se pueden agregar jugadores');
-      return { addedCount: 0, ignoredCount: 0, addedIds: [], ignoredIds: [] };
-    }
-
-    const raw = Array.isArray(newPlayerIds)
-      ? newPlayerIds
-      : (newPlayerIds != null ? [newPlayerIds] : []);
-
-    // Normalizar ids de entrada (sin duplicados)
-    const req = [];
-    const reqSeen = new Set();
-    raw.forEach(x => {
-      const pid = String(x || '').trim();
-      if (!pid) return;
-      if (reqSeen.has(pid)) return;
-      reqSeen.add(pid);
-      req.push(pid);
-    });
-
-    const master = new Map(getPlayers().filter(p => p && p.id).map(p => [String(p.id), p]));
-    const existing = new Set();
-    (Array.isArray(s.playerIds) ? s.playerIds : []).forEach(pid => existing.add(String(pid)));
-    (Array.isArray(s.playersSnapshot) ? s.playersSnapshot : []).forEach(p => { if (p && p.id) existing.add(String(p.id)); });
-    (s.game && Array.isArray(s.game.players) ? s.game.players : []).forEach(p => { if (p && p.id) existing.add(String(p.id)); });
-
-    const added = [];
-    const ignored = [];
-    req.forEach(pid => {
-      const p = master.get(pid);
-      const ok = !!(p && p.active === true);
-      if (!ok || existing.has(pid)){
-        ignored.push(pid);
-        return;
-      }
-      added.push(pid);
-      existing.add(pid);
-    });
-
-    if (!added.length){
-      toast('No hay jugadores nuevos. Agrégalos en Configuración y actívalos.');
-      return { addedCount: 0, ignoredCount: req.length, addedIds: [], ignoredIds: ignored.slice() };
-    }
-
-    if (!Array.isArray(s.playerIds)) s.playerIds = [];
-    if (!Array.isArray(s.playersSnapshot)) s.playersSnapshot = [];
-
-    // Anexar ids nuevos al final (sin duplicados)
-    const pidSet = new Set(s.playerIds.map(x => String(x)));
-    added.forEach(pid => {
-      if (pidSet.has(pid)) return;
-      s.playerIds.push(pid);
-      pidSet.add(pid);
-    });
-
-    // Anexar snapshots solo de los nuevos jugadores (NO re-snapshot del resto)
-    const newSnaps = snapshotPlayers(added);
-    newSnaps.forEach(sp => s.playersSnapshot.push(sp));
-
-    // Asegurar game.players consistente (preserva estados existentes)
-    ensureSessionGame(s);
-
-    // Persistir
-    touchSession(s);
-    saveSession(s);
-
-    return {
-      addedCount: added.length,
-      ignoredCount: Math.max(0, req.length - added.length),
-      addedIds: added.slice(),
-      ignoredIds: ignored.slice()
-    };
-  }
-
-  // Hook ligero para pruebas manuales (sin UI):
-  // window.pokeritoAddPlayersToDraftSession(sessionId?, [playerIds])
-  try{ window.pokeritoAddPlayersToDraftSession = addPlayersToDraftSession; }catch(e){}
 
   function getClosedSessions(){
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
@@ -3893,7 +2222,6 @@ function renderConfiguracion(){
 
 
   function closeSession(id){
-  if (!requireAdminEdit()) return;
     const s = getSessionById(id);
     if (!s) return;
     if (s.status === 'closed') return;
@@ -4038,8 +2366,8 @@ function renderConfiguracion(){
     return { rows, summary: calcSessionSummary(s) };
   }
 
-  function computeAnalyticsFromSessions(sessions){
-    const list = Array.isArray(sessions) ? sessions : [];
+  function computeAnalytics(){
+    const closed = getClosedSessions();
     const byPlayer = new Map();
 
     let maxTotalInvested = null; // { date, amount }
@@ -4049,9 +2377,7 @@ function renderConfiguracion(){
     const detailed = [];
     const summaryRows = [];
 
-    // Nota: la app mantiene getClosedSessions() en orden DESC por fecha.
-    // Para exports/estadísticas, procesamos en orden cronológico (ASC).
-    list.slice().reverse().forEach(s => {
+    closed.slice().reverse().forEach(s => {
       // reverse so export can naturally be chronological
       const date = String(s.date || '');
       const an = analyzeSession(s);
@@ -4154,32 +2480,7 @@ function renderConfiguracion(){
     };
   }
 
-  function computeAnalytics(){
-    // Ranking/records globales “oficiales”: solo sesiones cerradas
-    return computeAnalyticsFromSessions(getClosedSessions());
-  }
-
-  // Etapa 1/3: GLOBAL acumulado para PDF: sesiones closed + (siempre) la sesión actual por id.
-  // No lista sesiones; solo entrega agregados por jugador.
-  function computeGlobalAnalytics({ includeSessionId } = {}){
-    const closed = getClosedSessions();
-    const map = new Map();
-    closed.forEach(s => {
-      if (s && s.id) map.set(String(s.id), s);
-    });
-
-    const sid = String(includeSessionId || '').trim();
-    if (sid){
-      const cur = getSessionById(sid);
-      if (cur && cur.id) map.set(String(cur.id), cur);
-    }
-
-    const sessions = Array.from(map.values()).sort((a,b) => numOrZero(b.closedAt || b.updatedAt) - numOrZero(a.closedAt || a.updatedAt));
-    return computeAnalyticsFromSessions(sessions);
-  }
-
   function recalcAndPersistStats(){
-  if (!requireAdminEdit()) return;
     const a = computeAnalytics();
     // persist into players.stats (for convenience) + global block
     const players = getPlayers();
@@ -4231,85 +2532,6 @@ function renderConfiguracion(){
     }catch(e){}
   }
 
-
-  function getAppShareUrl(){
-    // Always share a stable entry route
-    const base = (window.location.origin || '') + (window.location.pathname || '');
-    return base + '#/inicio';
-  }
-
-  async function shareAppLink(){
-    const url = getAppShareUrl();
-    const data = { title: 'Pokerito', url: url };
-
-    // Native share (if available)
-    if (navigator.share){
-      try{
-        await navigator.share(data);
-        return;
-      }catch(e){
-        // user canceled or not allowed — fall through
-      }
-    }
-
-    const ok = await copyTextToClipboard(url);
-    if (ok){
-      showToast('Link copiado');
-      return;
-    }
-
-    // Last resort: modal with the URL so the user can copy manually
-    await confirmDialog({ title: 'Compartir', body: 'Copia este link\n\n' + url, okText: 'OK', cancelText: 'Cerrar' });
-  }
-
-  async function copyTextToClipboard(text){
-    const t = String(text || '');
-    if (!t) return false;
-
-    if (navigator.clipboard && navigator.clipboard.writeText){
-      try{ await navigator.clipboard.writeText(t); return true; }catch(e){}
-    }
-
-    // Fallback for older iOS: textarea + execCommand
-    try{
-      const ta = document.createElement('textarea');
-      ta.value = t;
-      ta.setAttribute('readonly','');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      ta.style.top = '0';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      const ok = document.execCommand('copy');
-      ta.remove();
-      return !!ok;
-    }catch(e){
-      return false;
-    }
-  }
-
-  let toastTimer = null;
-  function showToast(msg){
-    const text = String(msg || '').trim();
-    if (!text) return;
-
-    let elToast = document.getElementById('toast');
-    if (!elToast){
-      elToast = document.createElement('div');
-      elToast.id = 'toast';
-      elToast.className = 'toast';
-      document.body.appendChild(elToast);
-    }
-
-    elToast.textContent = text;
-    elToast.classList.add('show');
-
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      try{ elToast.classList.remove('show'); }catch(e){}
-    }, 1900);
-  }
 
   function exportExcel(){
     const a = computeAnalytics();
@@ -4408,7 +2630,6 @@ function renderConfiguracion(){
   }
 
   async function importBackupJson(text, { mode }){
-    if (!requireAdminEdit()) return;
     let obj = null;
     try{ obj = JSON.parse(text); }catch(e){ obj = null; }
     if (!obj || typeof obj !== 'object'){
@@ -4448,7 +2669,7 @@ function renderConfiguracion(){
       mergeStore(normalized);
     } else {
       store = normalized;
-      saveStore();
+      persistStore(store);
     }
     if (incomingTheme){
       themePref = (incomingTheme === 'auto' || incomingTheme === 'light' || incomingTheme === 'dark') ? incomingTheme : themePref;
@@ -4511,12 +2732,11 @@ function renderConfiguracion(){
     cur.players = Array.from(players.values());
     cur.sessions = Array.from(sessions.values());
     cur.updatedAt = Date.now();
-    saveStore();
+    persistStore(cur);
   }
 
   function resetAllData(){
-    try{ localStorage.removeItem(STORE_CACHE_KEY); }catch(e){}
-    try{ localStorage.removeItem(LEGACY_STORE_KEY); }catch(e){}
+    try{ localStorage.removeItem(STORE_KEY); }catch(e){}
     try{ localStorage.removeItem(THEME_KEY); }catch(e){}
     themePref = 'auto';
     store = initStore();
@@ -4831,18 +3051,14 @@ function renderConfiguracion(){
     if (!s){
       s = sessions.find(x => x && x.status === 'draft') || null;
       if (s && s.id && s.id !== store.draftSessionId){
-        // Evitar que MIEMBRO escriba punteros globales: solo ADMIN corrige el draftSessionId
-        if (isAdminRole() && storeSyncReady && storeRemoteExists){
-          store.draftSessionId = s.id;
-          saveStore();
-        }
+        store.draftSessionId = s.id;
+        saveStore();
       }
     }
     return s;
   }
 
   function discardDraftSession(){
-  if (!requireAdminEdit()) return;
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
     const id = store.draftSessionId;
     if (!id) return;
@@ -4885,91 +3101,6 @@ function renderConfiguracion(){
 
       document.body.appendChild(overlay);
       try{ document.body.style.overflow = 'hidden'; }catch(e){}
-    });
-  }
-
-  function multiSelectPlayersDialog({ title, body, players, okText, cancelText }){
-    return new Promise(resolve => {
-      const list = Array.isArray(players) ? players : [];
-
-      const overlay = el(`
-        <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Seleccionar jugadores">
-          <div class="modal">
-            <div class="modal-head">
-              <div class="modal-title">${escapeHtml(title || 'Seleccionar')}</div>
-              <button class="icon-btn" type="button" data-act="close" aria-label="Cerrar">×</button>
-            </div>
-            <div class="modal-body">
-              ${body ? `<div class="small-note" style="margin-top:0">${escapeHtml(body)}</div>` : ''}
-              <div class="small-note" style="margin-top:10px">Seleccionados: <b id="selCount">0</b></div>
-              <div class="pick-grid" style="margin-top:10px">
-                ${list.map(p => {
-                  const disp = String(p && p.display ? p.display : '').trim() || 'Sin nombre';
-                  const name = String(p && p.name ? p.name : '').trim();
-                  const nick = String(p && p.nick ? p.nick : '').trim();
-                  const sub = (name && name !== disp) ? name : ((nick && nick !== disp) ? nick : '');
-                  return `
-                    <button class="pick" type="button" data-id="${escapeAttr(String(p.id || ''))}">
-                      <div class="pick-nick">${escapeHtml(disp)}</div>
-                      <div class="pick-name">${escapeHtml(sub)}</div>
-                    </button>
-                  `;
-                }).join('')}
-              </div>
-            </div>
-            <div class="modal-foot">
-              <button class="btn" type="button" data-act="cancel">${escapeHtml(cancelText || 'Cancelar')}</button>
-              <button class="btn primary" type="button" data-act="ok" disabled>${escapeHtml(okText || 'OK')}</button>
-            </div>
-          </div>
-        </div>
-      `);
-
-      const selected = new Set();
-      const $ok = overlay.querySelector('[data-act="ok"]');
-      const $count = overlay.querySelector('#selCount');
-
-      function sync(){
-        if ($count) $count.textContent = String(selected.size);
-        if ($ok) $ok.disabled = (selected.size === 0);
-      }
-
-      function close(val){
-        overlay.remove();
-        try{ document.body.style.overflow = ''; }catch(e){}
-        resolve(val);
-      }
-
-      overlay.addEventListener('click', (ev) => {
-        if (ev.target === overlay) close(null);
-      });
-      overlay.querySelectorAll('[data-act="close"],[data-act="cancel"]').forEach(b => b.addEventListener('click', () => close(null)));
-
-      const $grid = overlay.querySelector('.pick-grid');
-      if ($grid){
-        $grid.addEventListener('click', (ev) => {
-          const btn = ev.target.closest('button.pick[data-id]');
-          if (!btn) return;
-          const id = String(btn.getAttribute('data-id') || '').trim();
-          if (!id) return;
-          if (selected.has(id)) selected.delete(id);
-          else selected.add(id);
-          btn.classList.toggle('selected', selected.has(id));
-          sync();
-        });
-      }
-
-      $ok.addEventListener('click', () => close(Array.from(selected)));
-      overlay.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Escape') { ev.preventDefault(); close(null); }
-        if (ev.key === 'Enter') {
-          if (selected.size > 0) { ev.preventDefault(); close(Array.from(selected)); }
-        }
-      });
-
-      document.body.appendChild(overlay);
-      try{ document.body.style.overflow = 'hidden'; }catch(e){}
-      sync();
     });
   }
 
@@ -5045,238 +3176,11 @@ function renderConfiguracion(){
 
 
 
-  function renderUsuarios(){
-    const enabled = isAuthEnabled();
-    const fsEnabled = isFirestoreAccessEnabled();
-    const ready = authReady;
-    const u = authUser;
-    const displayName = u ? escapeHtml(u.displayName || '') : '';
-    const email = u ? escapeHtml(u.email || '') : '';
-
-    const gateActive = !!(enabled && ready && u && (!authzReady || !authorized));
-    const sessBadge = (!enabled) ? 'OFF' : (!ready ? '...' : (u ? 'OK' : 'LOGIN'));
-    const sessTitle = (!enabled) ? 'Sesión' : (!ready ? 'Cargando sesión' : (u ? 'Sesión activa' : 'Iniciar sesión'));
-
-    let sessMsg = '';
-    if (!enabled) sessMsg = 'Firebase/Auth no está listo (revisa firebaseConfig.js y que firebaseInit.js cargue sin errores).';
-    else if (!ready) sessMsg = 'Cargando sesión…';
-    else if (u) sessMsg = `Conectado como <b>${displayName || 'Usuario'}</b>${email ? ` (${email})` : ''}.`;
-    else sessMsg = 'Inicia sesión con Google para usar la app.';
-
-    let authzBadge = 'BLOQUEADO';
-    let authzTitle = 'Acceso';
-    let authzMsg = '';
-    if (!enabled) {
-      authzBadge = 'OFF';
-      authzTitle = 'Autorización';
-      authzMsg = 'Activa Firebase/Auth + Firestore para habilitar autorización por usuario.';
-    } else if (!ready) {
-      authzBadge = '...';
-      authzTitle = 'Autorización';
-      authzMsg = 'Esperando estado de sesión…';
-    } else if (!u) {
-      authzBadge = 'LOGIN';
-      authzTitle = 'Autorización';
-      authzMsg = 'Primero inicia sesión para validar si tu usuario está autorizado.';
-    } else if (!fsEnabled) {
-      authzBadge = 'ERROR';
-      authzTitle = 'Autorización';
-      authzMsg = 'Firestore no está listo. No se puede validar allowedUsers/accessRequests.';
-    } else if (!authzReady || authzChecking) {
-      authzBadge = 'CHECK';
-      authzTitle = 'Verificando autorización';
-      authzMsg = 'Comprobando allowedUsers…';
-    } else if (authorized) {
-      authzBadge = escapeHtml(authorizedRole || 'OK');
-      authzTitle = 'Acceso aprobado';
-      authzMsg = `Tu usuario está autorizado${authorizedRole ? ` como <b>${escapeHtml(authorizedRole)}</b>` : ''}.`;
-    } else {
-      const st = String((accessRequest && accessRequest.status) || '').toUpperCase();
-      if (st === 'PENDING') {
-        authzBadge = 'PENDING';
-        authzTitle = 'Solicitud enviada';
-        authzMsg = 'Tu solicitud está pendiente de aprobación por un ADMIN.';
-      } else if (st === 'REJECTED') {
-        authzBadge = 'REJECTED';
-        authzTitle = 'Acceso no aprobado';
-        authzMsg = 'Tu solicitud fue rechazada. Puedes volver a solicitar acceso.';
-      } else if (st === 'APPROVED') {
-        authzBadge = 'APPROVED';
-        authzTitle = 'Solicitud aprobada';
-        authzMsg = 'Tu solicitud aparece aprobada. Si aún no entras, toca “Revisar estado” para detectar allowedUsers.';
-      } else if (accessRequestReady) {
-        authzBadge = 'SOLICITAR';
-        authzTitle = 'Solicitar acceso';
-        authzMsg = 'Tu usuario aún no está autorizado. Solicita acceso para que un ADMIN te apruebe.';
-      } else {
-        authzBadge = 'CHECK';
-        authzTitle = 'Verificando acceso';
-        authzMsg = 'Consultando estado de solicitud…';
-      }
-    }
-
-    const requestStatus = String((accessRequest && accessRequest.status) || '').toUpperCase();
-    const canBootstrap = canBootstrapAdmin();
-    const canRequest = !!(enabled && ready && u && fsEnabled && authzReady && !authorized && !authzChecking && (!requestStatus || requestStatus === 'REJECTED') && !canBootstrap);
-    const canRefreshAccess = !!(enabled && ready && u && fsEnabled && !authzChecking);
-    const showAccessPanel = !!(enabled && ready && u);
-    const canBack = !!(enabled && ready && u && authzReady && authorized);
-
-    const root = el(`
-      <section class="screen" aria-label="Usuarios">
-        <h1 class="screen-title">Usuarios</h1>
-        <p class="screen-sub">Acceso y permisos. Si no estás autorizado, la app se queda aquí. Sin drama, así debe ser.</p>
-
-        ${gateActive ? `
-          <div class="panel" role="region" aria-label="Bloqueo por autorización" style="margin-top:10px">
-            <div class="panel-head">
-              <div class="panel-title" style="margin:0">Acceso restringido</div>
-              <span class="badge">GATE</span>
-            </div>
-            <div class="small-note" style="margin-top:10px">Tu sesión existe, pero el acceso a la app está bloqueado hasta que aparezcas en <b>allowedUsers</b>.</div>
-          </div>
-        ` : ''}
-
-        <div class="panel" role="region" aria-label="Sesión" style="margin-top:${gateActive ? '14px' : '10px'}">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">${sessTitle}</div>
-            <span class="badge">${sessBadge}</span>
-          </div>
-          <div class="small-note" style="margin-top:10px">${sessMsg}</div>
-          ${authUiError ? `<div class="small-note" style="margin-top:8px"><span class="badge" style="vertical-align:middle">ERROR</span> <span style="color:var(--muted); font-weight:850">${escapeHtml(authUiError)}</span></div>` : ''}
-          <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
-            ${enabled ? (u ? `<button class="btn danger" type="button" id="logoutBtn">Cerrar sesión</button>` : `<button class="btn primary" type="button" id="loginBtn">Iniciar sesión con Google</button>`) : ''}
-            ${canRefreshAccess ? `<button class="btn" type="button" id="refreshAccessBtn">Revisar estado</button>` : ''}
-          </div>
-          ${enabled ? `<div class="small-note" style="margin-top:10px">Si el popup falla (iPad/Safari/PWA), se usará redirección automática.</div>` : ''}
-        </div>
-
-        ${showAccessPanel ? `
-          <div class="panel" role="region" aria-label="Autorización" style="margin-top:14px">
-            <div class="panel-head">
-              <div class="panel-title" style="margin:0">${authzTitle}</div>
-              <span class="badge">${authzBadge}</span>
-            </div>
-            <div class="small-note" style="margin-top:10px">${authzMsg}</div>
-            ${authzUiError ? `<div class="small-note" style="margin-top:8px"><span class="badge" style="vertical-align:middle">ERROR</span> <span style="color:var(--muted); font-weight:850">${escapeHtml(authzUiError)}</span></div>` : ''}
-
-            ${canBootstrap ? `
-              <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
-                <button class="btn primary" type="button" id="bootstrapAdminBtn">Activar ADMIN (bootstrap)</button>
-              </div>
-              <div class="small-note" style="margin-top:10px">Esto crea tu registro en <b>allowedUsers</b> como <b>ADMIN</b>. Solo aparece para el correo bootstrap y solo si aún no existe tu allowedUsers.</div>
-            ` : ''}
-
-            ${(!authorized && authzReady) ? `
-              <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
-                <button class="btn primary" type="button" id="requestAccessBtn" ${canRequest ? '' : 'disabled'}>${requestStatus === 'REJECTED' ? 'Volver a solicitar' : 'Solicitar acceso'}</button>
-                ${canRefreshAccess ? `<button class="btn" type="button" id="refreshAccessBtn2">Revisar estado</button>` : ''}
-              </div>
-            ` : ''}
-            ${(!authorized && authzReady) ? `<div class="small-note" style="margin-top:10px">Estados soportados: PENDING / REJECTED / APPROVED. El acceso real se habilita cuando tu UID exista en <b>allowedUsers</b>.</div>` : ''}
-          </div>
-        ` : ''}
-
-        ${(authorized && String(authorizedRole || '').toUpperCase() === 'ADMIN') ? renderAdminPanelBlock() : ''}
-
-        <div class="panel" role="region" aria-label="Compartir app" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Compartir app</div>
-            <button class="btn primary" type="button" id="shareBtn">COMPARTIR APP</button>
-          </div>
-          <div class="small-note" style="margin-top:10px">Comparte el link para abrir Pokerito en otro dispositivo.</div>
-        </div>
-
-        <div class="row" style="margin-top:14px">
-          <button class="btn primary" type="button" id="backBtn" ${canBack ? '' : 'disabled'}>Volver</button>
-        </div>
-      </section>
-    `);
-
-    $app.innerHTML = '';
-    $app.appendChild(root);
-
-    const b = document.getElementById('backBtn');
-    if (b) b.addEventListener('click', () => navigate('/inicio'));
-
-    const sb = document.getElementById('shareBtn');
-    if (sb) sb.addEventListener('click', () => shareAppLink());
-
-    const lb = document.getElementById('loginBtn');
-    if (lb) lb.addEventListener('click', () => loginWithGoogle());
-
-    const lob = document.getElementById('logoutBtn');
-    if (lob) lob.addEventListener('click', () => logout());
-
-    const rb1 = document.getElementById('refreshAccessBtn');
-    if (rb1) rb1.addEventListener('click', () => refreshAuthorizationState({ showToastOnError: true }));
-    const rb2 = document.getElementById('refreshAccessBtn2');
-    if (rb2) rb2.addEventListener('click', () => refreshAuthorizationState({ showToastOnError: true }));
-
-    const bb = document.getElementById('bootstrapAdminBtn');
-    if (bb) bb.addEventListener('click', () => bootstrapActivateAdmin());
-
-    const reqBtn = document.getElementById('requestAccessBtn');
-    if (reqBtn) {
-      reqBtn.addEventListener('click', () => {
-        const st = String((accessRequest && accessRequest.status) || '').toUpperCase();
-        submitAccessRequest(st === 'REJECTED' ? 'retry' : 'new');
-      });
-    }
-
-    // Panel ADMIN (Etapa 6/7)
-    if (authorized && String(authorizedRole || '').toUpperCase() === 'ADMIN') {
-      const ab = document.getElementById('adminRefreshBtn');
-      if (ab) ab.addEventListener('click', () => adminLoadData({ force: true }));
-
-      root.querySelectorAll('[data-req-approve]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const uid = btn.getAttribute('data-uid');
-          const role = btn.getAttribute('data-role');
-          adminApproveRequest(uid, role);
-        });
-      });
-      root.querySelectorAll('[data-req-reject]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const uid = btn.getAttribute('data-uid');
-          adminRejectRequest(uid);
-        });
-      });
-      root.querySelectorAll('[data-user-role]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const uid = btn.getAttribute('data-uid');
-          const role = btn.getAttribute('data-role');
-          adminSetRole(uid, role);
-        });
-      });
-      root.querySelectorAll('[data-user-revoke]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const uid = btn.getAttribute('data-uid');
-          adminRevokeAccess(uid);
-        });
-      });
-
-      if (!adminDataReady && !adminDataLoading && !adminActionBusy) {
-        adminLoadData({ force: true });
-      }
-    }
-  }
   function renderSoporte(){
-    const roUser = !isAdminRole();
     const root = el(`
       <section class="screen" aria-label="Soporte">
         <h1 class="screen-title">Soporte</h1>
         <p class="screen-sub">Herramientas y ajustes generales. (Sí, aquí vive el “modo oscuro”.)</p>
-
-        ${roUser ? `<div class="small-note" style="margin-top:10px"><span class="badge" style="vertical-align:middle">SOLO LECTURA</span> <span style="color:var(--muted); font-weight:850">Importar, recalcular y cambios están reservados a ADMIN.</span></div>` : ''}
-
-        <div class="panel" role="region" aria-label="Compartir" style="margin-top:10px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Compartir app</div>
-            <button class="btn primary" type="button" id="shareSupportBtn">COMPARTIR APP</button>
-          </div>
-          <div class="small-note" style="margin-top:10px">Comparte el link para abrir Pokerito en otro dispositivo.</div>
-        </div>
 
         <div class="panel" role="region" aria-label="Apariencia">
           <div class="panel-title">Apariencia</div>
@@ -5296,8 +3200,8 @@ function renderConfiguracion(){
             <button class="btn" type="button" id="exportJsonBtn">Exportar JSON</button>
           </div>
           <div class="row" style="margin-top:10px; gap:10px; flex-wrap:wrap">
-            <button class="btn primary" type="button" id="importJsonBtn" ${roUser ? 'disabled' : ''}>Importar (Reemplazar)</button>
-            <button class="btn" type="button" id="importMergeJsonBtn" ${roUser ? 'disabled' : ''}>Importar (Fusionar)</button>
+            <button class="btn primary" type="button" id="importJsonBtn">Importar (Reemplazar)</button>
+            <button class="btn" type="button" id="importMergeJsonBtn">Importar (Fusionar)</button>
             <input id="importFile" type="file" accept="application/json" style="display:none" />
           </div>
           <div class="small-note" style="margin-top:10px">Importar muestra un resumen (fichas/jugadores/partidas) antes de aplicar. Fusionar solo agrega IDs nuevos (modo seguro).</div>
@@ -5306,7 +3210,7 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Mantenimiento" style="margin-top:14px">
           <div class="panel-title">Mantenimiento</div>
           <div class="row" style="gap:10px; flex-wrap:wrap">
-            <button class="btn" type="button" id="recalcBtn" ${roUser ? 'disabled' : ''}>Recalcular estadísticas</button>
+            <button class="btn" type="button" id="recalcBtn">Recalcular estadísticas</button>
             <button class="btn danger" type="button" id="clearBtn">Borrar datos locales</button>
           </div>
           <div class="small-note" style="margin-top:10px">“Borrar” elimina jugadores, fichas y sesiones guardadas en este dispositivo.</div>
@@ -5327,8 +3231,6 @@ function renderConfiguracion(){
     syncSupportThemeUI();
     document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
 
-    const $share = document.getElementById('shareSupportBtn');
-    if ($share) $share.addEventListener('click', () => shareAppLink());
 
     // Backup
     const $file = document.getElementById('importFile');
@@ -5339,7 +3241,6 @@ function renderConfiguracion(){
     document.getElementById('exportJsonBtn').addEventListener('click', () => exportBackupJson());
 
     function openPicker(mode){
-      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
       importMode = mode;
       if ($file) { $file.value = ''; $file.click(); }
     }
@@ -5358,8 +3259,6 @@ function renderConfiguracion(){
 
     // Maintenance
     document.getElementById('recalcBtn').addEventListener('click', async () => {
-      if (roUser) { showToast('Solo ADMIN puede editar'); return; }
-      if (!requireAdminEdit()) return;
       const ok = await confirmDialog({
         title: 'Recalcular estadísticas',
         body: 'Reconstruye stats desde todas las sesiones cerradas.',
@@ -5473,37 +3372,6 @@ function renderConfiguracion(){
     }
   }
 
-  function updateHeaderRoleBadge(){
-    try{
-      if (!$roleBadges) return;
-      // limpiar siempre
-      $roleBadges.innerHTML = '';
-
-      if (!authReady || !authUser) return;
-      if (!authzReady) {
-        $roleBadges.innerHTML = '<span class="badge">AUTH…</span>';
-        return;
-      }
-      if (!authorized) return;
-
-      const role = String(authorizedRole || '').toUpperCase();
-      const isAdmin = (role === 'ADMIN');
-      const ro = !isAdmin;
-
-      const roleHtml = `<span class="badge">${escapeHtml(role || 'USUARIO')}</span>`;
-      const roHtml = ro ? `<span class="badge">SOLO LECTURA</span>` : '';
-
-      let storeHtml = '';
-      if (routeNeedsStore(getRoute()) && authorized){
-        if (!storeSyncReady) storeHtml = '<span class="badge">STORE…</span>';
-        else if (storeSyncError) storeHtml = '<span class="badge">STORE ERROR</span>';
-        else if (!storeRemoteExists) storeHtml = '<span class="badge">STORE</span>';
-      }
-
-      $roleBadges.innerHTML = roleHtml + roHtml + storeHtml;
-    }catch(e){}
-  }
-
   function updateHeaderControls(path){
     if (!$themeToggle) return;
     const show = (path === '/juego' || path === '/juego/mesa' || path === '/juego/sesion' || path.startsWith('/historial') || path === '/ranking');
@@ -5525,7 +3393,9 @@ function renderConfiguracion(){
   // PWA: register Service Worker (offline mínimo)
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      navigator.serviceWorker.register(SW_URL, { updateViaCache: 'none' })
+        .then((reg) => reg.update().catch(() => {}))
+        .catch(() => {});
     });
   }
 
@@ -5541,29 +3411,13 @@ function renderConfiguracion(){
     catch(e){ try { mqDark.addListener(onSysThemeChange); } catch(e2){} }
   }
 
-  // Firebase ready (Auth + Firestore)
-  window.addEventListener('pokerito:firebase-ready', (ev) => {
-    try{ attachFirebase(ev && ev.detail ? ev.detail : window.__POKERITO_FIREBASE__); }catch(e){}
-  });
-  if (window.__POKERITO_FIREBASE__) {
-    try{ attachFirebase(window.__POKERITO_FIREBASE__); }catch(e){}
-  }
-
   window.addEventListener('hashchange', onRoute);
   window.addEventListener('DOMContentLoaded', () => {
+    purgeLegacyClientResidue();
     // ensure default route
     if (!window.location.hash) window.location.hash = '#/inicio';
     applyTheme();
     onRoute();
-
-    // Fallback: si Firebase no llega (config faltante, bloqueo de red, etc.),
-    // no dejar la UI en “cargando” para siempre.
-    setTimeout(() => {
-      if (!authInitOnce && !authReady) {
-        authReady = true;
-        onRoute();
-      }
-    }, 1200);
   });
 
 })();
