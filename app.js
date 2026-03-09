@@ -9,8 +9,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_CACHE_NAME = 'pokerito-v0.1.9-forense-final';
-  const SW_URL = './sw.js?v=0.1.9-forense-final';
+  const APP_VERSION = '0.1.10';
+  const APP_BUILD = 'json-import-stage5';
+  const APP_CACHE_NAME = 'pokerito-v0.1.10-json-import-stage5';
+  const SW_URL = './sw.js?v=0.1.10-json-import-stage5';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -31,16 +33,20 @@
 // Storage (versioned) — local only for now
 const STORE_KEY = 'pokerito_store_v1';
 const STORE_VERSION = 1;
+const PORTABLE_APP = 'Pokerito';
+const PORTABLE_SCHEMA_VERSION = 2;
+const IMPORT_SAFETY_BACKUP_KEY = 'pokerito_import_safety_backup_v1';
 let store = loadStore();
 
 // Chips defaults (Etapa 3)
 function defaultChips(){
+  const now = Date.now();
   return [
-    { id: 'chip_white', name: 'Blanca', value: 1,   color: '#ffffff', active: true, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: 'chip_red',   name: 'Roja',   value: 5,   color: '#d94141', active: true, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: 'chip_green', name: 'Verde',  value: 25,  color: '#2cbf6e', active: true, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: 'chip_black', name: 'Negra',  value: 100, color: '#111116', active: true, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: 'chip_blue',  name: 'Azul',   value: 500, color: '#2f6fff', active: true, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: 'chip_white', name: 'Blanca', value: 1,   color: '#ffffff', active: true, createdAt: now, updatedAt: now },
+    { id: 'chip_red',   name: 'Roja',   value: 5,   color: '#d94141', active: true, createdAt: now, updatedAt: now },
+    { id: 'chip_green', name: 'Verde',  value: 25,  color: '#2cbf6e', active: true, createdAt: now, updatedAt: now },
+    { id: 'chip_black', name: 'Negra',  value: 100, color: '#111116', active: true, createdAt: now, updatedAt: now },
+    { id: 'chip_blue',  name: 'Azul',   value: 500, color: '#2f6fff', active: true, createdAt: now, updatedAt: now },
   ];
 }
 
@@ -55,92 +61,442 @@ function defaultSessions(){
   return [];
 }
 
+function isPlainObject(v){
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function safeTrim(v){
+  return String(v == null ? '' : v).trim();
+}
+
+function cloneJson(v){
+  try{ return JSON.parse(JSON.stringify(v)); }catch(e){ return null; }
+}
+
+function stableEntityId(entity){
+  if (typeof entity === 'string') return safeTrim(entity);
+  if (!isPlainObject(entity)) return '';
+  return firstNonEmpty(entity.id, entity.playerId, entity.sessionId, entity.chipId, entity.uuid);
+}
+
+function sameStableEntity(a, b){
+  const aid = stableEntityId(a);
+  const bid = stableEntityId(b);
+  return !!aid && aid === bid;
+}
+
+function findIndexByStableId(arr, entityOrId){
+  const id = stableEntityId(entityOrId);
+  if (!id) return -1;
+  const safe = Array.isArray(arr) ? arr : [];
+  for (let i = 0; i < safe.length; i++){
+    if (sameStableEntity(safe[i], id)) return i;
+  }
+  return -1;
+}
+
+function firstNonEmpty(){
+  for (let i = 0; i < arguments.length; i++){
+    const v = safeTrim(arguments[i]);
+    if (v) return v;
+  }
+  return '';
+}
+
+function uniqStrings(values){
+  const out = [];
+  const seen = new Set();
+  (Array.isArray(values) ? values : []).forEach(v => {
+    const s = safeTrim(v);
+    if (!s || seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  });
+  return out;
+}
+
+function hashTiny(input){
+  const str = String(input || '');
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++){
+    h ^= str.charCodeAt(i);
+    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+  }
+  return (h >>> 0).toString(36);
+}
+
+function deterministicBackfillId(prefix, seed, usedIds){
+  const root = `${prefix}_${hashTiny(seed || `${prefix}_${Date.now()}`)}`;
+  let out = root;
+  let n = 2;
+  while (usedIds && usedIds.has(out)) out = `${root}_${n++}`;
+  if (usedIds) usedIds.add(out);
+  return out;
+}
+
+function normalizeTimestampPair(createdRaw, updatedRaw, fallbackTs){
+  const fb = numOrZero(fallbackTs) || Date.now();
+  let createdAt = numOrZero(createdRaw);
+  let updatedAt = numOrZero(updatedRaw);
+  if (!createdAt) createdAt = updatedAt || fb;
+  if (!updatedAt) updatedAt = createdAt || fb;
+  if (updatedAt < createdAt) updatedAt = createdAt;
+  return { createdAt, updatedAt };
+}
+
+function ymdFromTimestamp(ts){
+  const d = new Date(numOrZero(ts) || Date.now());
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
+}
+
+function normalizeYmdLoose(value){
+  const str = safeTrim(value);
+  const m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return '';
+  return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+}
+
+function normalizeChipEntity(chip, index, usedIds, ctx){
+  const src = isPlainObject(chip) ? chip : {};
+  if (!isPlainObject(chip)) ctx.changed = true;
+
+  const fallbackTs = numOrZero(src.createdAt) || numOrZero(src.updatedAt) || ctx.now;
+  let id = stableEntityId(src);
+  if (!id || usedIds.has(id)){
+    id = deterministicBackfillId('chip', `chip|${safeTrim(src.name).toLowerCase()}|${safeTrim(src.value)}|${safeTrim(src.color).toLowerCase()}|${fallbackTs}|${index}`, usedIds);
+    ctx.changed = true;
+  } else usedIds.add(id);
+
+  const pair = normalizeTimestampPair(src.createdAt, src.updatedAt, fallbackTs);
+  if (pair.createdAt !== numOrZero(src.createdAt) || pair.updatedAt !== numOrZero(src.updatedAt)) ctx.changed = true;
+
+  const color = normHex(src.color) || '#808080';
+  if (color !== normHex(src.color)) ctx.changed = true;
+
+  const active = ('active' in src) ? !!src.active : true;
+  if (!('active' in src)) ctx.changed = true;
+
+  const value = (src.value === '') ? '' : Math.round(numOrZero(src.value));
+  if (value !== src.value && !(src.value === '' && value === '')) ctx.changed = true;
+
+  return Object.assign({}, src, {
+    id,
+    name: safeTrim(src.name),
+    value,
+    color,
+    active,
+    createdAt: pair.createdAt,
+    updatedAt: pair.updatedAt,
+  });
+}
+
+function normalizeChipList(list, ctx){
+  if (!Array.isArray(list) || !list.length){
+    ctx.changed = true;
+    return defaultChips();
+  }
+  const usedIds = new Set();
+  const out = list.map((chip, idx) => normalizeChipEntity(chip, idx, usedIds, ctx)).filter(Boolean);
+  return out.length ? out : defaultChips();
+}
+
+function normalizePlayerEntity(player, index, usedIds, ctx){
+  const src = isPlainObject(player) ? player : {};
+  if (!isPlainObject(player)) ctx.changed = true;
+
+  const fallbackTs = numOrZero(src.createdAt) || numOrZero(src.updatedAt) || ctx.now;
+  let id = stableEntityId(src);
+  if (!id || usedIds.has(id)){
+    id = deterministicBackfillId('player', `player|${safeTrim(src.name).toLowerCase()}|${safeTrim(src.nick).toLowerCase()}|${fallbackTs}|${index}`, usedIds);
+    ctx.changed = true;
+  } else usedIds.add(id);
+
+  const pair = normalizeTimestampPair(src.createdAt, src.updatedAt, fallbackTs);
+  if (pair.createdAt !== numOrZero(src.createdAt) || pair.updatedAt !== numOrZero(src.updatedAt)) ctx.changed = true;
+
+  const active = ('active' in src) ? !!src.active : true;
+  if (!('active' in src)) ctx.changed = true;
+
+  const stats = isPlainObject(src.stats) ? cloneJson(src.stats) : {};
+  if (!isPlainObject(src.stats)) ctx.changed = true;
+
+  return Object.assign({}, src, {
+    id,
+    name: safeTrim(src.name),
+    nick: safeTrim(src.nick),
+    active,
+    stats: stats || {},
+    createdAt: pair.createdAt,
+    updatedAt: pair.updatedAt,
+  });
+}
+
+function normalizePlayerList(list, ctx){
+  if (!Array.isArray(list)){
+    ctx.changed = true;
+    return defaultPlayers();
+  }
+  const usedIds = new Set();
+  return list.map((player, idx) => normalizePlayerEntity(player, idx, usedIds, ctx)).filter(Boolean);
+}
+
+function normalizeSessionPlayersSnapshot(rawList, playerIds, playerMap, ctx){
+  const list = Array.isArray(rawList) ? rawList : [];
+  if (!Array.isArray(rawList) && playerIds.length) ctx.changed = true;
+
+  const out = playerIds.map((pid, index) => {
+    const exact = list.find(item => sameStableEntity(item, pid));
+    const src = isPlainObject(exact) ? exact : (isPlainObject(list[index]) ? list[index] : {});
+    const master = playerMap.get(pid) || {};
+    const id = pid || stableEntityId(src);
+    const name = safeTrim(src.name) || safeTrim(master.name);
+    const nick = safeTrim(src.nick) || safeTrim(master.nick);
+    const display = safeTrim(src.display) || nick || name || playerDisplayName(master) || 'Sin nombre';
+    return Object.assign({}, src, { id, name, nick, display });
+  });
+
+  if (list.length !== out.length) ctx.changed = true;
+  return out;
+}
+
+function normalizeSessionChipsSnapshot(rawList, chipMap, ctx){
+  let list = Array.isArray(rawList) ? rawList : [];
+  if (!Array.isArray(rawList)) ctx.changed = true;
+  if (!list.length){
+    ctx.changed = true;
+    list = Array.from(chipMap.values()).map((chip, index) => ({
+      id: chip.id,
+      name: chip.name,
+      color: chip.color,
+      value: chip.value,
+      order: (typeof chip.order === 'number' ? chip.order : index),
+      style: (chip.style && typeof chip.style === 'object') ? cloneJson(chip.style) : null,
+    }));
+  }
+
+  const usedIds = new Set();
+  return list.map((chip, index) => {
+    const src = isPlainObject(chip) ? chip : {};
+    if (!isPlainObject(chip)) ctx.changed = true;
+    let id = stableEntityId(src);
+    if (!id || usedIds.has(id)){
+      id = deterministicBackfillId('chip', `session_chip|${safeTrim(src.name).toLowerCase()}|${safeTrim(src.value)}|${safeTrim(src.color).toLowerCase()}|${index}`, usedIds);
+      ctx.changed = true;
+    } else usedIds.add(id);
+
+    const master = chipMap.get(id) || {};
+    const color = normHex(src.color) || normHex(master.color) || '#808080';
+    return Object.assign({}, src, {
+      id,
+      name: safeTrim(src.name) || safeTrim(master.name),
+      color,
+      value: (src.value === '') ? '' : ((src.value != null && src.value !== '') ? numOrZero(src.value) : numOrZero(master.value)),
+      order: (typeof src.order === 'number') ? src.order : ((typeof master.order === 'number') ? master.order : index),
+      style: (src.style && typeof src.style === 'object') ? cloneJson(src.style) : ((master.style && typeof master.style === 'object') ? cloneJson(master.style) : null),
+    });
+  });
+}
+
+function normalizeSessionGameState(rawGame, playerIds, chipIds, ctx){
+  const game = isPlainObject(rawGame) ? rawGame : {};
+  if (!isPlainObject(rawGame)) ctx.changed = true;
+
+  const rawPlayers = Array.isArray(game.players) ? game.players : [];
+  if (!Array.isArray(game.players) && playerIds.length) ctx.changed = true;
+
+  const map = new Map();
+  rawPlayers.forEach(item => {
+    const id = stableEntityId(item);
+    if (id && !map.has(id)) map.set(id, isPlainObject(item) ? item : {});
+  });
+
+  const players = playerIds.map(pid => {
+    const src = map.get(pid) || {};
+    const countsSrc = (src.counts && typeof src.counts === 'object') ? src.counts : {};
+    const counts = {};
+    chipIds.forEach(cid => { counts[cid] = Math.max(0, Math.floor(numOrZero(countsSrc[cid]))); });
+    const rebuys = (Array.isArray(src.rebuys) ? src.rebuys : []).map(v => numOrZero(v)).filter(v => v > 0);
+    return Object.assign({}, src, {
+      id: pid,
+      buyIn: numOrZero(src.buyIn),
+      rebuys,
+      counts,
+    });
+  });
+
+  if (rawPlayers.length !== players.length) ctx.changed = true;
+  return Object.assign({}, game, { players });
+}
+
+function buildSessionLegacySeed(src, playerIds, playersSnapshot, fallbackTs){
+  const snapKey = (Array.isArray(playersSnapshot) ? playersSnapshot : [])
+    .map(p => `${stableEntityId(p)}|${safeTrim(p && p.name).toLowerCase()}|${safeTrim(p && p.nick).toLowerCase()}`)
+    .join('~');
+  const gamePlayers = (src && src.game && Array.isArray(src.game.players)) ? src.game.players : [];
+  const gameKey = gamePlayers
+    .map(p => `${stableEntityId(p)}|${numOrZero(p && p.buyIn)}|${(Array.isArray(p && p.rebuys) ? p.rebuys : []).map(numOrZero).join(',')}`)
+    .join('~');
+  return [
+    'session',
+    normalizeYmdLoose(src && src.date) || '',
+    numOrZero(src && src.createdAt) || '',
+    numOrZero(src && src.closedAt) || '',
+    numOrZero(src && src.updatedAt) || '',
+    playerIds.join('|'),
+    snapKey,
+    gameKey,
+    numOrZero(fallbackTs) || '',
+  ].join('::');
+}
+
+function normalizeSessionEntity(session, index, refs, usedIds, ctx){
+  const src = isPlainObject(session) ? session : {};
+  if (!isPlainObject(session)) ctx.changed = true;
+
+  const fallbackTs = numOrZero(src.createdAt) || numOrZero(src.updatedAt) || numOrZero(src.closedAt) || ctx.now;
+
+  const candidatePlayerIds = uniqStrings([
+    ...(Array.isArray(src.playerIds) ? src.playerIds.map(stableEntityId) : []),
+    ...(Array.isArray(src.playersSnapshot) ? src.playersSnapshot.map(stableEntityId) : []),
+    ...((src.game && Array.isArray(src.game.players)) ? src.game.players.map(stableEntityId) : []),
+  ]);
+  if (!Array.isArray(src.playerIds)) ctx.changed = true;
+
+  let playersSnapshot = normalizeSessionPlayersSnapshot(src.playersSnapshot, candidatePlayerIds, refs.playerMap, ctx);
+  const playerIds = uniqStrings(playersSnapshot.map(p => stableEntityId(p)).filter(Boolean));
+  if (playerIds.join('|') !== candidatePlayerIds.join('|')) ctx.changed = true;
+  playersSnapshot = normalizeSessionPlayersSnapshot(playersSnapshot, playerIds, refs.playerMap, ctx);
+
+  const chipsSnapshot = normalizeSessionChipsSnapshot(src.chipsSnapshot, refs.chipMap, ctx);
+  const chipIds = uniqStrings(chipsSnapshot.map(c => stableEntityId(c)).filter(Boolean));
+  const game = normalizeSessionGameState(src.game, playerIds, chipIds, ctx);
+
+  let id = stableEntityId(src);
+  if (!id || usedIds.has(id)){
+    id = deterministicBackfillId('sess', `${buildSessionLegacySeed(src, playerIds, playersSnapshot, fallbackTs)}|${index}`, usedIds);
+    ctx.changed = true;
+  } else usedIds.add(id);
+
+  const pair = normalizeTimestampPair(src.createdAt, src.updatedAt, fallbackTs);
+  if (pair.createdAt !== numOrZero(src.createdAt) || pair.updatedAt !== numOrZero(src.updatedAt)) ctx.changed = true;
+
+  const status = (src.status === 'closed') ? 'closed' : 'draft';
+  if (status !== safeTrim(src.status)) ctx.changed = true;
+
+  const date = normalizeYmdLoose(src.date) || ymdFromTimestamp(pair.createdAt || fallbackTs);
+  if (date !== safeTrim(src.date)) ctx.changed = true;
+
+  let closedAt = numOrZero(src.closedAt);
+  if (status === 'closed' && !closedAt){
+    closedAt = numOrZero(src.updatedAt) || pair.updatedAt || fallbackTs;
+    ctx.changed = true;
+  }
+  if (status !== 'closed' && closedAt && closedAt < pair.createdAt) {
+    closedAt = pair.createdAt;
+    ctx.changed = true;
+  }
+
+  return Object.assign({}, src, {
+    id,
+    status,
+    date,
+    createdAt: pair.createdAt,
+    updatedAt: pair.updatedAt,
+    closedAt: closedAt || undefined,
+    playerIds,
+    playersSnapshot,
+    chipsSnapshot,
+    game,
+  });
+}
+
+function normalizeSessionList(list, refs, ctx){
+  if (!Array.isArray(list)){
+    ctx.changed = true;
+    return defaultSessions();
+  }
+  const usedIds = new Set();
+  return list.map((session, idx) => normalizeSessionEntity(session, idx, refs, usedIds, ctx)).filter(Boolean);
+}
+
+function normalizePdfSeqNext(rawNext, sessions, ctx){
+  let next = Number.isFinite(rawNext) ? Math.floor(rawNext) : 1;
+  if (!Number.isFinite(rawNext) || rawNext < 1) ctx.changed = true;
+  let maxSeq = 0;
+  (Array.isArray(sessions) ? sessions : []).forEach(s => {
+    const n = Number.isFinite(s && s.pdfSeq) ? Math.floor(s.pdfSeq) : 0;
+    if (n > maxSeq) maxSeq = n;
+  });
+  if (next <= maxSeq){
+    next = maxSeq + 1;
+    ctx.changed = true;
+  }
+  return next;
+}
+
+function normalizeStoreObject(input){
+  const src = isPlainObject(input) ? input : {};
+  const ctx = { changed: !isPlainObject(input), now: Date.now() };
+
+  const chips = normalizeChipList(src.chips, ctx);
+  const players = normalizePlayerList(src.players, ctx);
+  const playerMap = new Map(players.filter(p => stableEntityId(p)).map(p => [stableEntityId(p), p]));
+  const chipMap = new Map(chips.filter(c => stableEntityId(c)).map(c => [stableEntityId(c), c]));
+  const sessions = normalizeSessionList(src.sessions, { playerMap, chipMap }, ctx);
+
+  let draftSessionId = firstNonEmpty(src.draftSessionId);
+  if (draftSessionId){
+    const ds = sessions.find(x => sameStableEntity(x, draftSessionId)) || null;
+    if (!ds || ds.status !== 'draft'){
+      draftSessionId = '';
+      ctx.changed = true;
+    }
+  }
+
+  const ui = isPlainObject(src.ui) ? (cloneJson(src.ui) || {}) : {};
+  if (!isPlainObject(src.ui)) ctx.changed = true;
+  if (!isPlainObject(ui.juego)){
+    ui.juego = {};
+    ctx.changed = true;
+  }
+
+  const pair = normalizeTimestampPair(src.createdAt, src.updatedAt, ctx.now);
+  if (pair.createdAt !== numOrZero(src.createdAt) || pair.updatedAt !== numOrZero(src.updatedAt)) ctx.changed = true;
+
+  const out = Object.assign({}, src, {
+    v: STORE_VERSION,
+    chips,
+    players,
+    sessions,
+    pdfSeqNext: normalizePdfSeqNext(src.pdfSeqNext, sessions, ctx),
+    draftSessionId,
+    ui,
+    createdAt: pair.createdAt,
+    updatedAt: pair.updatedAt,
+  });
+
+  return { store: out, changed: ctx.changed || src.v !== STORE_VERSION };
+}
+
 function loadStore(){
   try{
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return initStore();
     const obj = JSON.parse(raw);
-    if (!obj || obj.v !== STORE_VERSION) return initStore();
-    if (!Array.isArray(obj.chips) || !obj.chips.length){
-      obj.chips = defaultChips();
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-    if (!Array.isArray(obj.players)){
-      obj.players = defaultPlayers();
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-    if (!Array.isArray(obj.sessions)){
-      obj.sessions = defaultSessions();
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-
-    // Etapa 6: asegurar forma de sesiones existentes (migración suave)
-    if (Array.isArray(obj.sessions)){
-      let changed = false;
-      obj.sessions.forEach(s => {
-        const before = JSON.stringify(s);
-        try{ ensureSessionGame(s); }catch(e){}
-        if (JSON.stringify(s) !== before) changed = true;
-      });
-      // si el draft apuntado ya no es draft, limpiar
-      if (obj.draftSessionId){
-        const ds = obj.sessions.find(x => x && x.id === obj.draftSessionId) || null;
-        if (ds && ds.status !== 'draft') { obj.draftSessionId = ''; changed = true; }
-      }
-      if (changed){
-        obj.updatedAt = Date.now();
-        persistStore(obj);
-      }
-    }
-    if (!obj.ui || typeof obj.ui !== 'object'){
-      obj.ui = {};
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-    if (!obj.ui.juego || typeof obj.ui.juego !== 'object'){
-      obj.ui.juego = {};
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-        if (typeof obj.draftSessionId !== 'string'){
-      obj.draftSessionId = '';
-      obj.updatedAt = Date.now();
-      persistStore(obj);
-    }
-
-    // Etapa 1: PDF consecutivo global (pdfSeqNext) — migración suave
-    try{
-      let next = obj.pdfSeqNext;
-      let changedPdf = false;
-
-      if (!Number.isFinite(next) || next < 1){ next = 1; changedPdf = true; }
-      next = Math.floor(next);
-
-      let maxSeq = 0;
-      (Array.isArray(obj.sessions) ? obj.sessions : []).forEach(s => {
-        const n = (s && Number.isFinite(s.pdfSeq)) ? Math.floor(s.pdfSeq) : 0;
-        if (n > maxSeq) maxSeq = n;
-      });
-      if (next <= maxSeq){ next = maxSeq + 1; changedPdf = true; }
-
-      if (obj.pdfSeqNext !== next){ obj.pdfSeqNext = next; changedPdf = true; }
-
-      if (changedPdf){
-        obj.updatedAt = Date.now();
-        persistStore(obj);
-      }
-    }catch(e){}
-
-    return obj;
+    if (!isPlainObject(obj)) return initStore();
+    const normalized = normalizeStoreObject(obj);
+    if (normalized.changed) persistStore(normalized.store);
+    return normalized.store;
   }catch(e){
     return initStore();
   }
 }
 
 function initStore(){
+  const now = Date.now();
   const obj = {
     v: STORE_VERSION,
     chips: defaultChips(),
@@ -149,8 +505,8 @@ function initStore(){
     pdfSeqNext: 1,
     draftSessionId: '',
     ui: { juego: {} },
-    createdAt: Date.now(),
-    updatedAt: Date.now()
+    createdAt: now,
+    updatedAt: now
   };
   persistStore(obj);
   return obj;
@@ -161,8 +517,659 @@ function persistStore(obj){
 }
 
 function saveStore(){
-  store.updatedAt = Date.now();
+  const normalized = normalizeStoreObject(Object.assign({}, store, { updatedAt: Date.now() }));
+  store = normalized.store;
   persistStore(store);
+}
+
+function buildPortableSourceStore(baseStore){
+  const normalized = normalizeStoreObject(baseStore || store).store;
+  return {
+    store: {
+      v: STORE_VERSION,
+      chips: cloneJson(normalized.chips) || [],
+      players: cloneJson(normalized.players) || [],
+      sessions: cloneJson(normalized.sessions) || [],
+      draftSessionId: firstNonEmpty(normalized.draftSessionId),
+      pdfSeqNext: normalizePdfSeqNext(normalized.pdfSeqNext, normalized.sessions, { changed: false }),
+      createdAt: numOrZero(normalized.createdAt) || Date.now(),
+      updatedAt: numOrZero(normalized.updatedAt) || Date.now(),
+    }
+  };
+}
+
+function buildPortableSettingsData(){
+  return {
+    themePref,
+  };
+}
+
+function buildPortableBackupPayload(baseStore, baseThemePref, extraMeta){
+  const normalized = normalizeStoreObject(baseStore || store).store;
+  const settingsTheme = THEME_VALUES.has(baseThemePref) ? baseThemePref : themePref;
+  return {
+    app: PORTABLE_APP,
+    schemaVersion: PORTABLE_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    version: APP_VERSION,
+    build: APP_BUILD,
+    meta: Object.assign({
+      format: 'portable-backup',
+      authority: {
+        source: 'authoritative',
+        derived: 'excluded-from-export',
+      },
+      reconciliation: {
+        mergeStrategy: 'id-based-reconciliation-with-full-rebuild',
+        entityKeys: {
+          chips: 'id',
+          players: 'id',
+          sessions: 'id',
+        },
+      },
+      counts: {
+        chips: Array.isArray(normalized.chips) ? normalized.chips.length : 0,
+        players: Array.isArray(normalized.players) ? normalized.players.length : 0,
+        sessions: Array.isArray(normalized.sessions) ? normalized.sessions.length : 0,
+      },
+    }, isPlainObject(extraMeta) ? extraMeta : {}),
+    data: {
+      source: buildPortableSourceStore(normalized),
+      settings: {
+        themePref: settingsTheme,
+      },
+    }
+  };
+}
+
+function hasOwn(obj, key){
+  return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function validatePortableSourceShape(rawStore){
+  if (!isPlainObject(rawStore)) return { ok: false, message: 'La sección fuente del respaldo no es un objeto válido.' };
+  if (!hasOwn(rawStore, 'chips') || !Array.isArray(rawStore.chips)) return { ok: false, message: 'El respaldo está incompleto: falta chips[] en la fuente.' };
+  if (!hasOwn(rawStore, 'players') || !Array.isArray(rawStore.players)) return { ok: false, message: 'El respaldo está incompleto: falta players[] en la fuente.' };
+  if (!hasOwn(rawStore, 'sessions') || !Array.isArray(rawStore.sessions)) return { ok: false, message: 'El respaldo está incompleto: falta sessions[] en la fuente.' };
+  return { ok: true };
+}
+
+function parsePortableBackupPayload(obj){
+  if (!isPlainObject(obj)) return null;
+
+  if (obj.schemaVersion === 1 && isPlainObject(obj.data) && isPlainObject(obj.data.store)){
+    return {
+      store: normalizeStoreObject(obj.data.store).store,
+      themePref: (typeof obj.data.themePref === 'string') ? obj.data.themePref : null,
+      schemaVersion: 1,
+    };
+  }
+
+  if (safeTrim(obj.app).toLowerCase() !== PORTABLE_APP.toLowerCase()) return null;
+  if (!Number.isFinite(obj.schemaVersion) || obj.schemaVersion < PORTABLE_SCHEMA_VERSION || obj.schemaVersion > PORTABLE_SCHEMA_VERSION) return null;
+  if (!isPlainObject(obj.data) || !isPlainObject(obj.data.source)) return null;
+
+  const sourceStore = isPlainObject(obj.data.source.store) ? obj.data.source.store : obj.data.source;
+  const settings = isPlainObject(obj.data.settings) ? obj.data.settings : {};
+  const derived = isPlainObject(obj.data.derived) ? obj.data.derived : {};
+
+  return {
+    store: normalizeStoreObject(sourceStore).store,
+    themePref: (typeof settings.themePref === 'string') ? settings.themePref : ((typeof derived.themePref === 'string') ? derived.themePref : null),
+    schemaVersion: obj.schemaVersion,
+  };
+}
+
+
+function inspectPortableBackupPayload(obj){
+  if (!isPlainObject(obj)) return { ok: false, message: 'El archivo no contiene un objeto JSON válido.' };
+
+  const schemaVersion = Number.isFinite(obj.schemaVersion) ? Math.floor(obj.schemaVersion) : null;
+  if (schemaVersion === 1){
+    if (!isPlainObject(obj.data) || !isPlainObject(obj.data.store)) return { ok: false, message: 'Falta la estructura mínima del respaldo legado.' };
+    const legacyShape = validatePortableSourceShape(obj.data.store);
+    if (!legacyShape.ok) return legacyShape;
+    const parsed = parsePortableBackupPayload(obj);
+    if (!parsed || !parsed.store) return { ok: false, message: 'No se pudo normalizar el respaldo legado.' };
+    return { ok: true, parsed };
+  }
+
+  if (safeTrim(obj.app).toLowerCase() !== PORTABLE_APP.toLowerCase()){
+    return { ok: false, message: 'El archivo no pertenece a Pokerito.' };
+  }
+
+  if (!Number.isFinite(schemaVersion)){
+    return { ok: false, message: 'schemaVersion ausente o inválido.' };
+  }
+
+  if (schemaVersion < PORTABLE_SCHEMA_VERSION){
+    return { ok: false, message: `schemaVersion ${schemaVersion} ya no es compatible.` };
+  }
+
+  if (schemaVersion > PORTABLE_SCHEMA_VERSION){
+    return { ok: false, message: `schemaVersion ${schemaVersion} todavía no es manejable en esta versión.` };
+  }
+
+  if (!isPlainObject(obj.data) || !isPlainObject(obj.data.source)){
+    return { ok: false, message: 'Falta la estructura mínima esperada (data/source).' };
+  }
+
+  const rawSourceStore = isPlainObject(obj.data.source.store) ? obj.data.source.store : obj.data.source;
+  const shape = validatePortableSourceShape(rawSourceStore);
+  if (!shape.ok) return shape;
+
+  const parsed = parsePortableBackupPayload(obj);
+  if (!parsed || !parsed.store) return { ok: false, message: 'La estructura del respaldo no se pudo interpretar.' };
+  return { ok: true, parsed };
+}
+
+function minPositiveTs(){
+  const vals = Array.from(arguments).map(numOrZero).filter(v => Number.isFinite(v) && v > 0);
+  return vals.length ? Math.min.apply(null, vals) : 0;
+}
+
+function maxTs(){
+  const vals = Array.from(arguments).map(numOrZero).filter(v => Number.isFinite(v) && v > 0);
+  return vals.length ? Math.max.apply(null, vals) : 0;
+}
+
+function deepSortJson(value){
+  if (Array.isArray(value)) return value.map(deepSortJson);
+  if (!isPlainObject(value)) return value;
+  const out = {};
+  Object.keys(value).sort().forEach(key => { out[key] = deepSortJson(value[key]); });
+  return out;
+}
+
+function canonicalJson(value){
+  return JSON.stringify(deepSortJson(value));
+}
+
+function preferString(localValue, incomingValue, preferIncoming){
+  const localText = safeTrim(localValue);
+  const incomingText = safeTrim(incomingValue);
+  if (!localText && incomingText) return incomingText;
+  if (localText && !incomingText) return localText;
+  if (!localText && !incomingText) return '';
+  return preferIncoming ? incomingText : localText;
+}
+
+function preferBool(localValue, incomingValue, preferIncoming){
+  if (typeof localValue !== 'boolean' && typeof incomingValue === 'boolean') return incomingValue;
+  if (typeof localValue === 'boolean' && typeof incomingValue !== 'boolean') return localValue;
+  if (typeof localValue !== 'boolean' && typeof incomingValue !== 'boolean') return !!localValue;
+  return preferIncoming ? !!incomingValue : !!localValue;
+}
+
+function preferNumber(localValue, incomingValue, preferIncoming, fallback){
+  const hasLocal = Number.isFinite(localValue);
+  const hasIncoming = Number.isFinite(incomingValue);
+  if (!hasLocal && hasIncoming) return incomingValue;
+  if (hasLocal && !hasIncoming) return localValue;
+  if (!hasLocal && !hasIncoming) return fallback;
+  return preferIncoming ? incomingValue : localValue;
+}
+
+function mergeChipEntity(localChip, incomingChip){
+  const local = isPlainObject(localChip) ? localChip : {};
+  const incoming = isPlainObject(incomingChip) ? incomingChip : {};
+  const preferIncoming = numOrZero(incoming.updatedAt) > numOrZero(local.updatedAt);
+  return {
+    id: stableEntityId(local) || stableEntityId(incoming),
+    name: preferString(local.name, incoming.name, preferIncoming),
+    value: preferNumber(numOrZero(local.value), numOrZero(incoming.value), preferIncoming, 0),
+    color: preferString(local.color, incoming.color, preferIncoming) || '#808080',
+    active: preferBool(local.active, incoming.active, preferIncoming),
+    order: preferNumber(local.order, incoming.order, preferIncoming, undefined),
+    style: cloneJson(preferIncoming ? (incoming.style || local.style || null) : (local.style || incoming.style || null)),
+    createdAt: minPositiveTs(local.createdAt, incoming.createdAt) || Date.now(),
+    updatedAt: maxTs(local.updatedAt, incoming.updatedAt, local.createdAt, incoming.createdAt) || Date.now(),
+  };
+}
+
+function mergePlayerEntity(localPlayer, incomingPlayer){
+  const local = isPlainObject(localPlayer) ? localPlayer : {};
+  const incoming = isPlainObject(incomingPlayer) ? incomingPlayer : {};
+  const preferIncoming = numOrZero(incoming.updatedAt) > numOrZero(local.updatedAt);
+  return {
+    id: stableEntityId(local) || stableEntityId(incoming),
+    name: preferString(local.name, incoming.name, preferIncoming),
+    nick: preferString(local.nick, incoming.nick, preferIncoming),
+    active: preferBool(local.active, incoming.active, preferIncoming),
+    stats: cloneJson(local.stats || incoming.stats || {}) || {},
+    createdAt: minPositiveTs(local.createdAt, incoming.createdAt) || Date.now(),
+    updatedAt: maxTs(local.updatedAt, incoming.updatedAt, local.createdAt, incoming.createdAt) || Date.now(),
+  };
+}
+
+function sessionMergeComparable(session){
+  const s = isPlainObject(session) ? session : {};
+  const playerIds = uniqStrings(Array.isArray(s.playerIds) ? s.playerIds.map(stableEntityId) : []).slice().sort();
+  const chips = (Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : []).map((chip) => ({
+    id: stableEntityId(chip),
+    value: numOrZero(chip && chip.value),
+    color: safeTrim(chip && chip.color),
+    name: safeTrim(chip && chip.name),
+  })).sort((a,b) => String(a.id).localeCompare(String(b.id), 'es', { sensitivity: 'base' }));
+  const gamePlayers = (s.game && Array.isArray(s.game.players) ? s.game.players : []).map((player) => ({
+    id: stableEntityId(player),
+    buyIn: numOrZero(player && player.buyIn),
+    rebuys: (Array.isArray(player && player.rebuys) ? player.rebuys : []).map(numOrZero),
+    counts: deepSortJson(isPlainObject(player && player.counts) ? player.counts : {}),
+  })).sort((a,b) => String(a.id).localeCompare(String(b.id), 'es', { sensitivity: 'base' }));
+  return {
+    date: normalizeYmdLoose(s.date) || '',
+    status: safeTrim(s.status) === 'closed' ? 'closed' : 'draft',
+    createdAt: numOrZero(s.createdAt),
+    closedAt: numOrZero(s.closedAt),
+    playerIds,
+    chips,
+    gamePlayers,
+  };
+}
+
+function sessionMergeSignature(session){
+  return canonicalJson(sessionMergeComparable(session));
+}
+
+function buildImportSummaryText(summary){
+  const lines = [
+    'Importación completada.',
+    '',
+    `Jugadores agregados: ${numOrZero(summary && summary.playersAdded)}`,
+    `Jugadores fusionados: ${numOrZero(summary && summary.playersMerged)}`,
+    `Sesiones agregadas: ${numOrZero(summary && summary.sessionsAdded)}`,
+    `Sesiones actualizadas: ${numOrZero(summary && summary.sessionsUpdated)}`,
+    `Sesiones conservadas localmente: ${numOrZero(summary && summary.sessionsKeptLocal)}`,
+    `Duplicados omitidos: ${numOrZero(summary && summary.duplicatesSkipped)}`,
+    `Colisiones reconciliadas: ${numOrZero(summary && summary.conflictsResolved)}`,
+    `Duplicados históricos colapsados: ${numOrZero(summary && summary.duplicateSessionsCollapsed)}`, 
+  ];
+  if (numOrZero(summary && summary.chipsAdded) > 0 || numOrZero(summary && summary.chipsMerged) > 0){
+    lines.push('', `Fichas agregadas: ${numOrZero(summary && summary.chipsAdded)}`, `Fichas fusionadas: ${numOrZero(summary && summary.chipsMerged)}`);
+  }
+  lines.push('', 'Regla final: misma sesión + mismo contenido = duplicado; misma sesión + contenido distinto = se resuelve por updatedAt, sin degradar una cerrada a draft, y luego se recalcula todo desde sesiones cerradas reconciliadas.');
+  return lines.join('\n');
+}
+
+function buildImportPreflightText(parsed){
+  const normalized = normalizeStoreObject(parsed && parsed.store).store;
+  const chipsN = Array.isArray(normalized.chips) ? normalized.chips.length : 0;
+  const playersN = Array.isArray(normalized.players) ? normalized.players.length : 0;
+  const sessionsN = Array.isArray(normalized.sessions) ? normalized.sessions.length : 0;
+  const closedN = Array.isArray(normalized.sessions) ? normalized.sessions.filter(s => s && s.status === 'closed').length : 0;
+  return [
+    'Archivo validado.',
+    '',
+    `Fichas en archivo: ${chipsN}`,
+    `Jugadores en archivo: ${playersN}`,
+    `Sesiones en archivo: ${sessionsN}`,
+    `Sesiones cerradas: ${closedN}`,
+    '',
+    'Se aplicará merge con reconciliación histórica y luego recálculo global completo desde datos fuente.',
+  ].join('\n');
+}
+
+function sessionHasMeaningfulActivity(session){
+  const s = isPlainObject(session) ? session : {};
+  const players = (s.game && Array.isArray(s.game.players)) ? s.game.players : [];
+  let activity = 0;
+  players.forEach(st => {
+    if (numOrZero(st && st.buyIn) > 0) activity += 1;
+    if (Array.isArray(st && st.rebuys) && st.rebuys.some(v => numOrZero(v) > 0)) activity += 1;
+    const counts = isPlainObject(st && st.counts) ? st.counts : {};
+    if (Object.values(counts).some(v => numOrZero(v) > 0)) activity += 1;
+  });
+  return activity > 0;
+}
+
+function sessionCompletenessScore(session){
+  const s = isPlainObject(session) ? session : {};
+  const playersSnapshot = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
+  const chipsSnapshot = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : [];
+  const gamePlayers = (s.game && Array.isArray(s.game.players)) ? s.game.players : [];
+  let score = 0;
+  if (safeTrim(s.status) === 'closed') score += 80;
+  if (numOrZero(s.closedAt) > 0) score += 20;
+  if (numOrZero(s.updatedAt) > 0) score += 10;
+  if (numOrZero(s.createdAt) > 0) score += 5;
+  score += Math.min(playersSnapshot.length, 12);
+  score += Math.min(chipsSnapshot.length, 8);
+  if (gamePlayers.length === playersSnapshot.length && playersSnapshot.length > 0) score += 10;
+  if (gamePlayers.length > 0) score += Math.min(gamePlayers.length, 12);
+  if (sessionHasMeaningfulActivity(s)) score += 30;
+  return score;
+}
+
+function sessionRevisionTs(session){
+  const s = isPlainObject(session) ? session : {};
+  return maxTs(s.updatedAt, s.closedAt, s.createdAt);
+}
+
+function buildResolvedSession(localSession, incomingSession, preferIncoming){
+  const primary = cloneJson(preferIncoming ? incomingSession : localSession) || {};
+  const secondary = cloneJson(preferIncoming ? localSession : incomingSession) || {};
+  const resolved = Object.assign({}, primary);
+  const resolvedStatus = safeTrim(primary.status) === 'closed' ? 'closed' : 'draft';
+
+  resolved.id = stableEntityId(localSession) || stableEntityId(incomingSession) || stableEntityId(primary) || stableEntityId(secondary);
+  resolved.status = resolvedStatus;
+  resolved.date = normalizeYmdLoose(primary.date || secondary.date) || '';
+  resolved.createdAt = minPositiveTs(primary.createdAt, secondary.createdAt) || sessionRevisionTs(primary) || sessionRevisionTs(secondary) || Date.now();
+  resolved.updatedAt = numOrZero(primary.updatedAt) || numOrZero(primary.closedAt) || numOrZero(primary.createdAt) || Date.now();
+
+  if (!Array.isArray(resolved.playersSnapshot) || !resolved.playersSnapshot.length){
+    resolved.playersSnapshot = cloneJson(Array.isArray(secondary.playersSnapshot) ? secondary.playersSnapshot : []) || [];
+  }
+  if (!Array.isArray(resolved.playerIds) || !resolved.playerIds.length){
+    resolved.playerIds = uniqStrings((Array.isArray(resolved.playersSnapshot) ? resolved.playersSnapshot : []).map(stableEntityId));
+  }
+  if (!Array.isArray(resolved.chipsSnapshot) || !resolved.chipsSnapshot.length){
+    resolved.chipsSnapshot = cloneJson(Array.isArray(secondary.chipsSnapshot) ? secondary.chipsSnapshot : []) || [];
+  }
+  if (!isPlainObject(resolved.game) || !Array.isArray(resolved.game.players) || !resolved.game.players.length){
+    resolved.game = cloneJson(isPlainObject(secondary.game) ? secondary.game : { players: [] }) || { players: [] };
+  }
+
+  const localPdfSeq = Number.isFinite(localSession && localSession.pdfSeq) ? Math.floor(localSession.pdfSeq) : 0;
+  const incomingPdfSeq = Number.isFinite(incomingSession && incomingSession.pdfSeq) ? Math.floor(incomingSession.pdfSeq) : 0;
+  if (localPdfSeq >= 1) resolved.pdfSeq = localPdfSeq;
+  else if (incomingPdfSeq >= 1) resolved.pdfSeq = incomingPdfSeq;
+
+  if (resolvedStatus === 'closed') resolved.closedAt = maxTs(primary.closedAt, secondary.closedAt, primary.updatedAt, primary.createdAt) || undefined;
+  else delete resolved.closedAt;
+
+  return resolved;
+}
+
+function resolveSessionConflict(localSession, incomingSession){
+  const local = isPlainObject(localSession) ? localSession : {};
+  const incoming = isPlainObject(incomingSession) ? incomingSession : {};
+  const localStatus = safeTrim(local.status) === 'closed' ? 'closed' : 'draft';
+  const incomingStatus = safeTrim(incoming.status) === 'closed' ? 'closed' : 'draft';
+  const localTs = sessionRevisionTs(local);
+  const incomingTs = sessionRevisionTs(incoming);
+  const localScore = sessionCompletenessScore(local);
+  const incomingScore = sessionCompletenessScore(incoming);
+
+  let decision = 'keep-local';
+  let reason = 'tie-keep-local';
+
+  if (localStatus === 'closed' && incomingStatus === 'draft'){
+    decision = 'keep-local';
+    reason = 'closed-beats-draft';
+  } else if (localStatus === 'draft' && incomingStatus === 'closed'){
+    if ((incomingTs && !localTs) || (incomingTs && localTs && incomingTs >= localTs) || incomingScore >= localScore){
+      decision = 'replace-local';
+      reason = 'draft-promoted-to-closed';
+    } else {
+      decision = 'keep-local';
+      reason = 'local-draft-newer';
+    }
+  } else if (incomingTs && localTs && incomingTs !== localTs){
+    if (incomingTs > localTs){
+      decision = 'replace-local';
+      reason = 'incoming-newer';
+    } else {
+      decision = 'keep-local';
+      reason = 'incoming-older';
+    }
+  } else if (incomingTs && !localTs){
+    decision = 'replace-local';
+    reason = 'incoming-has-timestamp';
+  } else if (!incomingTs && localTs){
+    decision = 'keep-local';
+    reason = 'local-has-timestamp';
+  } else if (incomingScore > localScore){
+    decision = 'replace-local';
+    reason = 'incoming-more-complete';
+  } else if (incomingScore < localScore){
+    decision = 'keep-local';
+    reason = 'local-more-complete';
+  }
+
+  return {
+    decision,
+    reason,
+    resolvedSession: buildResolvedSession(local, incoming, decision === 'replace-local'),
+    localTs,
+    incomingTs,
+    localScore,
+    incomingScore,
+  };
+}
+
+function compareSessionPreference(a, b){
+  const aClosed = safeTrim(a && a.status) === 'closed';
+  const bClosed = safeTrim(b && b.status) === 'closed';
+  if (aClosed !== bClosed) return aClosed ? 1 : -1;
+
+  const aTs = sessionRevisionTs(a);
+  const bTs = sessionRevisionTs(b);
+  if (aTs !== bTs) return aTs > bTs ? 1 : -1;
+
+  const aScore = sessionCompletenessScore(a);
+  const bScore = sessionCompletenessScore(b);
+  if (aScore !== bScore) return aScore > bScore ? 1 : -1;
+
+  const aPdf = Number.isFinite(a && a.pdfSeq) ? Math.floor(a.pdfSeq) : 0;
+  const bPdf = Number.isFinite(b && b.pdfSeq) ? Math.floor(b.pdfSeq) : 0;
+  if (aPdf !== bPdf) return aPdf > bPdf ? 1 : -1;
+
+  return 0;
+}
+
+function dedupeSessionsBySignature(list){
+  const input = Array.isArray(list) ? list : [];
+  const out = [];
+  const indexBySignature = new Map();
+  let removed = 0;
+
+  input.forEach(session => {
+    const sig = sessionMergeSignature(session);
+    if (!sig){
+      out.push(session);
+      return;
+    }
+
+    if (!indexBySignature.has(sig)){
+      indexBySignature.set(sig, out.length);
+      out.push(session);
+      return;
+    }
+
+    const idx = indexBySignature.get(sig);
+    const existing = out[idx];
+    const preferIncoming = compareSessionPreference(session, existing) > 0;
+    out[idx] = buildResolvedSession(existing, session, preferIncoming);
+    removed += 1;
+  });
+
+  return { sessions: out, removed };
+}
+
+function buildMergedStoreNonDestructive(currentStore, incomingStore){
+  const cur = normalizeStoreObject(currentStore).store;
+  const incoming = normalizeStoreObject(incomingStore).store;
+
+  const chips = Array.isArray(cur.chips) ? cur.chips.map(ch => cloneJson(ch) || ch) : [];
+  const players = Array.isArray(cur.players) ? cur.players.map(pl => cloneJson(pl) || pl) : [];
+  const sessions = Array.isArray(cur.sessions) ? cur.sessions.map(ss => cloneJson(ss) || ss) : [];
+
+  const chipById = new Map();
+  chips.forEach(chip => {
+    const id = stableEntityId(chip);
+    if (id && !chipById.has(id)) chipById.set(id, chip);
+  });
+
+  const playerById = new Map();
+  players.forEach(player => {
+    const id = stableEntityId(player);
+    if (id && !playerById.has(id)) playerById.set(id, player);
+  });
+
+  const sessionById = new Map();
+  const sessionBySignature = new Map();
+  sessions.forEach(session => {
+    const id = stableEntityId(session);
+    const signature = sessionMergeSignature(session);
+    if (id && !sessionById.has(id)) sessionById.set(id, session);
+    if (signature && !sessionBySignature.has(signature)) sessionBySignature.set(signature, session);
+  });
+
+  const summary = {
+    chipsAdded: 0,
+    chipsMerged: 0,
+    playersAdded: 0,
+    playersMerged: 0,
+    sessionsAdded: 0,
+    sessionsUpdated: 0,
+    sessionsKeptLocal: 0,
+    duplicatesSkipped: 0,
+    conflictsResolved: 0,
+    conflictsDetected: 0,
+    duplicateSessionsCollapsed: 0,
+    conflicts: [],
+  };
+
+  (Array.isArray(incoming.chips) ? incoming.chips : []).forEach(inChip => {
+    const id = stableEntityId(inChip);
+    if (!id) return;
+    const local = chipById.get(id);
+    if (!local){
+      const added = cloneJson(inChip) || inChip;
+      chips.push(added);
+      chipById.set(id, added);
+      summary.chipsAdded += 1;
+      return;
+    }
+    const merged = mergeChipEntity(local, inChip);
+    if (canonicalJson(merged) === canonicalJson(local)) return;
+    const idx = chips.indexOf(local);
+    if (idx >= 0) chips[idx] = merged;
+    chipById.set(id, merged);
+    summary.chipsMerged += 1;
+  });
+
+  (Array.isArray(incoming.players) ? incoming.players : []).forEach(inPlayer => {
+    const id = stableEntityId(inPlayer);
+    if (!id) return;
+    const local = playerById.get(id);
+    if (!local){
+      const added = cloneJson(inPlayer) || inPlayer;
+      players.push(added);
+      playerById.set(id, added);
+      summary.playersAdded += 1;
+      return;
+    }
+    const merged = mergePlayerEntity(local, inPlayer);
+    if (canonicalJson(merged) === canonicalJson(local)) return;
+    const idx = players.indexOf(local);
+    if (idx >= 0) players[idx] = merged;
+    playerById.set(id, merged);
+    summary.playersMerged += 1;
+  });
+
+  (Array.isArray(incoming.sessions) ? incoming.sessions : []).forEach(inSession => {
+    const candidate = cloneJson(inSession) || inSession;
+    const id = stableEntityId(candidate);
+    const signature = sessionMergeSignature(candidate);
+    const localById = id ? sessionById.get(id) : null;
+    const localBySignature = signature ? sessionBySignature.get(signature) : null;
+
+    if (localById){
+      const localSignature = sessionMergeSignature(localById);
+      if (localSignature === signature){
+        summary.duplicatesSkipped += 1;
+        return;
+      }
+
+      const resolution = resolveSessionConflict(localById, candidate);
+      const resolved = resolution.resolvedSession;
+      const idx = sessions.indexOf(localById);
+      if (idx >= 0) sessions[idx] = resolved;
+
+      if (localSignature && sessionBySignature.get(localSignature) === localById) sessionBySignature.delete(localSignature);
+      if (id) sessionById.set(id, resolved);
+      const nextSignature = sessionMergeSignature(resolved);
+      if (nextSignature) sessionBySignature.set(nextSignature, resolved);
+
+      summary.conflictsDetected += 1;
+      summary.conflictsResolved += 1;
+      if (resolution.decision === 'replace-local') summary.sessionsUpdated += 1;
+      else summary.sessionsKeptLocal += 1;
+      summary.conflicts.push({
+        id: id || stableEntityId(localById) || '',
+        date: resolved.date || candidate.date || localById.date || '',
+        decision: resolution.decision,
+        reason: resolution.reason,
+      });
+      return;
+    }
+
+    if (localBySignature){
+      summary.duplicatesSkipped += 1;
+      return;
+    }
+
+    sessions.push(candidate);
+    if (id) sessionById.set(id, candidate);
+    if (signature) sessionBySignature.set(signature, candidate);
+    summary.sessionsAdded += 1;
+  });
+
+  const dedupedSessions = dedupeSessionsBySignature(sessions);
+  if (dedupedSessions.removed > 0){
+    summary.duplicatesSkipped += dedupedSessions.removed;
+    summary.duplicateSessionsCollapsed += dedupedSessions.removed;
+  }
+  const finalSessions = dedupedSessions.sessions;
+
+  const finalSessionById = new Map();
+  finalSessions.forEach(session => {
+    const sid = stableEntityId(session);
+    if (sid && !finalSessionById.has(sid)) finalSessionById.set(sid, session);
+  });
+
+  const requestedDraftId = firstNonEmpty(cur.draftSessionId, incoming.draftSessionId);
+  let nextDraftId = '';
+  if (requestedDraftId && finalSessionById.has(requestedDraftId)){
+    const draftCandidate = finalSessionById.get(requestedDraftId);
+    if (draftCandidate && draftCandidate.status === 'draft') nextDraftId = requestedDraftId;
+  }
+  if (!nextDraftId){
+    const firstDraft = finalSessions.find(s => s && s.status === 'draft');
+    nextDraftId = firstDraft ? stableEntityId(firstDraft) : '';
+  }
+
+  const mergedStore = normalizeStoreObject(Object.assign({}, cur, {
+    chips,
+    players,
+    sessions: finalSessions,
+    pdfSeqNext: Math.max(numOrZero(cur.pdfSeqNext), numOrZero(incoming.pdfSeqNext), 1),
+    draftSessionId: nextDraftId,
+    updatedAt: Date.now(),
+    ui: Object.assign({}, isPlainObject(cur.ui) ? cloneJson(cur.ui) || {} : {}, {
+      importLastSummary: {
+        appliedAt: Date.now(),
+        rule: 'same-session-same-content=duplicate; same-session-different-content=updatedAt-without-downgrading-closed-to-draft; rebuild-derived-from-source',
+        playersAdded: summary.playersAdded,
+        playersMerged: summary.playersMerged,
+        sessionsAdded: summary.sessionsAdded,
+        sessionsUpdated: summary.sessionsUpdated,
+        sessionsKeptLocal: summary.sessionsKeptLocal,
+        duplicatesSkipped: summary.duplicatesSkipped,
+        conflictsDetected: summary.conflictsDetected,
+        conflictsResolved: summary.conflictsResolved,
+        duplicateSessionsCollapsed: summary.duplicateSessionsCollapsed,
+        chipsAdded: summary.chipsAdded,
+        chipsMerged: summary.chipsMerged,
+        conflicts: summary.conflicts.slice(0, 50),
+      }
+    }),
+  })).store;
+
+  return { mergedStore, summary };
 }
 
 
@@ -291,14 +1298,15 @@ function getChips(){
 }
 
 function upsertChip(chip){
-  const idx = store.chips.findIndex(c => c.id === chip.id);
+  if (!Array.isArray(store.chips)) store.chips = [];
+  const idx = findIndexByStableId(store.chips, chip);
   if (idx >= 0) store.chips[idx] = chip;
   else store.chips.push(chip);
   saveStore();
 }
 
 function setChipActive(id, active){
-  const c = store.chips.find(x => x.id === id);
+  const c = (store.chips || []).find(x => sameStableEntity(x, id));
   if (!c) return;
   c.active = !!active;
   c.updatedAt = Date.now();
@@ -349,14 +1357,14 @@ function makeReportNameResolver(session){
 
 function upsertPlayer(player){
   if (!store.players) store.players = [];
-  const idx = store.players.findIndex(p => p.id === player.id);
+  const idx = findIndexByStableId(store.players, player);
   if (idx >= 0) store.players[idx] = player;
   else store.players.push(player);
   saveStore();
 }
 
 function setPlayerActive(id, active){
-  const p = (store.players || []).find(x => x.id === id);
+  const p = (store.players || []).find(x => sameStableEntity(x, id));
   if (!p) return;
   p.active = !!active;
   p.updatedAt = Date.now();
@@ -2163,9 +3171,9 @@ function renderConfiguracion(){
   }
 
   function saveSession(s){
-    if (!s || !s.id) return;
+    if (!s || !stableEntityId(s)) return;
     if (!Array.isArray(store.sessions)) store.sessions = [];
-    const idx = store.sessions.findIndex(x => x && x.id === s.id);
+    const idx = findIndexByStableId(store.sessions, s);
     if (idx >= 0) store.sessions[idx] = s;
     else store.sessions.push(s);
     saveStore();
@@ -2173,7 +3181,7 @@ function renderConfiguracion(){
 
   function getSessionById(id){
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
-    return sessions.find(x => x && x.id === id) || null;
+    return sessions.find(x => sameStableEntity(x, id)) || null;
   }
 
   function getClosedSessions(){
@@ -2482,7 +3490,7 @@ function renderConfiguracion(){
 
   function recalcAndPersistStats(){
     const a = computeAnalytics();
-    // persist into players.stats (for convenience) + global block
+    // persist into players.stats (for convenience) + global block rebuilt from source sessions
     const players = getPlayers();
     players.forEach(p => {
       const st = a.byPlayer.get(p.id) || null;
@@ -2502,7 +3510,31 @@ function renderConfiguracion(){
     store.players = players;
     store.statsGlobal = {
       updatedAt: Date.now(),
-      records: a.records,
+      records: cloneJson(a.records) || {},
+      ranking: a.ranking.map((row, idx) => ({
+        pos: idx + 1,
+        id: row.id,
+        display: row.display,
+        games: row.games,
+        wins1: row.wins1,
+        netTotal: row.netTotal,
+        investedTotal: row.investedTotal,
+        chipsTotal: row.chipsTotal,
+        best: cloneJson(row.best) || null,
+        worst: cloneJson(row.worst) || null,
+      })),
+      byPlayer: Array.from(a.byPlayer.values()).map(st => ({
+        id: st.id,
+        display: st.display,
+        games: st.games,
+        wins1: st.wins1,
+        netTotal: st.netTotal,
+        investedTotal: st.investedTotal,
+        chipsTotal: st.chipsTotal,
+        best: cloneJson(st.best) || null,
+        worst: cloneJson(st.worst) || null,
+      })),
+      summaryRows: cloneJson(a.summaryRows) || [],
     };
     saveStore();
   }
@@ -2614,125 +3646,122 @@ function renderConfiguracion(){
   }
 
   function exportBackupJson(){
-    const payload = {
-      schemaVersion: 1,
-      exportedAt: new Date().toISOString(),
-      data: {
-        store: store,
-        themePref: themePref,
-      }
-    };
-    const ymd = ymdCompact(todayYmd());
-    const hh = String(new Date().getHours()).padStart(2,'0');
-    const mm = String(new Date().getMinutes()).padStart(2,'0');
-    const filename = `POKERITO_Respaldo_${ymd}_${hh}${mm}.json`;
+    const payload = buildPortableBackupPayload();
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2,'0');
+    const d = String(now.getDate()).padStart(2,'0');
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const filename = `Pokerito_Backup_${y}-${m}-${d}_${hh}-${mm}.json`;
     downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), filename);
   }
 
-  async function importBackupJson(text, { mode }){
+  async function importBackupJson(input){
+    const fileMeta = isPlainObject(input) ? {
+      name: safeTrim(input.fileName),
+      size: Number.isFinite(input.fileSize) ? input.fileSize : -1,
+    } : { name: '', size: -1 };
+    const text = isPlainObject(input) ? String(input.text || '') : String(input || '');
+
     let obj = null;
     try{ obj = JSON.parse(text); }catch(e){ obj = null; }
     if (!obj || typeof obj !== 'object'){
-      await confirmDialog({ title: 'Respaldo inválido', body: 'El archivo no es JSON válido.', okText: 'OK', cancelText: 'Cerrar', danger: true });
+      await confirmDialog({ title: 'Importación inválida', body: 'El archivo no es JSON válido. La base local no se tocó.', okText: 'OK', cancelText: 'Cerrar', danger: true });
       return;
     }
-    if (obj.schemaVersion !== 1 || !obj.data || typeof obj.data !== 'object'){
-      await confirmDialog({ title: 'Respaldo inválido', body: 'schemaVersion o estructura no reconocida.', okText: 'OK', cancelText: 'Cerrar', danger: true });
-      return;
-    }
-    const incomingStore = obj.data.store;
-    if (!incomingStore || typeof incomingStore !== 'object'){
-      await confirmDialog({ title: 'Respaldo inválido', body: 'No se encontró data.store.', okText: 'OK', cancelText: 'Cerrar', danger: true });
-      return;
-    }
-    // normalize to our store shape
-    const normalized = normalizeIncomingStore(incomingStore);
 
-    const chipsN = (Array.isArray(normalized.chips) ? normalized.chips.length : 0);
-    const playersN = (Array.isArray(normalized.players) ? normalized.players.length : 0);
-    const sessionsN = (Array.isArray(normalized.sessions) ? normalized.sessions.length : 0);
-    const closedN = (Array.isArray(normalized.sessions) ? normalized.sessions.filter(s => s && s.status === 'closed').length : 0);
+    const inspected = inspectPortableBackupPayload(obj);
+    if (!inspected.ok || !inspected.parsed || !inspected.parsed.store){
+      await confirmDialog({ title: 'Importación inválida', body: (inspected.message || 'No se pudo validar el archivo.') + '\n\nLa base local no se tocó.', okText: 'OK', cancelText: 'Cerrar', danger: true });
+      return;
+    }
 
-    const sumBody = `Resumen del respaldo:\n\n• Fichas: ${chipsN}\n• Jugadores: ${playersN}\n• Partidas: ${sessionsN} (cerradas: ${closedN})\n\nModo: ${mode === 'merge' ? 'Fusionar' : 'Reemplazar'}`;
+    const parsed = inspected.parsed;
+    const incomingTheme = (typeof parsed.themePref === 'string' && THEME_VALUES.has(parsed.themePref)) ? parsed.themePref : null;
+    const themeWillChange = !!incomingTheme && incomingTheme !== themePref;
+
+    let preview = null;
+    try{
+      preview = buildMergedStoreNonDestructive(store, parsed.store);
+    }catch(e){
+      preview = null;
+    }
+
+    if (!preview || !preview.mergedStore || !preview.summary){
+      await confirmDialog({ title: 'Importación cancelada', body: 'No se pudo preparar el merge sin riesgo. La base local quedó intacta.', okText: 'OK', cancelText: 'Cerrar', danger: true });
+      return;
+    }
 
     const ok = await confirmDialog({
-      title: 'Importar respaldo',
-      body: sumBody + (mode === 'merge' ? '\n\nFusionar solo agrega IDs nuevos (no pisa datos existentes).' : '\n\nReemplazar borrará los datos actuales en este dispositivo.'),
-      okText: mode === 'merge' ? 'Fusionar' : 'Reemplazar',
+      title: 'Importar JSON',
+      body: buildImportPreflightText(parsed, preview.summary, { fileMeta, themeWillChange }),
+      okText: 'Importar',
       cancelText: 'Cancelar',
-      danger: (mode !== 'merge'),
     });
     if (!ok) return;
 
-    const incomingTheme = (typeof obj.data.themePref === 'string') ? obj.data.themePref : null;
-    if (mode === 'merge'){
-      mergeStore(normalized);
-    } else {
-      store = normalized;
+    const noDataChanges = !importSummaryHasChanges(preview.summary);
+    const noNetChanges = noDataChanges && !themeWillChange;
+    if (noNetChanges){
+      await confirmDialog({
+        title: 'Sin novedades',
+        body: buildImportSummaryText(preview.summary, { fileMeta, noChanges: true, attemptedApply: false, errorsRejected: 0 }),
+        okText: 'OK',
+        cancelText: 'Cerrar'
+      });
+      return;
+    }
+
+    const safetyBackup = persistImportSafetyBackupSnapshot(store);
+    const previousStore = cloneJson(store) || store;
+    const previousTheme = themePref;
+    let themeApplied = false;
+
+    try{
+      const candidateStore = normalizeStoreObject(cloneJson(preview.mergedStore) || preview.mergedStore).store;
+      const priorSummary = isPlainObject(candidateStore.ui && candidateStore.ui.importLastSummary) ? candidateStore.ui.importLastSummary : {};
+      candidateStore.ui = Object.assign({}, isPlainObject(candidateStore.ui) ? candidateStore.ui : {}, {
+        importLastSummary: Object.assign({}, priorSummary, {
+          fileName: fileMeta.name || '',
+          fileSize: Number.isFinite(fileMeta.size) ? fileMeta.size : -1,
+          noChanges: false,
+          themeApplied: themeWillChange,
+          safetyBackupAt: safetyBackup && safetyBackup.ok ? safetyBackup.createdAt : 0,
+        }),
+        importSafetyBackup: safetyBackup && safetyBackup.ok ? {
+          createdAt: safetyBackup.createdAt,
+          counts: cloneJson(safetyBackup.counts) || { chips: 0, players: 0, sessions: 0 },
+        } : (isPlainObject(candidateStore.ui && candidateStore.ui.importSafetyBackup) ? candidateStore.ui.importSafetyBackup : null),
+      });
+
+      store = candidateStore;
       persistStore(store);
-    }
-    if (incomingTheme){
-      themePref = (incomingTheme === 'auto' || incomingTheme === 'light' || incomingTheme === 'dark') ? incomingTheme : themePref;
-      try{ localStorage.setItem(THEME_KEY, themePref); }catch(e){}
-      applyTheme();
-    }
-    try{ recalcAndPersistStats(); }catch(e){}
-    await confirmDialog({ title: 'Importación completa', body: 'Respaldo aplicado.', okText: 'OK', cancelText: 'Cerrar' });
-    navigate('/inicio');
-  }
+      recalcAndPersistStats();
 
-  function normalizeIncomingStore(obj){
-    // keep our v/version; avoid destructive migrations
-    const out = {
-      v: STORE_VERSION,
-      chips: Array.isArray(obj.chips) ? obj.chips : defaultChips(),
-      players: Array.isArray(obj.players) ? obj.players : defaultPlayers(),
-      sessions: Array.isArray(obj.sessions) ? obj.sessions : [],
-      draftSessionId: (typeof obj.draftSessionId === 'string') ? obj.draftSessionId : '',
-      ui: (obj.ui && typeof obj.ui === 'object') ? obj.ui : { juego: {} },
-      createdAt: numOrZero(obj.createdAt) || Date.now(),
-      updatedAt: Date.now(),
-    };
-    // soft migration: ensure sessions shape
-    if (Array.isArray(out.sessions)){
-      out.sessions.forEach(s => { try{ ensureSessionGame(s); }catch(e){} });
-      if (out.draftSessionId){
-        const ds = out.sessions.find(x => x && x.id === out.draftSessionId) || null;
-        if (ds && ds.status !== 'draft') out.draftSessionId = '';
+      if (themeWillChange){
+        themePref = incomingTheme;
+        try{ localStorage.setItem(THEME_KEY, themePref); }catch(e){}
+        applyTheme();
+        themeApplied = true;
       }
+    }catch(e){
+      store = previousStore;
+      persistStore(store);
+      themePref = previousTheme;
+      try{ localStorage.setItem(THEME_KEY, themePref); }catch(err){}
+      applyTheme();
+      await confirmDialog({ title: 'Importación cancelada', body: 'Ocurrió un error al aplicar el merge o al recalcular. La base local quedó intacta.', okText: 'OK', cancelText: 'Cerrar', danger: true });
+      return;
     }
-    return out;
-  }
 
-  function mergeStore(incoming){
-    // Safe merge: keep current on conflicts, only add missing IDs
-    const cur = store;
-    const byId = (arr) => {
-      const m = new Map();
-      (Array.isArray(arr) ? arr : []).forEach(x => { if (x && x.id) m.set(x.id, x); });
-      return m;
-    };
-
-    const chips = byId(cur.chips);
-    (Array.isArray(incoming.chips) ? incoming.chips : []).forEach(c => {
-      if (c && c.id && !chips.has(c.id)) chips.set(c.id, c);
+    await confirmDialog({
+      title: noNetChanges ? 'Sin novedades' : 'Importación completa',
+      body: buildImportSummaryText(preview.summary, { fileMeta, safetyBackup, themeApplied, noChanges: noNetChanges, attemptedApply: true, errorsRejected: 0 }),
+      okText: 'OK',
+      cancelText: 'Cerrar'
     });
-
-    const players = byId(cur.players);
-    (Array.isArray(incoming.players) ? incoming.players : []).forEach(p => {
-      if (p && p.id && !players.has(p.id)) players.set(p.id, p);
-    });
-
-    const sessions = byId(cur.sessions);
-    (Array.isArray(incoming.sessions) ? incoming.sessions : []).forEach(s => {
-      if (s && s.id && !sessions.has(s.id)) sessions.set(s.id, s);
-    });
-
-    cur.chips = Array.from(chips.values());
-    cur.players = Array.from(players.values());
-    cur.sessions = Array.from(sessions.values());
-    cur.updatedAt = Date.now();
-    persistStore(cur);
+    navigate('/soporte');
   }
 
   function resetAllData(){
@@ -3077,7 +4106,7 @@ function renderConfiguracion(){
               <button class="icon-btn" type="button" data-act="close" aria-label="Cerrar">×</button>
             </div>
             <div class="modal-body">
-              <div class="small-note" style="margin-top:0">${escapeHtml(body || '')}</div>
+              <div class="small-note" style="margin-top:0; white-space:pre-line">${escapeHtml(body || '')}</div>
             </div>
             <div class="modal-foot">
               <button class="btn" type="button" data-act="cancel">${escapeHtml(cancelText || 'Cancelar')}</button>
@@ -3197,14 +4226,14 @@ function renderConfiguracion(){
         <div class="panel" role="region" aria-label="Respaldo" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Respaldo</div>
-            <button class="btn" type="button" id="exportJsonBtn">Exportar JSON</button>
+            <div class="row" style="gap:10px; flex-wrap:wrap">
+              <button class="btn" type="button" id="exportJsonBtn">Exportar JSON</button>
+              <button class="btn primary" type="button" id="importJsonBtn">Importar JSON</button>
+            </div>
           </div>
-          <div class="row" style="margin-top:10px; gap:10px; flex-wrap:wrap">
-            <button class="btn primary" type="button" id="importJsonBtn">Importar (Reemplazar)</button>
-            <button class="btn" type="button" id="importMergeJsonBtn">Importar (Fusionar)</button>
-            <input id="importFile" type="file" accept="application/json" style="display:none" />
-          </div>
-          <div class="small-note" style="margin-top:10px">Importar muestra un resumen (fichas/jugadores/partidas) antes de aplicar. Fusionar solo agrega IDs nuevos (modo seguro).</div>
+          <input id="importFile" type="file" accept=".json,application/json" style="display:none" />
+          <div class="small-note" style="margin-top:10px">Importar valida primero, muestra vista previa útil, crea un respaldo local de seguridad antes de aplicar y solo guarda si merge + recálculo terminan bien.</div>
+          <div class="small-note" id="importStatusNote" style="margin-top:10px"></div>
         </div>
 
         <div class="panel" role="region" aria-label="Mantenimiento" style="margin-top:14px">
@@ -3235,25 +4264,66 @@ function renderConfiguracion(){
     // Backup
     const $file = document.getElementById('importFile');
     const $import = document.getElementById('importJsonBtn');
-    const $importMerge = document.getElementById('importMergeJsonBtn');
-    let importMode = 'replace';
+    const $exportJson = document.getElementById('exportJsonBtn');
+    const $importStatusNote = document.getElementById('importStatusNote');
 
-    document.getElementById('exportJsonBtn').addEventListener('click', () => exportBackupJson());
+    function renderImportStatusNote(){
+      if (!$importStatusNote) return;
+      const last = isPlainObject(store.ui && store.ui.importLastSummary) ? store.ui.importLastSummary : null;
+      const backupRaw = isPlainObject(store.ui && store.ui.importSafetyBackup) ? store.ui.importSafetyBackup : readImportSafetyBackupMeta();
+      const backup = backupRaw ? {
+        createdAt: numOrZero(backupRaw.createdAt),
+        sessions: numOrZero(backupRaw.sessions || (backupRaw.counts && backupRaw.counts.sessions)),
+        players: numOrZero(backupRaw.players || (backupRaw.counts && backupRaw.counts.players)),
+        chips: numOrZero(backupRaw.chips || (backupRaw.counts && backupRaw.counts.chips)),
+      } : null;
+      const chunks = [];
+      if (last && numOrZero(last.appliedAt) > 0){
+        const label = safeTrim(last.fileName) || 'respaldo sin nombre';
+        chunks.push(`Último import: ${formatDateTimeShort(last.appliedAt)} · ${label}`);
+        chunks.push(`Agregado ${numOrZero(last.playersAdded) + numOrZero(last.sessionsAdded) + numOrZero(last.chipsAdded)} · fusionado ${numOrZero(last.playersMerged) + numOrZero(last.chipsMerged)} · duplicado omitido ${numOrZero(last.duplicatesSkipped)} · reconciliado ${numOrZero(last.sessionsUpdated)}`);
+      } else {
+        chunks.push('Aún no hay imports registrados en este dispositivo.');
+      }
+      if (backup && numOrZero(backup.createdAt) > 0){
+        chunks.push(`Último respaldo local previo: ${formatDateTimeShort(backup.createdAt)} · ${numOrZero(backup.sessions)} sesiones · ${numOrZero(backup.players)} jugadores · ${numOrZero(backup.chips)} fichas`);
+      }
+      $importStatusNote.textContent = chunks.join(' | ');
+    }
 
-    function openPicker(mode){
-      importMode = mode;
+    function setImportUiBusy(busy){
+      if ($import){
+        $import.disabled = !!busy;
+        $import.textContent = busy ? 'Importando…' : 'Importar JSON';
+      }
+      if ($exportJson) $exportJson.disabled = !!busy;
+    }
+
+    if ($exportJson) $exportJson.addEventListener('click', () => exportBackupJson());
+    renderImportStatusNote();
+
+    function openPicker(){
       if ($file) { $file.value = ''; $file.click(); }
     }
-    if ($import) $import.addEventListener('click', () => openPicker('replace'));
-    if ($importMerge) $importMerge.addEventListener('click', () => openPicker('merge'));
+    if ($import) $import.addEventListener('click', () => openPicker());
 
     if ($file){
       $file.addEventListener('change', async () => {
         const f = $file.files && $file.files[0];
         if (!f) return;
-        const txt = await f.text().catch(() => '');
-        if (!txt) return;
-        await importBackupJson(txt, { mode: importMode });
+        setImportUiBusy(true);
+        try{
+          const txt = await f.text().catch(() => '');
+          if (!txt){
+            await confirmDialog({ title: 'Importación inválida', body: 'No se pudo leer el archivo seleccionado. La base local no se tocó.', okText: 'OK', cancelText: 'Cerrar', danger: true });
+            return;
+          }
+          await importBackupJson({ text: txt, fileName: f.name, fileSize: f.size });
+          renderImportStatusNote();
+        } finally {
+          setImportUiBusy(false);
+          if ($file) $file.value = '';
+        }
       });
     }
 
@@ -3261,13 +4331,13 @@ function renderConfiguracion(){
     document.getElementById('recalcBtn').addEventListener('click', async () => {
       const ok = await confirmDialog({
         title: 'Recalcular estadísticas',
-        body: 'Reconstruye stats desde todas las sesiones cerradas.',
+        body: 'Reconstruye ranking, récords y estadísticas desde todas las sesiones cerradas.',
         okText: 'Recalcular',
         cancelText: 'Cancelar',
       });
       if (!ok) return;
       recalcAndPersistStats();
-      await confirmDialog({ title: 'Listo', body: 'Estadísticas recalculadas.', okText: 'OK', cancelText: 'Cerrar' });
+      await confirmDialog({ title: 'Listo', body: 'Ranking, récords y estadísticas recalculados desde datos fuente.', okText: 'OK', cancelText: 'Cerrar' });
     });
 
     document.getElementById('clearBtn').addEventListener('click', async () => {
