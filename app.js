@@ -9,10 +9,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.14';
-  const APP_BUILD = 'date-default-today';
-  const APP_CACHE_NAME = 'pokerito-v0.1.14-date-default-today';
-  const SW_URL = './sw.js?v=0.1.14-date-default-today';
+  const APP_VERSION = '0.1.16';
+  const APP_BUILD = 'impacto-historico-pdf';
+  const APP_CACHE_NAME = 'pokerito-v0.1.16-impacto-historico-pdf';
+  const SW_URL = './sw.js?v=0.1.16-impacto-historico-pdf';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -2055,6 +2055,794 @@ function renderHistorialDetalle(){
   }
 
   
+
+  function chunkList(arr, size){
+    const list = Array.isArray(arr) ? arr : [];
+    const out = [];
+    const chunkSize = Math.max(1, Math.floor(numOrZero(size) || 1));
+    for (let i = 0; i < list.length; i += chunkSize) out.push(list.slice(i, i + chunkSize));
+    return out;
+  }
+
+  function formatDateTimeForPdf(ts){
+    const n = numOrZero(ts);
+    if (!n) return '—';
+    const d = new Date(n);
+    if (Number.isNaN(d.getTime())) return '—';
+    try{
+      return new Intl.DateTimeFormat('es-NI', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(d);
+    }catch(e){
+      return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    }
+  }
+
+  function pdfSessionReferenceLabel(session){
+    const s = session || {};
+    const seqNum = (Number.isFinite(s.pdfSeq) && Math.floor(s.pdfSeq) >= 1) ? Math.floor(s.pdfSeq) : 0;
+    const seqLabel = seqNum ? `PDF ${pad3(seqNum)}` : 'PDF s/n';
+    const dateLabel = safeTrim(s.date) || formatDateTimeForPdf(numOrZero(s.closedAt || s.updatedAt || s.createdAt));
+    const idLabel = stableEntityId(s) ? String(stableEntityId(s)).slice(-8) : 'sin-id';
+    return `${seqLabel} · ${dateLabel} · ${idLabel}`;
+  }
+
+  function buildPdfMetaLines(items){
+    const list = Array.isArray(items) ? items : [];
+    return list.map(item => {
+      const label = escapeHtml(String(item && item.label != null ? item.label : ''));
+      const value = escapeHtml(String(item && item.value != null ? item.value : '—'));
+      return `<div class="print-line"><span class="k">${label}</span><span class="v">${value}</span></div>`;
+    }).join('');
+  }
+
+  function buildPdfSection(opts){
+    const title = escapeHtml(String(opts && opts.title != null ? opts.title : ''));
+    const subtitle = safeTrim(opts && opts.subtitle);
+    const body = String(opts && opts.body != null ? opts.body : '');
+    const classes = ['print-section'];
+    if (opts && opts.tight) classes.push('print-section--tight');
+    if (opts && opts.subtle) classes.push('print-section--subtle');
+    if (opts && opts.breakBefore) classes.push('pdf-break-before');
+    if ((opts && opts.avoidBreak) !== false) classes.push('pdf-avoid-break');
+    return `
+      <section class="${classes.join(' ')}">
+        <div class="print-section-head">
+          <div class="print-section-title">${title}</div>
+          ${subtitle ? `<div class="print-section-sub">${escapeHtml(subtitle)}</div>` : ''}
+        </div>
+        <div class="print-section-body">${body}</div>
+      </section>
+    `;
+  }
+
+  function buildPdfTableSection(opts){
+    const columns = Array.isArray(opts && opts.columns) ? opts.columns : [];
+    const rows = Array.isArray(opts && opts.rows) ? opts.rows : [];
+    const noteHtml = String(opts && opts.noteHtml != null ? opts.noteHtml : '');
+    const colHtml = columns.map(col => {
+      const label = escapeHtml(String(col && col.label != null ? col.label : ''));
+      const klass = safeTrim(col && col.className);
+      return `<th${klass ? ` class="${escapeAttr(klass)}"` : ''}>${label}</th>`;
+    }).join('');
+
+    const rowHtml = rows.length ? rows.map(row => {
+      const cells = Array.isArray(row) ? row : [];
+      return `<tr>${cells.map((cell, idx) => {
+        const col = columns[idx] || {};
+        const klass = safeTrim(col.className);
+        return `<td${klass ? ` class="${escapeAttr(klass)}"` : ''}>${cell != null ? String(cell) : ''}</td>`;
+      }).join('')}</tr>`;
+    }).join('') : `<tr><td colspan="${Math.max(1, columns.length)}">—</td></tr>`;
+
+    const table = `
+      ${noteHtml}
+      <div class="print-table-wrap" role="region" aria-label="${escapeAttr(String(opts && opts.ariaLabel != null ? opts.ariaLabel : 'Tabla del PDF'))}">
+        <table class="print-table">
+          <thead><tr>${colHtml}</tr></thead>
+          <tbody>${rowHtml}</tbody>
+        </table>
+      </div>
+    `;
+
+    return buildPdfSection({
+      title: (opts && opts.title) || 'Tabla',
+      subtitle: (opts && opts.subtitle) || '',
+      body: table,
+      tight: true,
+      subtle: !!(opts && opts.subtle),
+      breakBefore: !!(opts && opts.breakBefore),
+      avoidBreak: !!rows.length && rows.length <= 12,
+    });
+  }
+
+  const PDF_GLOBAL_RANKING_CRITERION = 'Orden oficial: ganancia neta global, ROI global, victorias y sesiones jugadas.';
+  const ROI_RECORD_MIN_GAMES = 3;
+  const HISTORICAL_IMPACT_VERSION = 1;
+
+  function calcGlobalRoi(net, invested){
+    const base = numOrZero(invested);
+    if (Math.abs(base) <= 0.0001) return 0;
+    return (numOrZero(net) / base) * 100;
+  }
+
+  function formatPercent(n){
+    const x = numOrZero(n);
+    try{
+      const nf = new Intl.NumberFormat('es-NI', { maximumFractionDigits: 2, minimumFractionDigits: (Math.abs(x % 1) < 0.0001 ? 0 : 2) });
+      return nf.format(x) + '%';
+    }catch(e){
+      return `${Math.round(x * 100) / 100}%`;
+    }
+  }
+
+  function formatSessionDateLabel(rawDate, ts){
+    const txt = safeTrim(rawDate);
+    let m = txt.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) return `${pad2(m[3])}/${pad2(m[2])}/${m[1]}`;
+    m = txt.match(/^(\d{2})(\d{2})(\d{4})$/);
+    if (m) return `${m[1]}/${m[2]}/${m[3]}`;
+    if (txt) return txt;
+    const n = numOrZero(ts);
+    if (!n) return '—';
+    const d = new Date(n);
+    if (Number.isNaN(d.getTime())) return '—';
+    return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()}`;
+  }
+
+  function compareGlobalRanking(a, b){
+    const dn = numOrZero(b && b.netTotal) - numOrZero(a && a.netTotal);
+    if (Math.abs(dn) > 0.0001) return dn;
+    const dr = numOrZero(b && b.roiGlobal) - numOrZero(a && a.roiGlobal);
+    if (Math.abs(dr) > 0.0001) return dr;
+    const dw = numOrZero(b && b.wins1) - numOrZero(a && a.wins1);
+    if (dw) return dw;
+    const dg = numOrZero(b && b.games) - numOrZero(a && a.games);
+    if (dg) return dg;
+    return String(a && a.display || '').localeCompare(String(b && b.display || ''), 'es', { sensitivity: 'base' });
+  }
+
+  function sameGlobalRankingPosition(a, b){
+    if (!a || !b) return false;
+    return Math.abs(numOrZero(a.netTotal) - numOrZero(b.netTotal)) <= 0.0001
+      && Math.abs(numOrZero(a.roiGlobal) - numOrZero(b.roiGlobal)) <= 0.0001
+      && numOrZero(a.wins1) === numOrZero(b.wins1)
+      && numOrZero(a.games) === numOrZero(b.games);
+  }
+
+
+  function getSessionSortTs(session){
+    const s = session || {};
+    return numOrZero(s.closedAt || s.updatedAt || s.createdAt);
+  }
+
+  function compactRecordLabels(labels, maxItems){
+    const uniq = uniqStrings(labels);
+    if (!uniq.length) return '—';
+    const max = Math.max(1, Math.floor(numOrZero(maxItems) || 3));
+    if (uniq.length <= max) return uniq.join(' · ');
+    return `${uniq.slice(0, max).join(' · ')} +${uniq.length - max} más`;
+  }
+
+  function formatRecordSessionContext(entry){
+    if (!entry) return '—';
+    const dateLabel = formatSessionDateLabel(entry.date, entry.ts);
+    const refLabel = safeTrim(entry.sessionRef);
+    if (dateLabel !== '—' && refLabel) return `${dateLabel} · ${refLabel}`;
+    return refLabel || dateLabel || '—';
+  }
+
+  function formatRecordCount(value, singular, plural){
+    const n = Math.max(0, Math.floor(numOrZero(value)));
+    const label = (n === 1 ? singular : (plural || `${singular}s`));
+    return `${n} ${label}`;
+  }
+
+  function collectRecordLeaders(list, getValue, mode){
+    const safe = Array.isArray(list) ? list : [];
+    const pickMin = safeTrim(mode).toLowerCase() === 'min';
+    let bestValue = null;
+    let holders = [];
+    safe.forEach(item => {
+      const value = Number(getValue ? getValue(item) : 0);
+      if (!Number.isFinite(value)) return;
+      if (bestValue == null){
+        bestValue = value;
+        holders = [item];
+        return;
+      }
+      const delta = value - bestValue;
+      if (Math.abs(delta) <= 0.0001){
+        holders.push(item);
+        return;
+      }
+      if ((pickMin && delta < -0.0001) || (!pickMin && delta > 0.0001)){
+        bestValue = value;
+        holders = [item];
+      }
+    });
+    return { value: bestValue, items: holders };
+  }
+
+  function calcBestStreak(history, predicate){
+    const list = (Array.isArray(history) ? history : []).slice().sort((a, b) => {
+      const dt = numOrZero(a && a.ts) - numOrZero(b && b.ts);
+      if (Math.abs(dt) > 0.0001) return dt;
+      return String(a && a.sessionId || '').localeCompare(String(b && b.sessionId || ''), 'es', { sensitivity: 'base' });
+    });
+
+    let best = { length: 0, start: null, end: null };
+    let curLength = 0;
+    let curStart = null;
+    let curEnd = null;
+
+    list.forEach(item => {
+      if (predicate && predicate(item)){
+        if (!curLength) curStart = item;
+        curLength += 1;
+        curEnd = item;
+        if (curLength > best.length){
+          best = { length: curLength, start: curStart, end: curEnd };
+        }
+      } else {
+        curLength = 0;
+        curStart = null;
+        curEnd = null;
+      }
+    });
+
+    return best;
+  }
+
+  function formatStreakContextLabel(streak){
+    if (!streak || !numOrZero(streak.length) || !streak.start || !streak.end) return '—';
+    const startLabel = formatRecordSessionContext(streak.start);
+    const endLabel = formatRecordSessionContext(streak.end);
+    if (startLabel === endLabel) return startLabel;
+    return `${startLabel} → ${endLabel}`;
+  }
+
+  function buildGlobalRecordItems(payload){
+    const players = Array.isArray(payload && payload.players) ? payload.players : [];
+    const detailed = Array.isArray(payload && payload.detailed) ? payload.detailed : [];
+    const summaryRows = Array.isArray(payload && payload.summaryRows) ? payload.summaryRows : [];
+
+    function emptyRecord(key, label, reason, eligibleNote, valueRaw){
+      return {
+        key,
+        label,
+        playerLabel: '—',
+        valueLabel: 'No aplica aún',
+        contextLabel: reason || 'Histórico insuficiente todavía.',
+        eligibleLabel: eligibleNote || '',
+        holderIds: [],
+        valueRaw: (valueRaw != null ? valueRaw : null),
+        isEmpty: true,
+      };
+    }
+
+    function makeRecord(key, label, holders, valueLabel, contextLabel, eligibleLabel, valueRaw){
+      const safeHolders = Array.isArray(holders) ? holders : [];
+      if (!safeHolders.length) return emptyRecord(key, label, 'Histórico insuficiente todavía.', eligibleLabel, valueRaw);
+      return {
+        key,
+        label,
+        playerLabel: compactRecordLabels(safeHolders.map(item => safeTrim(item && item.playerLabel)), 3),
+        valueLabel: valueLabel || '—',
+        contextLabel: contextLabel || 'Histórico acumulado al cierre',
+        eligibleLabel: eligibleLabel || '',
+        holderIds: uniqStrings(safeHolders.map(item => stableEntityId(item && item.playerId)).filter(Boolean)),
+        valueRaw: (valueRaw != null ? valueRaw : null),
+        isEmpty: false,
+      };
+    }
+
+    const maxInvestedLegacy = collectRecordLeaders(summaryRows.filter(r => numOrZero(r && r.totalInvested) > 0.0001), r => numOrZero(r && r.totalInvested), 'max');
+    const maxGainSet = collectRecordLeaders(detailed.filter(r => numOrZero(r && r.net) > 0.0001), r => numOrZero(r && r.net), 'max');
+    const maxLossSet = collectRecordLeaders(detailed.filter(r => numOrZero(r && r.net) < -0.0001), r => numOrZero(r && r.net), 'min');
+
+    const legacyMaxTotalInvested = (maxInvestedLegacy.items && maxInvestedLegacy.items[0]) ? {
+      date: maxInvestedLegacy.items[0].date || '',
+      amount: numOrZero(maxInvestedLegacy.value),
+      sessionId: maxInvestedLegacy.items[0].sessionId || '',
+      sessionRef: maxInvestedLegacy.items[0].sessionRef || '',
+    } : null;
+    const legacyMaxGain = (maxGainSet.items && maxGainSet.items[0]) ? {
+      date: maxGainSet.items[0].date || '',
+      amount: numOrZero(maxGainSet.value),
+      sessionId: maxGainSet.items[0].sessionId || '',
+      sessionRef: maxGainSet.items[0].sessionRef || '',
+      playerId: maxGainSet.items[0].playerId || '',
+      player: maxGainSet.items[0].player || '',
+    } : null;
+    const legacyMaxLoss = (maxLossSet.items && maxLossSet.items[0]) ? {
+      date: maxLossSet.items[0].date || '',
+      amount: numOrZero(maxLossSet.value),
+      sessionId: maxLossSet.items[0].sessionId || '',
+      sessionRef: maxLossSet.items[0].sessionRef || '',
+      playerId: maxLossSet.items[0].playerId || '',
+      player: maxLossSet.items[0].player || '',
+    } : null;
+
+    const items = [];
+
+    items.push(maxGainSet.items.length
+      ? makeRecord('maxGainSession', 'Mayor ganancia en una sola sesión', maxGainSet.items.map(item => ({ playerLabel: item.player, playerId: item.playerId })), formatMoney(maxGainSet.value), compactRecordLabels(maxGainSet.items.map(item => formatRecordSessionContext(item)), 3), '', maxGainSet.value)
+      : emptyRecord('maxGainSession', 'Mayor ganancia en una sola sesión', 'Todavía no hay ganancias positivas registradas.'));
+
+    items.push(maxLossSet.items.length
+      ? makeRecord('maxLossSession', 'Mayor pérdida en una sola sesión', maxLossSet.items.map(item => ({ playerLabel: item.player, playerId: item.playerId })), formatMoney(maxLossSet.value), compactRecordLabels(maxLossSet.items.map(item => formatRecordSessionContext(item)), 3), '', maxLossSet.value)
+      : emptyRecord('maxLossSession', 'Mayor pérdida en una sola sesión', 'Todavía no hay pérdidas registradas.'));
+
+    const winsSet = collectRecordLeaders(players.filter(row => numOrZero(row && row.wins1) > 0), row => numOrZero(row && row.wins1), 'max');
+    items.push(winsSet.items.length
+      ? makeRecord('mostWins', 'Más victorias históricas', winsSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatRecordCount(winsSet.value, 'victoria'), 'Histórico acumulado al cierre', '', winsSet.value)
+      : emptyRecord('mostWins', 'Más victorias históricas', 'Aún no hay victorias históricas registradas.'));
+
+    const gamesSet = collectRecordLeaders(players.filter(row => numOrZero(row && row.games) > 0), row => numOrZero(row && row.games), 'max');
+    items.push(gamesSet.items.length
+      ? makeRecord('mostGames', 'Más sesiones jugadas', gamesSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatRecordCount(gamesSet.value, 'sesión'), 'Histórico acumulado al cierre', '', gamesSet.value)
+      : emptyRecord('mostGames', 'Más sesiones jugadas', 'Aún no hay sesiones cerradas suficientes.'));
+
+    const rebuysSet = collectRecordLeaders(players.filter(row => numOrZero(row && row.rebuysCount) > 0), row => numOrZero(row && row.rebuysCount), 'max');
+    items.push(rebuysSet.items.length
+      ? makeRecord('mostRebuys', 'Más rebuys históricos', rebuysSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatRecordCount(rebuysSet.value, 'rebuy'), 'Histórico acumulado al cierre', '', rebuysSet.value)
+      : emptyRecord('mostRebuys', 'Más rebuys históricos', 'Todavía no se registran rebuys en el histórico.'));
+
+    const buyInsSet = collectRecordLeaders(players.filter(row => numOrZero(row && row.buyInsCount) > 0), row => numOrZero(row && row.buyInsCount), 'max');
+    const buyInsEligibleNote = 'Se cuenta cada buy-in inicial registrado en una sesión válida.';
+    items.push(buyInsSet.items.length
+      ? makeRecord('mostBuyIns', 'Más buy-ins históricos', buyInsSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatRecordCount(buyInsSet.value, 'buy-in'), 'Histórico acumulado al cierre', buyInsEligibleNote, buyInsSet.value)
+      : emptyRecord('mostBuyIns', 'Más buy-ins históricos', 'Todavía no hay buy-ins históricos suficientes.', buyInsEligibleNote));
+
+    const payoutsSet = collectRecordLeaders(players.filter(row => numOrZero(row && row.payoutsTotal) > 0.0001), row => numOrZero(row && row.payoutsTotal), 'max');
+    items.push(payoutsSet.items.length
+      ? makeRecord('maxPayouts', 'Mayor premio acumulado', payoutsSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatMoney(payoutsSet.value), 'Histórico acumulado al cierre', '', payoutsSet.value)
+      : emptyRecord('maxPayouts', 'Mayor premio acumulado', 'Todavía no hay cobros acumulados suficientes.'));
+
+    const investedSet = collectRecordLeaders(players.filter(row => numOrZero(row && row.investedTotal) > 0.0001), row => numOrZero(row && row.investedTotal), 'max');
+    items.push(investedSet.items.length
+      ? makeRecord('maxInvested', 'Mayor inversión acumulada', investedSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatMoney(investedSet.value), 'Histórico acumulado al cierre', '', investedSet.value)
+      : emptyRecord('maxInvested', 'Mayor inversión acumulada', 'Todavía no hay inversión acumulada suficiente.'));
+
+    const roiEligible = players.filter(row => numOrZero(row && row.games) >= ROI_RECORD_MIN_GAMES && numOrZero(row && row.investedTotal) > 0.0001);
+    const roiEligibleNote = `Elegible solo con mínimo ${ROI_RECORD_MIN_GAMES} sesiones e inversión acumulada mayor a 0.`;
+    const bestRoiSet = collectRecordLeaders(roiEligible, row => numOrZero(row && row.roiGlobal), 'max');
+    items.push(bestRoiSet.items.length
+      ? makeRecord('bestRoi', 'Mejor ROI global', bestRoiSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatPercent(bestRoiSet.value), 'Histórico acumulado al cierre', roiEligibleNote, bestRoiSet.value)
+      : emptyRecord('bestRoi', 'Mejor ROI global', `Nadie cumple todavía el mínimo de ${ROI_RECORD_MIN_GAMES} sesiones para competir por ROI.`, roiEligibleNote));
+
+    const worstRoiSet = collectRecordLeaders(roiEligible, row => numOrZero(row && row.roiGlobal), 'min');
+    items.push(worstRoiSet.items.length
+      ? makeRecord('worstRoi', 'Peor ROI global', worstRoiSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatPercent(worstRoiSet.value), 'Histórico acumulado al cierre', roiEligibleNote, worstRoiSet.value)
+      : emptyRecord('worstRoi', 'Peor ROI global', `Nadie cumple todavía el mínimo de ${ROI_RECORD_MIN_GAMES} sesiones para competir por ROI.`, roiEligibleNote));
+
+    const itmSet = collectRecordLeaders(players.filter(row => numOrZero(row && row.itmCount) > 0), row => numOrZero(row && row.itmCount), 'max');
+    const itmNote = 'Se cuenta cada sesión con neto positivo.';
+    items.push(itmSet.items.length
+      ? makeRecord('mostItm', 'Más cobros / ITM', itmSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatRecordCount(itmSet.value, 'cobro'), 'Histórico acumulado al cierre', itmNote, itmSet.value)
+      : emptyRecord('mostItm', 'Más cobros / ITM', 'Todavía no hay cobros / ITM positivos en el histórico.', itmNote));
+
+    const winStreakSet = collectRecordLeaders(players.filter(row => numOrZero(row && row.bestWinStreak && row.bestWinStreak.length) > 0), row => numOrZero(row && row.bestWinStreak && row.bestWinStreak.length), 'max');
+    items.push(winStreakSet.items.length
+      ? makeRecord('bestWinStreak', 'Mejor racha de victorias', winStreakSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatRecordCount(winStreakSet.value, 'victoria seguida', 'victorias seguidas'), compactRecordLabels(winStreakSet.items.map(item => formatStreakContextLabel(item.bestWinStreak)), 3), '', winStreakSet.value)
+      : emptyRecord('bestWinStreak', 'Mejor racha de victorias', 'Todavía no hay rachas de victorias registradas.'));
+
+    const itmStreakSet = collectRecordLeaders(players.filter(row => numOrZero(row && row.bestItmStreak && row.bestItmStreak.length) > 0), row => numOrZero(row && row.bestItmStreak && row.bestItmStreak.length), 'max');
+    const itmStreakNote = 'Se cuenta cada sesión consecutiva con neto positivo.';
+    items.push(itmStreakSet.items.length
+      ? makeRecord('bestItmStreak', 'Mejor racha de cobros', itmStreakSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatRecordCount(itmStreakSet.value, 'cobro seguido', 'cobros seguidos'), compactRecordLabels(itmStreakSet.items.map(item => formatStreakContextLabel(item.bestItmStreak)), 3), itmStreakNote, itmStreakSet.value)
+      : emptyRecord('bestItmStreak', 'Mejor racha de cobros', 'Todavía no hay rachas de cobro registradas.', itmStreakNote));
+
+    return {
+      roiMinGames: ROI_RECORD_MIN_GAMES,
+      items,
+      maxTotalInvested: legacyMaxTotalInvested,
+      maxGain: legacyMaxGain,
+      maxLoss: legacyMaxLoss,
+    };
+  }
+
+  function buildPdfRecordsSections(records){
+    const rec = records || {};
+    const items = Array.isArray(rec.items) ? rec.items : [];
+    if (!items.length){
+      return buildPdfSection({
+        title: 'Récords globales',
+        subtitle: 'Fotografía histórica al momento del cierre.',
+        body: `<div class="empty">Aún no hay histórico suficiente para calcular récords globales.</div>`,
+        subtle: true,
+      });
+    }
+
+    const columns = [
+      { label: 'Récord' },
+      { label: 'Jugador / jugadores' },
+      { label: 'Valor', className: 'num' },
+      { label: 'Fecha / sesión / contexto' },
+    ];
+
+    const rows = items.map(item => {
+      const contextBits = [`<div class="print-record-context">${escapeHtml(item.contextLabel || '—')}</div>`];
+      if (item.eligibleLabel) contextBits.push(`<div class="print-record-note">${escapeHtml(item.eligibleLabel)}</div>`);
+      return [
+        `<div class="print-record-title">${escapeHtml(item.label || '—')}</div>`,
+        `<div class="print-record-player${item.isEmpty ? ' is-empty' : ''}">${escapeHtml(item.playerLabel || '—')}</div>`,
+        `<div class="print-record-value${item.isEmpty ? ' is-empty' : ''}">${escapeHtml(item.valueLabel || '—')}</div>`,
+        contextBits.join(''),
+      ];
+    });
+
+    const chunks = chunkList(rows, 7);
+    return chunks.map((chunk, idx) => {
+      const noteHtml = idx === 0 ? `<div class="print-note">Empates exactos comparten récord. Para ROI global se exige mínimo ${escapeHtml(String(rec.roiMinGames || ROI_RECORD_MIN_GAMES))} sesiones e inversión acumulada mayor a 0.</div>` : '';
+      return buildPdfTableSection({
+        title: 'Récords globales',
+        subtitle: idx === 0 ? 'Récords históricos calculados al momento del cierre.' : `Continuación ${idx + 1} de ${chunks.length}`,
+        columns,
+        rows: chunk,
+        ariaLabel: 'Tabla de récords globales',
+        noteHtml,
+        breakBefore: idx > 0,
+      });
+    }).join('');
+  }
+
+  function buildPdfRankingSections(ranking){
+    const list = Array.isArray(ranking) ? ranking : [];
+    if (!list.length){
+      return buildPdfSection({
+        title: 'Ranking global',
+        subtitle: 'Fotografía histórica al momento del cierre.',
+        body: `<div class="empty">Aún no hay jugadores con historial válido para el ranking global.</div>`,
+        subtle: true,
+      });
+    }
+
+    const chunks = chunkList(list, 5);
+    return chunks.map((chunk, idx) => {
+      const cards = chunk.map(r => {
+        const net = numOrZero(r && r.netTotal);
+        const netClass = Math.abs(net) < 0.0001 ? 'ok' : (net > 0 ? 'pos' : 'neg');
+        const bestLabel = (r && r.best) ? `${formatMoney(r.best.net)} · ${formatSessionDateLabel(r.best.date, r.best.ts)}` : '—';
+        const worstLabel = (r && r.worst) ? `${formatMoney(r.worst.net)} · ${formatSessionDateLabel(r.worst.date, r.worst.ts)}` : '—';
+        const lastNet = (r && r.lastSession) ? numOrZero(r.lastSession.net) : 0;
+        const lastNetClass = Math.abs(lastNet) < 0.0001 ? 'ok' : (lastNet > 0 ? 'pos' : 'neg');
+        const lastLabel = (r && r.lastSession)
+          ? `${escapeHtml(formatSessionDateLabel(r.lastSession.date, r.lastSession.ts))} · <span class="net ${lastNetClass}">${escapeHtml(formatMoney(lastNet))}</span>`
+          : '—';
+        return `
+          <article class="print-rank-card pdf-avoid-break" data-rank="${escapeAttr(String(r.rankPos || ''))}">
+            <div class="print-rank-top">
+              <div class="print-rank-who">
+                <div class="print-rank-pos">#${escapeHtml(String(r.rankPos || '—'))}</div>
+                <div>
+                  <div class="print-rank-name">${escapeHtml(String(r.display || 'Sin nombre'))}</div>
+                  <div class="print-rank-sub">Sesiones ${escapeHtml(String(numOrZero(r.games)))} · Victorias ${escapeHtml(String(numOrZero(r.wins1)))} · Podios ${escapeHtml(String(numOrZero(r.podiums)))} </div>
+                </div>
+              </div>
+              <div class="print-rank-balance ${netClass}">
+                <div class="print-rank-balance-k">Neto global</div>
+                <div class="print-rank-balance-v">${escapeHtml(formatMoney(net))}</div>
+                <div class="print-rank-balance-s">ROI ${escapeHtml(formatPercent(numOrZero(r.roiGlobal)))}</div>
+              </div>
+            </div>
+            <div class="print-rank-grid">
+              <div class="print-rank-stat"><span class="k">Buy-ins totales</span><span class="v">${escapeHtml(formatMoney(numOrZero(r.buyInsTotal)))}</span></div>
+              <div class="print-rank-stat"><span class="k">Rebuys totales</span><span class="v">${escapeHtml(String(numOrZero(r.rebuysCount)))} · ${escapeHtml(formatMoney(numOrZero(r.rebuysTotal)))}</span></div>
+              <div class="print-rank-stat"><span class="k">Inversión total</span><span class="v">${escapeHtml(formatMoney(numOrZero(r.investedTotal)))}</span></div>
+              <div class="print-rank-stat"><span class="k">Cobros acumulados</span><span class="v">${escapeHtml(formatMoney(numOrZero(r.payoutsTotal)))}</span></div>
+              <div class="print-rank-stat"><span class="k">Promedio neto / sesión</span><span class="v">${escapeHtml(formatMoney(numOrZero(r.avgNet)))}</span></div>
+              <div class="print-rank-stat"><span class="k">Mejor sesión histórica</span><span class="v">${escapeHtml(bestLabel)}</span></div>
+              <div class="print-rank-stat"><span class="k">Peor sesión histórica</span><span class="v">${escapeHtml(worstLabel)}</span></div>
+              <div class="print-rank-stat"><span class="k">Última sesión jugada</span><span class="v">${lastLabel}</span></div>
+            </div>
+          </article>
+        `;
+      }).join('');
+
+      const note = idx === 0 ? `
+        <div class="print-note">${escapeHtml(PDF_GLOBAL_RANKING_CRITERION)} Si dos jugadores empatan exactamente en esos cuatro criterios, comparten puesto global.</div>
+      ` : '';
+
+      return buildPdfSection({
+        title: 'Ranking global',
+        subtitle: idx === 0 ? 'Fotografía histórica completa al momento del cierre.' : `Continuación ${idx + 1} de ${chunks.length}`,
+        body: `${note}<div class="print-rank-list">${cards}</div>`,
+        breakBefore: idx > 0,
+        avoidBreak: false,
+      });
+    }).join('');
+  }
+
+
+  function formatSignedMoney(n){
+    const x = numOrZero(n);
+    return `${x > 0.0001 ? '+' : ''}${formatMoney(x)}`;
+  }
+
+  function formatSignedPercent(n){
+    const x = numOrZero(n);
+    return `${x > 0.0001 ? '+' : ''}${formatPercent(x)}`;
+  }
+
+  function findAnalyticsPlayerRow(analytics, playerId){
+    if (!analytics || !stableEntityId(playerId)) return null;
+    const map = analytics.byPlayer instanceof Map ? analytics.byPlayer : null;
+    if (map && map.has(playerId)) return map.get(playerId) || null;
+    const ranking = Array.isArray(analytics.ranking) ? analytics.ranking : [];
+    return ranking.find(row => sameStableEntity(row, playerId)) || null;
+  }
+
+  function getImpactRankLabel(rankPos){
+    const n = Math.floor(numOrZero(rankPos));
+    return n >= 1 ? `#${n}` : 'Sin ranking previo';
+  }
+
+  function getImpactMoveMeta(beforeRank, afterRank){
+    const prev = Math.floor(numOrZero(beforeRank));
+    const next = Math.floor(numOrZero(afterRank));
+    if (!prev && next) return { tone: 'up', label: 'Debut histórico', detail: 'Entró al ranking histórico.' };
+    if (!next) return { tone: 'flat', label: 'Sin ranking', detail: 'No quedó con posición global.' };
+    if (!prev && !next) return { tone: 'flat', label: 'Sin ranking', detail: 'Sin cambio visible en ranking.' };
+    if (next < prev) return { tone: 'up', label: `Sube ${prev - next} puesto${(prev - next) === 1 ? '' : 's'}`, detail: `${getImpactRankLabel(prev)} → ${getImpactRankLabel(next)}` };
+    if (next > prev) return { tone: 'down', label: `Baja ${next - prev} puesto${(next - prev) === 1 ? '' : 's'}`, detail: `${getImpactRankLabel(prev)} → ${getImpactRankLabel(next)}` };
+    return { tone: 'flat', label: 'Se mantiene', detail: `${getImpactRankLabel(prev)} → ${getImpactRankLabel(next)}` };
+  }
+
+  function getRecordItemMap(records){
+    const items = Array.isArray(records && records.items) ? records.items : [];
+    const out = new Map();
+    items.forEach(item => {
+      if (!item || !item.key) return;
+      out.set(item.key, item);
+    });
+    return out;
+  }
+
+  function getNewRecordLabelsForPlayer(playerId, preRecords, postRecords){
+    const pid = stableEntityId(playerId);
+    if (!pid) return [];
+    const eps = 0.0001;
+    const preMap = getRecordItemMap(preRecords);
+    const postItems = Array.isArray(postRecords && postRecords.items) ? postRecords.items : [];
+    return uniqStrings(postItems.map(item => {
+      if (!item || item.isEmpty) return '';
+      const holderIds = uniqStrings(Array.isArray(item.holderIds) ? item.holderIds.map(stableEntityId).filter(Boolean) : []);
+      if (!holderIds.includes(pid)) return '';
+      const prev = preMap.get(item.key) || null;
+      const prevHolderIds = uniqStrings(Array.isArray(prev && prev.holderIds) ? prev.holderIds.map(stableEntityId).filter(Boolean) : []);
+      const wasHolder = prevHolderIds.includes(pid);
+      const prevValueRaw = (prev && prev.valueRaw != null) ? Number(prev.valueRaw) : null;
+      const nextValueRaw = (item.valueRaw != null) ? Number(item.valueRaw) : null;
+      const valueChanged = Number.isFinite(prevValueRaw) && Number.isFinite(nextValueRaw)
+        ? Math.abs(nextValueRaw - prevValueRaw) > eps
+        : String(prev && prev.valueLabel || '') !== String(item.valueLabel || '');
+      if (!wasHolder || valueChanged) return safeTrim(item.label);
+      return '';
+    }).filter(Boolean));
+  }
+
+  function getImpactMilestones(preRow, postRow, totalTrackedPlayers){
+    const labels = [];
+    const totalPlayers = Math.max(0, Math.floor(numOrZero(totalTrackedPlayers)));
+    const beforeRank = Math.floor(numOrZero(preRow && preRow.rankPos));
+    const afterRank = Math.floor(numOrZero(postRow && postRow.rankPos));
+    if (!preRow && postRow) labels.push('Debutó en el ranking histórico');
+    if (totalPlayers >= 3 && (!beforeRank || beforeRank > 3) && afterRank >= 1 && afterRank <= 3) labels.push('Entró por primera vez al Top 3 histórico');
+    else if (totalPlayers >= 5 && (!beforeRank || beforeRank > 5) && afterRank >= 1 && afterRank <= 5) labels.push('Entró por primera vez al Top 5 histórico');
+    return uniqStrings(labels);
+  }
+
+  function buildPlayerImpactNarrative(entry){
+    if (!entry) return 'Sin datos de impacto histórico.';
+    const bits = [];
+    if (entry.recordLabels && entry.recordLabels.length){
+      bits.push(`Rompió ${entry.recordLabels.length === 1 ? '1 récord global' : `${entry.recordLabels.length} récords globales`}.`);
+    }
+    if (entry.milestoneLabels && entry.milestoneLabels.length){
+      bits.push(entry.milestoneLabels[0] + '.');
+    }
+    if (!bits.length){
+      if (entry.moveMeta && entry.moveMeta.tone === 'up') bits.push('Mejoró su posición histórica sin abrir un récord nuevo.');
+      else if (entry.moveMeta && entry.moveMeta.tone === 'down') bits.push('La sesión actualizó sus acumulados, pero perdió terreno en el ranking.');
+      else bits.push('La sesión actualizó sus acumulados sin cambiar de forma fuerte su posición ni abrir récord nuevo.');
+    }
+    return bits.join(' ');
+  }
+
+  function buildSessionHistoricalImpactSnapshot(session){
+    const targetId = stableEntityId(session);
+    const ordered = sortSessionsForAnalytics(getClosedSessions());
+    const idx = ordered.findIndex(item => sameStableEntity(item, targetId));
+    if (idx < 0){
+      return {
+        version: HISTORICAL_IMPACT_VERSION,
+        sessionId: targetId || '',
+        sessionRef: pdfSessionReferenceLabel(session),
+        summary: {
+          participants: 0,
+          movedUp: 0,
+          movedDown: 0,
+          unchanged: 0,
+          debuts: 0,
+          recordBreakers: 0,
+          recordLabelsTotal: 0,
+        },
+        players: [],
+        computedAt: Date.now(),
+      };
+    }
+
+    const target = ordered[idx];
+    const preAnalytics = computeAnalyticsFromSessions(ordered.slice(0, idx));
+    const postAnalytics = computeAnalyticsFromSessions(ordered.slice(0, idx + 1));
+    const an = analyzeSession(target);
+    const players = an.rows.map(row => {
+      const preRow = findAnalyticsPlayerRow(preAnalytics, row.id);
+      const postRow = findAnalyticsPlayerRow(postAnalytics, row.id);
+      const beforeRank = Math.floor(numOrZero(preRow && preRow.rankPos));
+      const afterRank = Math.floor(numOrZero(postRow && postRow.rankPos));
+      const moveMeta = getImpactMoveMeta(beforeRank, afterRank);
+      const netBefore = numOrZero(preRow && preRow.netTotal);
+      const netAfter = numOrZero(postRow && postRow.netTotal);
+      const roiBefore = numOrZero(preRow && preRow.roiGlobal);
+      const roiAfter = numOrZero(postRow && postRow.roiGlobal);
+      const recordLabels = getNewRecordLabelsForPlayer(row.id, preAnalytics.records, postAnalytics.records);
+      const milestoneLabels = getImpactMilestones(preRow, postRow, postAnalytics && postAnalytics.ranking ? postAnalytics.ranking.length : 0);
+      const entry = {
+        id: row.id,
+        display: row.display,
+        sessionPos: row.pos,
+        sessionNet: row.net,
+        beforeRank,
+        afterRank,
+        beforeRankLabel: getImpactRankLabel(beforeRank),
+        afterRankLabel: getImpactRankLabel(afterRank),
+        moveMeta,
+        netBefore,
+        netAfter,
+        netDelta: netAfter - netBefore,
+        roiBefore,
+        roiAfter,
+        roiDelta: roiAfter - roiBefore,
+        recordLabels,
+        milestoneLabels,
+      };
+      entry.narrative = buildPlayerImpactNarrative(entry);
+      return entry;
+    }).sort((a, b) => {
+      const dp = numOrZero(a.sessionPos) - numOrZero(b.sessionPos);
+      if (dp) return dp;
+      const dr = numOrZero(a.afterRank) - numOrZero(b.afterRank);
+      if (dr) return dr;
+      return String(a.display || '').localeCompare(String(b.display || ''), 'es', { sensitivity: 'base' });
+    });
+
+    return {
+      version: HISTORICAL_IMPACT_VERSION,
+      sessionId: stableEntityId(target) || '',
+      sessionRef: pdfSessionReferenceLabel(target),
+      summary: {
+        participants: players.length,
+        movedUp: players.filter(item => item.moveMeta && item.moveMeta.tone === 'up' && item.beforeRank).length,
+        movedDown: players.filter(item => item.moveMeta && item.moveMeta.tone === 'down').length,
+        unchanged: players.filter(item => item.moveMeta && item.moveMeta.tone === 'flat').length,
+        debuts: players.filter(item => !item.beforeRank && item.afterRank).length,
+        recordBreakers: players.filter(item => item.recordLabels && item.recordLabels.length).length,
+        recordLabelsTotal: players.reduce((acc, item) => acc + (Array.isArray(item.recordLabels) ? item.recordLabels.length : 0), 0),
+      },
+      players,
+      computedAt: Date.now(),
+    };
+  }
+
+  function resolveSessionHistoricalImpact(session){
+    const stored = session && session.historicalImpact;
+    if (stored && numOrZero(stored.version) === HISTORICAL_IMPACT_VERSION && Array.isArray(stored.players)) return stored;
+    return buildSessionHistoricalImpactSnapshot(session);
+  }
+
+  function buildPdfImpactSections(impact){
+    const data = impact || {};
+    const players = Array.isArray(data.players) ? data.players : [];
+    if (!players.length){
+      return buildPdfSection({
+        title: 'Impacto de esta sesión',
+        subtitle: 'Comparación del histórico inmediatamente antes y después del cierre.',
+        body: `<div class="empty">Todavía no hay suficiente histórico para mostrar impacto comparativo de esta sesión.</div>`,
+        subtle: true,
+      });
+    }
+
+    const summary = data.summary || {};
+    const chunks = chunkList(players, 3);
+    return chunks.map((chunk, idx) => {
+      const summaryHtml = idx === 0 ? `
+        <div class="print-meta print-meta--compact">
+          ${buildPdfMetaLines([
+            { label: 'Participantes analizados', value: String(numOrZero(summary.participants)) },
+            { label: 'Subieron puestos', value: String(numOrZero(summary.movedUp)) },
+            { label: 'Bajaron puestos', value: String(numOrZero(summary.movedDown)) },
+            { label: 'Debuts históricos', value: String(numOrZero(summary.debuts)) },
+            { label: 'Jugadores con récord nuevo', value: String(numOrZero(summary.recordBreakers)) },
+            { label: 'Récords globales abiertos en esta sesión', value: String(numOrZero(summary.recordLabelsTotal)) },
+          ])}
+        </div>
+        <div class="print-note">Se compara el histórico justo antes de cerrar esta sesión contra el histórico que quedó inmediatamente después del cierre. Así se evita mezclar sesiones posteriores.</div>
+      ` : '';
+
+      const cards = chunk.map(item => {
+        const sessionNet = numOrZero(item.sessionNet);
+        const sessionNetClass = Math.abs(sessionNet) < 0.0001 ? 'ok' : (sessionNet > 0 ? 'pos' : 'neg');
+        const deltaNetClass = Math.abs(numOrZero(item.netDelta)) < 0.0001 ? 'ok' : (numOrZero(item.netDelta) > 0 ? 'pos' : 'neg');
+        const deltaRoiClass = Math.abs(numOrZero(item.roiDelta)) < 0.0001 ? 'ok' : (numOrZero(item.roiDelta) > 0 ? 'pos' : 'neg');
+        const tags = [];
+        (Array.isArray(item.recordLabels) ? item.recordLabels : []).forEach(label => tags.push({ tone: 'gold', text: `Récord: ${label}` }));
+        (Array.isArray(item.milestoneLabels) ? item.milestoneLabels : []).forEach(label => tags.push({ tone: 'blue', text: label }));
+        if (!tags.length) tags.push({ tone: 'muted', text: 'Sin hito extra en esta sesión' });
+        const tagsHtml = tags.map(tag => `<span class="print-impact-tag ${escapeAttr(tag.tone)}">${escapeHtml(tag.text)}</span>`).join('');
+        return `
+          <article class="print-impact-card pdf-avoid-break">
+            <div class="print-impact-top">
+              <div class="print-impact-who">
+                <div class="print-impact-name">${escapeHtml(String(item.display || 'Sin nombre'))}</div>
+                <div class="print-impact-sub">Sesión ${escapeHtml(String(numOrZero(item.sessionPos) || '—'))} · Resultado <span class="net ${sessionNetClass}">${escapeHtml(formatMoney(sessionNet))}</span></div>
+              </div>
+              <div class="print-impact-move ${escapeAttr(item.moveMeta && item.moveMeta.tone || 'flat')}">
+                <div class="print-impact-move-k">Ranking global</div>
+                <div class="print-impact-move-v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</div>
+                <div class="print-impact-move-s">${escapeHtml(item.moveMeta && item.moveMeta.label || 'Sin cambio')}</div>
+              </div>
+            </div>
+            <div class="print-impact-grid">
+              <div class="print-impact-stat"><span class="k">Puesto antes</span><span class="v">${escapeHtml(item.beforeRankLabel || '—')}</span></div>
+              <div class="print-impact-stat"><span class="k">Puesto después</span><span class="v">${escapeHtml(item.afterRankLabel || '—')}</span></div>
+              <div class="print-impact-stat"><span class="k">Neto global</span><span class="v">${escapeHtml(formatMoney(numOrZero(item.netBefore)))} → ${escapeHtml(formatMoney(numOrZero(item.netAfter)))}</span></div>
+              <div class="print-impact-stat"><span class="k">Cambio neto global</span><span class="v"><span class="delta ${deltaNetClass}">${escapeHtml(formatSignedMoney(numOrZero(item.netDelta)))}</span></span></div>
+              <div class="print-impact-stat"><span class="k">ROI global</span><span class="v">${escapeHtml(formatPercent(numOrZero(item.roiBefore)))} → ${escapeHtml(formatPercent(numOrZero(item.roiAfter)))}</span></div>
+              <div class="print-impact-stat"><span class="k">Cambio ROI global</span><span class="v"><span class="delta ${deltaRoiClass}">${escapeHtml(formatSignedPercent(numOrZero(item.roiDelta)))}</span></span></div>
+            </div>
+            <div class="print-impact-narrative">${escapeHtml(item.narrative || 'La sesión actualizó sus acumulados.')}</div>
+            <div class="print-impact-tags">${tagsHtml}</div>
+          </article>
+        `;
+      }).join('');
+
+      return buildPdfSection({
+        title: 'Impacto de esta sesión',
+        subtitle: idx === 0 ? 'Cómo cambió el histórico global al cerrar esta partida.' : `Continuación ${idx + 1} de ${chunks.length}`,
+        body: `${summaryHtml}<div class="print-impact-list">${cards}</div>`,
+        breakBefore: idx > 0,
+        avoidBreak: false,
+      });
+    }).join('');
+  }
+
+  function getPdfGlobalBaseData(session, analytics){
+    const s = session || {};
+    const currentAnalytics = analytics || computeAnalytics();
+    const closedSessions = getClosedSessions();
+    const registeredPlayers = getPlayers();
+    const trackedPlayersTotal = Math.max(numOrZero(currentAnalytics && currentAnalytics.ranking ? currentAnalytics.ranking.length : 0), numOrZero(registeredPlayers.length));
+    const exportedAt = Date.now();
+    const closedAt = numOrZero(s.closedAt || s.updatedAt || s.createdAt);
+    return {
+      exportedAt,
+      closedAt,
+      sessionRef: pdfSessionReferenceLabel(s),
+      totalClosedSessions: closedSessions.length,
+      totalTrackedPlayers: trackedPlayersTotal,
+      rankingCriterion: PDF_GLOBAL_RANKING_CRITERION,
+      roiMinGames: ROI_RECORD_MIN_GAMES,
+      rankingTieNote: 'Empates exactos comparten puesto en ranking y récords globales.',
+    };
+  }
+
   // ===== Etapa 2: Reporte PDF (imprimible, landscape) =====
   function renderPdf(){
     const q = getHashQuery();
@@ -2077,7 +2865,6 @@ function renderHistorialDetalle(){
 
     ensureSessionGame(s);
 
-    // Etapa 1: asegurar consecutivo PDF persistente (backfill suave)
     try{
       if (s.status === 'closed'){
         const changed = assignPdfSeqIfNeeded(s);
@@ -2097,24 +2884,20 @@ function renderHistorialDetalle(){
       try{ document.title = prevTitle; }catch(e){}
     }
 
-    // setear title antes de imprimir para sugerir nombre de archivo
     setPrintTitle();
     try{ window.addEventListener('afterprint', restoreTitle, { once: true }); }catch(e){}
     try{ window.addEventListener('focus', restoreTitle, { once: true }); }catch(e){}
 
     const an = analyzeSession(s);
+    const analytics = computeAnalytics();
     const sum = an.summary;
     const rows = an.rows.slice();
-
     const eps = 0.0001;
-
     const reportName = makeReportNameResolver(s);
 
-    // Ganadores: pos === 1 (empates permitidos)
     const winners = rows.filter(r => r.pos === 1);
     const winnersLabel = winners.length ? winners.map(r => reportName(r.id, r.display)).join(', ') : '—';
 
-    // Perdedores: chips === 0 si existen; si no, net mínimo (empates permitidos)
     const zeroChips = rows.filter(r => Math.abs(numOrZero(r.chips)) <= eps);
     let losers = [];
     if (zeroChips.length){
@@ -2125,31 +2908,82 @@ function renderHistorialDetalle(){
     }
     const losersLabel = losers.length ? losers.map(r => reportName(r.id, r.display)).join(', ') : '—';
 
-    // Rebuys totales
     const rebuysCount = rows.reduce((a, r) => a + Math.max(0, Math.floor(numOrZero(r.rebuysCount))), 0);
     const rebuysTotal = rows.reduce((a, r) => a + numOrZero(r.rebuysTotal), 0);
 
-    // Hora de cierre
     const ts = numOrZero(s.closedAt || s.updatedAt) || Date.now();
     const d = new Date(ts);
     const closeTime = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    const closeDateTime = formatDateTimeForPdf(ts);
 
-    // Table
-    const tbody = rows.map(r => {
+    const summaryMeta = buildPdfMetaLines([
+      { label: 'Fecha de juego', value: String(s.date || '—') },
+      { label: 'Monto total jugado', value: formatMoney(sum.totalInvested) },
+      { label: 'Jugador ganador', value: String(winnersLabel) },
+      { label: 'Perdedores', value: String(losersLabel) },
+      { label: 'Total fichas', value: formatMoney(sum.totalChipsValue) },
+      { label: 'Δ', value: formatMoney(sum.delta) },
+      { label: 'Cantidad de jugadores', value: String(sum.playersCount) },
+      { label: 'Rebuys totales', value: `${rebuysCount} · ${formatMoney(rebuysTotal)}` },
+      { label: 'Hora de cierre', value: String(closeTime) },
+    ]);
+
+    const playerColumns = [
+      { label: 'Jugador', className: 'who' },
+      { label: 'Jugado', className: 'num' },
+      { label: 'Ganado', className: 'num' },
+      { label: 'Perdido', className: 'num' },
+    ];
+
+    const playerRows = rows.map(r => {
       const name = reportName(r.id, r.display);
       const invested = numOrZero(r.invested);
       const net = numOrZero(r.net);
       const ganado = Math.max(0, net);
       const perdido = Math.max(0, -net);
-      return `
-        <tr>
-          <td class="who">${escapeHtml(String(name))}</td>
-          <td class="num">${escapeHtml(formatMoney(invested))}</td>
-          <td class="num">${escapeHtml(formatMoney(ganado))}</td>
-          <td class="num">${escapeHtml(formatMoney(perdido))}</td>
-        </tr>
-      `;
-    }).join('');
+      return [
+        escapeHtml(String(name)),
+        escapeHtml(formatMoney(invested)),
+        escapeHtml(formatMoney(ganado)),
+        escapeHtml(formatMoney(perdido)),
+      ];
+    });
+
+    const playerChunks = chunkList(playerRows, 18);
+    const globalBase = getPdfGlobalBaseData(s, analytics);
+    const impactData = resolveSessionHistoricalImpact(s);
+    const impactSections = buildPdfImpactSections(impactData);
+    const rankingSections = buildPdfRankingSections(analytics.ranking || []);
+    const recordSections = buildPdfRecordsSections(analytics.records || {});
+    const playerSections = playerChunks.length ? playerChunks.map((chunk, idx) => buildPdfTableSection({
+      title: 'Detalle por jugador',
+      subtitle: playerChunks.length > 1 ? `Bloque ${idx + 1} de ${playerChunks.length}` : 'Resumen individual de la sesión cerrada.',
+      columns: playerColumns,
+      rows: chunk,
+      ariaLabel: 'Tabla por jugador',
+      breakBefore: idx > 0,
+    })).join('') : buildPdfTableSection({
+      title: 'Detalle por jugador',
+      subtitle: 'Resumen individual de la sesión cerrada.',
+      columns: playerColumns,
+      rows: [],
+      ariaLabel: 'Tabla por jugador',
+    });
+
+    const globalBody = `
+      <div class="print-meta print-meta--compact">
+        ${buildPdfMetaLines([
+          { label: 'Exportado el', value: globalBase.exportedAt ? formatDateTimeForPdf(globalBase.exportedAt) : '—' },
+          { label: 'Sesión cerrada', value: globalBase.sessionRef },
+          { label: 'Cierre registrado', value: globalBase.closedAt ? formatDateTimeForPdf(globalBase.closedAt) : closeDateTime },
+          { label: 'Total histórico de sesiones cerradas', value: String(globalBase.totalClosedSessions) },
+          { label: 'Total histórico de jugadores con registro', value: String(globalBase.totalTrackedPlayers) },
+          { label: 'Criterio oficial del ranking global', value: globalBase.rankingCriterion },
+          { label: 'ROI para récords globales', value: `Mínimo ${globalBase.roiMinGames} sesiones e inversión acumulada mayor a 0` },
+          { label: 'Manejo de empates', value: globalBase.rankingTieNote },
+        ])}
+      </div>
+    `;
 
     const root = el(`
       <section class="print-screen" aria-label="Reporte PDF">
@@ -2165,32 +2999,22 @@ function renderHistorialDetalle(){
           </div>
         </div>
 
-        <div class="print-meta">
-          <div class="print-line"><span class="k">Fecha de juego</span><span class="v">${escapeHtml(String(s.date || ''))}</span></div>
-          <div class="print-line"><span class="k">Monto total jugado</span><span class="v">${escapeHtml(formatMoney(sum.totalInvested))}</span></div>
-          <div class="print-line"><span class="k">Jugador ganador</span><span class="v">${escapeHtml(String(winnersLabel))}</span></div>
-          <div class="print-line"><span class="k">Perdedores</span><span class="v">${escapeHtml(String(losersLabel))}</span></div>
-          <div class="print-line"><span class="k">Total fichas</span><span class="v">${escapeHtml(formatMoney(sum.totalChipsValue))}</span></div>
-          <div class="print-line"><span class="k">Δ</span><span class="v">${escapeHtml(formatMoney(sum.delta))}</span></div>
-          <div class="print-line"><span class="k">Cantidad de jugadores</span><span class="v">${escapeHtml(String(sum.playersCount))}</span></div>
-          <div class="print-line"><span class="k">Rebuys totales</span><span class="v">${escapeHtml(String(rebuysCount))} · ${escapeHtml(formatMoney(rebuysTotal))}</span></div>
-          <div class="print-line"><span class="k">Hora de cierre</span><span class="v">${escapeHtml(String(closeTime))}</span></div>
-        </div>
-
-        <div class="print-table-wrap" role="region" aria-label="Tabla por jugador">
-          <table class="print-table">
-            <thead>
-              <tr>
-                <th>Jugador</th>
-                <th class="num">Jugado</th>
-                <th class="num">Ganado</th>
-                <th class="num">Perdido</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${tbody}
-            </tbody>
-          </table>
+        <div class="print-content">
+          ${buildPdfSection({
+            title: 'Resumen de cierre',
+            subtitle: `Sesión ${pdfSessionReferenceLabel(s)}`,
+            body: `<div class="print-meta">${summaryMeta}</div>`,
+          })}
+          ${playerSections}
+          ${buildPdfSection({
+            title: 'Base global del histórico',
+            subtitle: 'Referencia histórica usada para el cierre, el ranking global y los récords.',
+            body: globalBody,
+            subtle: true,
+          })}
+          ${impactSections}
+          ${rankingSections}
+          ${recordSections}
         </div>
       </section>
     `);
@@ -2204,12 +3028,10 @@ function renderHistorialDetalle(){
     });
     document.getElementById('backBtn').addEventListener('click', () => {
       try{ restoreTitle(); }catch(e){}
-      // si el tab fue abierto por script, intentamos cerrarlo
       try{ if (window.opener) window.close(); }catch(e){}
       navigate('/historial');
     });
 
-    // opcional: intentar auto-print (si el browser lo permite)
     try{ setTimeout(() => { try{ setPrintTitle(); }catch(e){}; try{ window.print(); }catch(e){}; }, 350); }catch(e){}
   }
 
@@ -2219,7 +3041,7 @@ function renderHistorialDetalle(){
     const root = el(`
       <section class="screen" aria-label="Ranking">
         <h1 class="screen-title">Ranking global</h1>
-        <p class="screen-sub">Ordenado por neto acumulado. Sin fechas, sin excusas.</p>
+        <p class="screen-sub">Orden oficial: neto acumulado, ROI, victorias y sesiones jugadas.</p>
 
         <div class="panel" role="region" aria-label="Ranking">
           <div class="panel-head">
@@ -2241,14 +3063,15 @@ function renderHistorialDetalle(){
                 return `
                   <article class="rank-item" data-pid="${escapeAttr(r.id)}">
                     <div class="rank-left">
-                      <div class="rank-pos">#${idx+1}</div>
+                      <div class="rank-pos">#${escapeHtml(String(r.rankPos || (idx + 1)))}</div>
                       <div class="rank-who">
                         <div class="rank-name">${escapeHtml(r.display)}</div>
-                        <div class="rank-sub">Partidas: ${escapeHtml(String(r.games))} · Veces #1: ${escapeHtml(String(r.wins1))}</div>
+                        <div class="rank-sub">Partidas: ${escapeHtml(String(r.games))} · Veces #1: ${escapeHtml(String(r.wins1))} · Podios: ${escapeHtml(String(numOrZero(r.podiums)))}</div>
                       </div>
                     </div>
                     <div class="rank-right">
                       <div class="rank-net net ${netClass}">${escapeHtml(formatMoney(r.netTotal))}</div>
+                      <div class="rank-mini">ROI: <b>${escapeHtml(formatPercent(numOrZero(r.roiGlobal)))}</b> · Promedio: <b>${escapeHtml(formatMoney(numOrZero(r.avgNet)))}</b></div>
                       <div class="rank-mini">Mejor: <b>${escapeHtml(best)}</b> · ${escapeHtml(bestDate)}</div>
                       <div class="rank-mini">Peor: <b>${escapeHtml(worst)}</b> · ${escapeHtml(worstDate)}</div>
                     </div>
@@ -2611,7 +3434,7 @@ function renderConfiguracion(){
             </div>
           </div>
           <div class="rank-mini-list" id="rankMini"></div>
-          <div class="small-note">Ordenado por neto acumulado (todas las sesiones cerradas).</div>
+          <div class="small-note">Ordenado por neto acumulado, ROI, victorias y sesiones jugadas (solo sesiones cerradas).</div>
         </div>
 
         <div class="panel" role="region" aria-label="Exportación" style="margin-top:14px">
@@ -2676,7 +3499,7 @@ function renderConfiguracion(){
         const netClass = Math.abs(r.netTotal) < 0.0001 ? 'ok' : (r.netTotal > 0 ? 'pos' : 'neg');
         return `
           <div class="rank-mini-row">
-            <div class="rank-mini-pos">#${idx+1}</div>
+            <div class="rank-mini-pos">#${escapeHtml(String(r.rankPos || (idx + 1)))}</div>
             <div class="rank-mini-name">${escapeHtml(r.display)}</div>
             <div class="rank-mini-net net ${netClass}">${escapeHtml(formatMoney(r.netTotal))}</div>
           </div>
@@ -3480,6 +4303,11 @@ function renderConfiguracion(){
     if (store.draftSessionId === id) store.draftSessionId = '';
     saveSession(s);
 
+    try{
+      s.historicalImpact = buildSessionHistoricalImpactSnapshot(s);
+      saveSession(s);
+    }catch(e){}
+
     // keep stats fresh
     try{ recalcAndPersistStats(); }catch(e){}
   }
@@ -3610,32 +4438,36 @@ function renderConfiguracion(){
     return { rows, summary: calcSessionSummary(s) };
   }
 
-  function computeAnalytics(){
-    const closed = getClosedSessions();
-    const byPlayer = new Map();
+  function sortSessionsForAnalytics(list){
+    return (Array.isArray(list) ? list : [])
+      .filter(s => s && s.status === 'closed')
+      .map(s => ensureSessionRosterIntegrity(s))
+      .slice()
+      .sort((a, b) => {
+        const dt = getSessionSortTs(a) - getSessionSortTs(b);
+        if (Math.abs(dt) > 0.0001) return dt;
+        return String(stableEntityId(a)).localeCompare(String(stableEntityId(b)), 'es', { sensitivity: 'base' });
+      });
+  }
 
-    let maxTotalInvested = null; // { date, amount }
-    let maxGain = null; // { date, amount, player }
-    let maxLoss = null; // { date, amount, player }
+  function computeAnalyticsFromSessions(inputSessions){
+    const closed = sortSessionsForAnalytics(inputSessions);
+    const byPlayer = new Map();
+    const eps = 0.0001;
 
     const detailed = [];
     const summaryRows = [];
 
-    closed.slice().reverse().forEach(s => {
-      // reverse so export can naturally be chronological
+    closed.forEach(s => {
       const date = String(s.date || '');
+      const sessionTs = getSessionSortTs(s);
+      const sessionRef = pdfSessionReferenceLabel(s);
       const an = analyzeSession(s);
       const rows = an.rows;
       const sum = an.summary;
-
+      const podiumCut = Math.min(3, Math.max(0, rows.length));
       const reportName = makeReportNameResolver(s);
 
-      // session records
-      if (!maxTotalInvested || sum.totalInvested > maxTotalInvested.amount){
-        maxTotalInvested = { date, amount: sum.totalInvested };
-      }
-
-      // winners: position 1 (ties allowed)
       const winners = rows.filter(r => r.pos === 1);
       const winnerIds = winners.map(w => w.id);
       const winnerLabel = winners.length ? winners.map(w => reportName(w.id, w.display)).join(' & ') : '—';
@@ -3643,7 +4475,9 @@ function renderConfiguracion(){
 
       summaryRows.push({
         sessionId: s.id,
+        sessionRef,
         date,
+        ts: sessionTs,
         playersCount: rows.length,
         totalInvested: sum.totalInvested,
         totalChips: sum.totalChipsValue,
@@ -3654,13 +4488,16 @@ function renderConfiguracion(){
       });
 
       rows.forEach(r => {
-                const pname = reportName(r.id, r.display);
+        const pname = reportName(r.id, r.display);
         detailed.push({
           sessionId: s.id,
+          sessionRef,
           date,
+          ts: sessionTs,
           playerId: r.id,
           player: pname,
           buyIn: r.buyIn,
+          rebuysCount: r.rebuysCount,
           rebuysTotal: r.rebuysTotal,
           invested: r.invested,
           chips: r.chips,
@@ -3668,60 +4505,101 @@ function renderConfiguracion(){
           pos: r.pos,
         });
 
-        // global gain/loss
-                if (!maxGain || r.net > maxGain.amount){
-          maxGain = { date, amount: r.net, sessionId: s.id, playerId: r.id, player: pname };
-        }
-        if (!maxLoss || r.net < maxLoss.amount){
-          maxLoss = { date, amount: r.net, sessionId: s.id, playerId: r.id, player: pname };
-        }
-
-        // player aggregates
         const cur = byPlayer.get(r.id) || {
           id: r.id,
           display: pname,
           games: 0,
           wins1: 0,
+          podiums: 0,
+          buyInsCount: 0,
+          buyInsTotal: 0,
+          rebuysCount: 0,
+          rebuysTotal: 0,
+          itmCount: 0,
           netTotal: 0,
           investedTotal: 0,
           chipsTotal: 0,
-          best: null, // { net, date }
+          payoutsTotal: 0,
+          avgNet: 0,
+          roiGlobal: 0,
+          best: null,
           worst: null,
+          lastSession: null,
+          bestWinStreak: { length: 0, start: null, end: null },
+          bestItmStreak: { length: 0, start: null, end: null },
+          timeline: [],
         };
         cur.display = pname;
 
         cur.games += 1;
         if (r.pos === 1) cur.wins1 += 1;
+        if (podiumCut && r.pos <= podiumCut) cur.podiums += 1;
+        if (numOrZero(r.buyIn) > eps) cur.buyInsCount += 1;
+        cur.buyInsTotal += r.buyIn;
+        cur.rebuysCount += r.rebuysCount;
+        cur.rebuysTotal += r.rebuysTotal;
+        if (numOrZero(r.net) > eps) cur.itmCount += 1;
         cur.netTotal += r.net;
         cur.investedTotal += r.invested;
         cur.chipsTotal += r.chips;
+        cur.payoutsTotal += r.chips;
 
-        if (!cur.best || r.net > cur.best.net) cur.best = { net: r.net, date };
-        if (!cur.worst || r.net < cur.worst.net) cur.worst = { net: r.net, date };
+        if (!cur.best || r.net > cur.best.net) cur.best = { net: r.net, date, ts: sessionTs, sessionId: s.id, sessionRef };
+        if (!cur.worst || r.net < cur.worst.net) cur.worst = { net: r.net, date, ts: sessionTs, sessionId: s.id, sessionRef };
+        if (!cur.lastSession || sessionTs > numOrZero(cur.lastSession.ts)){
+          cur.lastSession = { date, ts: sessionTs, sessionId: s.id, sessionRef, net: r.net };
+        }
+        cur.timeline.push({
+          sessionId: s.id,
+          sessionRef,
+          date,
+          ts: sessionTs,
+          pos: r.pos,
+          net: r.net,
+          isWin: r.pos === 1,
+          isItm: numOrZero(r.net) > eps,
+        });
 
         byPlayer.set(r.id, cur);
       });
     });
 
-    const ranking = Array.from(byPlayer.values()).sort((a,b) => {
-      const dn = b.netTotal - a.netTotal;
-      if (Math.abs(dn) > 0.0001) return dn;
-      const dg = b.games - a.games;
-      if (dg) return dg;
-      return String(a.display).localeCompare(String(b.display), 'es', { sensitivity: 'base' });
+    const playersFlat = Array.from(byPlayer.values()).map(row => {
+      row.avgNet = row.games ? (row.netTotal / row.games) : 0;
+      row.roiGlobal = calcGlobalRoi(row.netTotal, row.investedTotal);
+      row.bestWinStreak = calcBestStreak(row.timeline, item => !!(item && item.isWin));
+      row.bestItmStreak = calcBestStreak(row.timeline, item => !!(item && item.isItm));
+      return row;
+    });
+
+    const ranking = playersFlat.slice().sort(compareGlobalRanking);
+
+    let currentRank = 0;
+    ranking.forEach((row, idx) => {
+      if (idx === 0){
+        currentRank = 1;
+        row.rankPos = 1;
+        return;
+      }
+      const prev = ranking[idx - 1];
+      if (sameGlobalRankingPosition(row, prev)) row.rankPos = prev.rankPos;
+      else {
+        currentRank = idx + 1;
+        row.rankPos = currentRank;
+      }
     });
 
     return {
       byPlayer,
       ranking,
-      records: {
-        maxTotalInvested: maxTotalInvested,
-        maxGain: maxGain,
-        maxLoss: maxLoss,
-      },
+      records: buildGlobalRecordItems({ players: playersFlat, detailed, summaryRows }),
       detailed,
       summaryRows,
     };
+  }
+
+  function computeAnalytics(){
+    return computeAnalyticsFromSessions(getClosedSessions());
   }
 
   function recalcAndPersistStats(){
@@ -3734,41 +4612,76 @@ function renderConfiguracion(){
         netTotal: st.netTotal,
         games: st.games,
         wins1: st.wins1,
+        podiums: st.podiums,
         best: st.best,
         worst: st.worst,
+        lastSession: st.lastSession,
+        buyInsCount: st.buyInsCount,
+        buyInsTotal: st.buyInsTotal,
+        rebuysCount: st.rebuysCount,
+        rebuysTotal: st.rebuysTotal,
+        itmCount: st.itmCount,
         investedTotal: st.investedTotal,
         chipsTotal: st.chipsTotal,
-        avgNet: (st.games ? (st.netTotal / st.games) : 0),
+        payoutsTotal: st.payoutsTotal,
+        roiGlobal: st.roiGlobal,
+        avgNet: st.avgNet,
+        bestWinStreak: cloneJson(st.bestWinStreak) || { length: 0, start: null, end: null },
+        bestItmStreak: cloneJson(st.bestItmStreak) || { length: 0, start: null, end: null },
       } : {
-        netTotal: 0, games: 0, wins1: 0, best: null, worst: null, investedTotal: 0, chipsTotal: 0, avgNet: 0,
+        netTotal: 0, games: 0, wins1: 0, podiums: 0, best: null, worst: null, lastSession: null, buyInsCount: 0, buyInsTotal: 0, rebuysCount: 0, rebuysTotal: 0, itmCount: 0, investedTotal: 0, chipsTotal: 0, payoutsTotal: 0, roiGlobal: 0, avgNet: 0, bestWinStreak: { length: 0, start: null, end: null }, bestItmStreak: { length: 0, start: null, end: null },
       };
     });
     store.players = players;
     store.statsGlobal = {
       updatedAt: Date.now(),
       records: cloneJson(a.records) || {},
-      ranking: a.ranking.map((row, idx) => ({
-        pos: idx + 1,
+      ranking: a.ranking.map(row => ({
+        pos: row.rankPos,
         id: row.id,
         display: row.display,
         games: row.games,
         wins1: row.wins1,
+        podiums: row.podiums,
+        buyInsCount: row.buyInsCount,
+        buyInsTotal: row.buyInsTotal,
+        rebuysCount: row.rebuysCount,
+        rebuysTotal: row.rebuysTotal,
+        itmCount: row.itmCount,
         netTotal: row.netTotal,
         investedTotal: row.investedTotal,
         chipsTotal: row.chipsTotal,
+        payoutsTotal: row.payoutsTotal,
+        avgNet: row.avgNet,
+        roiGlobal: row.roiGlobal,
         best: cloneJson(row.best) || null,
         worst: cloneJson(row.worst) || null,
+        lastSession: cloneJson(row.lastSession) || null,
+        bestWinStreak: cloneJson(row.bestWinStreak) || { length: 0, start: null, end: null },
+        bestItmStreak: cloneJson(row.bestItmStreak) || { length: 0, start: null, end: null },
       })),
       byPlayer: Array.from(a.byPlayer.values()).map(st => ({
         id: st.id,
         display: st.display,
         games: st.games,
         wins1: st.wins1,
+        podiums: st.podiums,
+        buyInsCount: st.buyInsCount,
+        buyInsTotal: st.buyInsTotal,
+        rebuysCount: st.rebuysCount,
+        rebuysTotal: st.rebuysTotal,
+        itmCount: st.itmCount,
         netTotal: st.netTotal,
         investedTotal: st.investedTotal,
         chipsTotal: st.chipsTotal,
+        payoutsTotal: st.payoutsTotal,
+        avgNet: st.avgNet,
+        roiGlobal: st.roiGlobal,
         best: cloneJson(st.best) || null,
         worst: cloneJson(st.worst) || null,
+        lastSession: cloneJson(st.lastSession) || null,
+        bestWinStreak: cloneJson(st.bestWinStreak) || { length: 0, start: null, end: null },
+        bestItmStreak: cloneJson(st.bestItmStreak) || { length: 0, start: null, end: null },
       })),
       summaryRows: cloneJson(a.summaryRows) || [],
     };
