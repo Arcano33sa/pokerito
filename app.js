@@ -9,10 +9,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.13';
-  const APP_BUILD = 'late-join-stage3';
-  const APP_CACHE_NAME = 'pokerito-v0.1.13-late-join-stage3';
-  const SW_URL = './sw.js?v=0.1.13-late-join-stage3';
+  const APP_VERSION = '0.1.14';
+  const APP_BUILD = 'date-default-today';
+  const APP_CACHE_NAME = 'pokerito-v0.1.14-date-default-today';
+  const SW_URL = './sw.js?v=0.1.14-date-default-today';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -1556,7 +1556,7 @@ function setPlayerActive(id, active){
     const activePlayers = getPlayers().filter(p => !!p.active);
     const lastIds = (store.ui && store.ui.juego && Array.isArray(store.ui.juego.lastPlayerIds)) ? store.ui.juego.lastPlayerIds : [];
     const selected = new Set(lastIds.filter(id => activePlayers.some(p => p.id === id)));
-    const defaultDate = (store.ui && store.ui.juego && typeof store.ui.juego.lastDate === 'string' && store.ui.juego.lastDate) ? store.ui.juego.lastDate : todayYMD();
+    const defaultDate = draft ? String(draft.date || todayYMD()) : todayYMD();
 
     const closedSessions = getClosedSessions();
 
@@ -1701,11 +1701,7 @@ function setPlayerActive(id, active){
     });
 
     $date.addEventListener('change', () => {
-      const v = ($date.value || '').trim();
-      if (!store.ui) store.ui = {};
-      if (!store.ui.juego) store.ui.juego = {};
-      store.ui.juego.lastDate = v;
-      saveStore();
+      if (!$date.value) $date.value = todayYMD();
     });
 
     $start.addEventListener('click', () => {
@@ -1721,7 +1717,6 @@ function setPlayerActive(id, active){
       if (!store.ui) store.ui = {};
       if (!store.ui.juego) store.ui.juego = {};
       store.ui.juego.lastPlayerIds = ids;
-      store.ui.juego.lastDate = date;
       saveStore();
       navigate('/juego/mesa');
     });
