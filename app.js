@@ -10,10 +10,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.18';
-  const APP_BUILD = 'json-import-picker-fix';
-  const APP_CACHE_NAME = 'pokerito-v0.1.18-json-import-picker-fix';
-  const SW_URL = './sw.js?v=0.1.18-json-import-picker-fix';
+  const APP_VERSION = '0.1.19';
+  const APP_BUILD = 'json-import-apply-fix';
+  const APP_CACHE_NAME = 'pokerito-v0.1.19-json-import-apply-fix';
+  const SW_URL = './sw.js?v=0.1.19-json-import-apply-fix';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -158,6 +158,18 @@ function normalizeYmdLoose(value){
   const m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (!m) return '';
   return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+}
+
+function formatDateTimeShort(ts){
+  const n = numOrZero(ts);
+  if (!n) return '—';
+  const d = new Date(n);
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth() + 1).padStart(2,'0');
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mi = String(d.getMinutes()).padStart(2,'0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
 }
 
 function normalizeChipEntity(chip, index, usedIds, ctx){
@@ -664,6 +676,67 @@ function inspectPortableBackupPayload(obj){
   return { ok: true, parsed };
 }
 
+function summarizeStoreCounts(baseStore){
+  const normalized = normalizeStoreObject(baseStore).store;
+  return {
+    chips: Array.isArray(normalized.chips) ? normalized.chips.length : 0,
+    players: Array.isArray(normalized.players) ? normalized.players.length : 0,
+    sessions: Array.isArray(normalized.sessions) ? normalized.sessions.length : 0,
+  };
+}
+
+function readImportSafetyBackupMeta(){
+  try{
+    const raw = localStorage.getItem(IMPORT_SAFETY_BACKUP_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!isPlainObject(parsed)) return null;
+    const counts = isPlainObject(parsed.counts) ? parsed.counts : summarizeStoreCounts(parsed.store);
+    return {
+      createdAt: numOrZero(parsed.createdAt),
+      counts: {
+        chips: numOrZero(counts && counts.chips),
+        players: numOrZero(counts && counts.players),
+        sessions: numOrZero(counts && counts.sessions),
+      },
+      fileName: safeTrim(parsed.fileName),
+    };
+  }catch(e){
+    return null;
+  }
+}
+
+function persistImportSafetyBackupSnapshot(baseStore, fileMeta){
+  try{
+    const createdAt = Date.now();
+    const normalized = normalizeStoreObject(baseStore || store).store;
+    const counts = summarizeStoreCounts(normalized);
+    const payload = {
+      createdAt,
+      fileName: safeTrim(fileMeta && fileMeta.name),
+      counts,
+      store: buildPortableSourceStore(normalized).store,
+    };
+    localStorage.setItem(IMPORT_SAFETY_BACKUP_KEY, JSON.stringify(payload));
+    return { ok: true, createdAt, counts, fileName: payload.fileName };
+  }catch(e){
+    return { ok: false, createdAt: 0, counts: summarizeStoreCounts(baseStore || store), fileName: safeTrim(fileMeta && fileMeta.name), error: safeTrim(e && e.message) };
+  }
+}
+
+function importSummaryHasChanges(summary){
+  const s = isPlainObject(summary) ? summary : {};
+  return [
+    'chipsAdded',
+    'chipsMerged',
+    'playersAdded',
+    'playersMerged',
+    'sessionsAdded',
+    'sessionsUpdated',
+    'duplicateSessionsCollapsed',
+  ].some((key) => numOrZero(s[key]) > 0);
+}
+
 function minPositiveTs(){
   const vals = Array.from(arguments).map(numOrZero).filter(v => Number.isFinite(v) && v > 0);
   return vals.length ? Math.min.apply(null, vals) : 0;
@@ -773,9 +846,19 @@ function sessionMergeSignature(session){
   return canonicalJson(sessionMergeComparable(session));
 }
 
-function buildImportSummaryText(summary){
+function buildImportSummaryText(summary, opts){
+  const options = isPlainObject(opts) ? opts : {};
+  const noChanges = !!options.noChanges;
+  const attemptedApply = !!options.attemptedApply;
+  const safetyBackup = isPlainObject(options.safetyBackup) ? options.safetyBackup : null;
+  const fileMeta = isPlainObject(options.fileMeta) ? options.fileMeta : null;
+  const errorsRejected = numOrZero(options.errorsRejected);
+  const themeApplied = !!options.themeApplied;
   const lines = [
-    'Importación completada.',
+    noChanges ? 'No se encontraron novedades para aplicar.' : (attemptedApply ? 'Importación completada.' : 'Vista previa preparada.'),
+  ];
+  if (fileMeta && safeTrim(fileMeta.name)) lines.push('', `Archivo: ${safeTrim(fileMeta.name)}`);
+  lines.push(
     '',
     `Jugadores agregados: ${numOrZero(summary && summary.playersAdded)}`,
     `Jugadores fusionados: ${numOrZero(summary && summary.playersMerged)}`,
@@ -784,31 +867,47 @@ function buildImportSummaryText(summary){
     `Sesiones conservadas localmente: ${numOrZero(summary && summary.sessionsKeptLocal)}`,
     `Duplicados omitidos: ${numOrZero(summary && summary.duplicatesSkipped)}`,
     `Colisiones reconciliadas: ${numOrZero(summary && summary.conflictsResolved)}`,
-    `Duplicados históricos colapsados: ${numOrZero(summary && summary.duplicateSessionsCollapsed)}`, 
-  ];
+    `Duplicados históricos colapsados: ${numOrZero(summary && summary.duplicateSessionsCollapsed)}`,
+  );
   if (numOrZero(summary && summary.chipsAdded) > 0 || numOrZero(summary && summary.chipsMerged) > 0){
     lines.push('', `Fichas agregadas: ${numOrZero(summary && summary.chipsAdded)}`, `Fichas fusionadas: ${numOrZero(summary && summary.chipsMerged)}`);
+  }
+  if (attemptedApply && safetyBackup && safetyBackup.ok && numOrZero(safetyBackup.createdAt) > 0){
+    lines.push('', `Respaldo local previo: ${formatDateTimeShort(safetyBackup.createdAt)} · ${numOrZero(safetyBackup.counts && safetyBackup.counts.sessions)} sesiones · ${numOrZero(safetyBackup.counts && safetyBackup.counts.players)} jugadores · ${numOrZero(safetyBackup.counts && safetyBackup.counts.chips)} fichas`);
+  }
+  if (attemptedApply && themeApplied){
+    lines.push('', 'También se aplicó la preferencia de tema incluida en el respaldo.');
+  }
+  if (errorsRejected > 0){
+    lines.push('', `Registros descartados por error: ${errorsRejected}`);
   }
   lines.push('', 'Regla final: misma sesión + mismo contenido = duplicado; misma sesión + contenido distinto = se resuelve por updatedAt, sin degradar una cerrada a draft, y luego se recalcula todo desde sesiones cerradas reconciliadas.');
   return lines.join('\n');
 }
 
-function buildImportPreflightText(parsed){
+function buildImportPreflightText(parsed, summary, opts){
   const normalized = normalizeStoreObject(parsed && parsed.store).store;
+  const preview = isPlainObject(summary) ? summary : {};
+  const options = isPlainObject(opts) ? opts : {};
+  const fileMeta = isPlainObject(options.fileMeta) ? options.fileMeta : null;
   const chipsN = Array.isArray(normalized.chips) ? normalized.chips.length : 0;
   const playersN = Array.isArray(normalized.players) ? normalized.players.length : 0;
   const sessionsN = Array.isArray(normalized.sessions) ? normalized.sessions.length : 0;
   const closedN = Array.isArray(normalized.sessions) ? normalized.sessions.filter(s => s && s.status === 'closed').length : 0;
-  return [
-    'Archivo validado.',
+  const lines = ['Archivo validado.'];
+  if (fileMeta && safeTrim(fileMeta.name)) lines.push('', `Archivo: ${safeTrim(fileMeta.name)}`);
+  lines.push(
     '',
     `Fichas en archivo: ${chipsN}`,
     `Jugadores en archivo: ${playersN}`,
     `Sesiones en archivo: ${sessionsN}`,
     `Sesiones cerradas: ${closedN}`,
     '',
+    `Vista previa · agregaría ${numOrZero(preview.playersAdded) + numOrZero(preview.sessionsAdded) + numOrZero(preview.chipsAdded)} registros nuevos y fusionaría ${numOrZero(preview.playersMerged) + numOrZero(preview.chipsMerged) + numOrZero(preview.sessionsUpdated)} existentes.`,
     'Se aplicará merge con reconciliación histórica y luego recálculo global completo desde datos fuente.',
-  ].join('\n');
+  );
+  if (options.themeWillChange) lines.push('La preferencia de tema del respaldo también cambiará en este dispositivo.');
+  return lines.join('\n');
 }
 
 function sessionHasMeaningfulActivity(session){
@@ -5064,7 +5163,7 @@ function renderConfiguracion(){
       return;
     }
 
-    const safetyBackup = persistImportSafetyBackupSnapshot(store);
+    const safetyBackup = persistImportSafetyBackupSnapshot(store, fileMeta);
     const previousStore = cloneJson(store) || store;
     const previousTheme = themePref;
     let themeApplied = false;
@@ -5102,7 +5201,8 @@ function renderConfiguracion(){
       themePref = previousTheme;
       try{ localStorage.setItem(THEME_KEY, themePref); }catch(err){}
       applyTheme();
-      await confirmDialog({ title: 'Importación cancelada', body: 'Ocurrió un error al aplicar el merge o al recalcular. La base local quedó intacta.', okText: 'OK', cancelText: 'Cerrar', danger: true });
+      const reason = safeTrim(e && e.message) || 'Error desconocido.';
+      await confirmDialog({ title: 'Importación cancelada', body: `Ocurrió un error al aplicar el merge o al recalcular.\n\nDetalle: ${reason}\n\nLa base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true });
       return;
     }
 
@@ -5798,6 +5898,9 @@ function renderConfiguracion(){
           }
           await importBackupJson({ text: txt, fileName: f.name, fileSize: f.size });
           renderImportStatusNote();
+        } catch (e) {
+          const reason = safeTrim(e && e.message) || 'Error desconocido.';
+          await confirmDialog({ title: 'Importación cancelada', body: `El flujo de importación se interrumpió antes de terminar.\n\nDetalle: ${reason}\n\nLa base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true });
         } finally {
           setImportUiBusy(false);
           resetImportSelection();
