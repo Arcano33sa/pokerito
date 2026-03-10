@@ -1609,3 +1609,73 @@ body.print-mode .app-main{
   .btn, .icon-btn{ display: none !important; }
 }
 
+
+
+.modal-subtitle{
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.toast-stack{
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 90;
+  display: grid;
+  gap: 10px;
+  width: min(360px, calc(100vw - 24px));
+  pointer-events: none;
+}
+
+.toast{
+  pointer-events: auto;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel-solid) 94%, transparent);
+  box-shadow: 0 18px 42px rgba(0,0,0,0.24);
+  padding: 12px 14px;
+  transform: translateY(10px);
+  opacity: 0;
+  transition: transform .18s ease, opacity .18s ease;
+}
+
+.toast.show{
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.toast-title{
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: -0.01em;
+}
+
+.toast-body{
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.toast.success{
+  border-color: color-mix(in oklab, #2cbf6e 46%, var(--border));
+}
+
+.toast.error{
+  border-color: color-mix(in oklab, #ff4d6d 52%, var(--border));
+}
+
+.toast.info{
+  border-color: color-mix(in oklab, var(--accent) 46%, var(--border));
+}
+
+@media (max-width: 720px){
+  .toast-stack{
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+  }
+}

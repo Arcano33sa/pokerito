@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.10 json-import-stage5 */
-const CACHE_NAME = 'pokerito-v0.1.10-json-import-stage5';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.13 late-join-stage3 */
+const CACHE_NAME = 'pokerito-v0.1.13-late-join-stage3';
 const CORE_ASSETS = [
   './',
   './index.html',

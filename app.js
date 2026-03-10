@@ -9,10 +9,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.10';
-  const APP_BUILD = 'json-import-stage5';
-  const APP_CACHE_NAME = 'pokerito-v0.1.10-json-import-stage5';
-  const SW_URL = './sw.js?v=0.1.10-json-import-stage5';
+  const APP_VERSION = '0.1.13';
+  const APP_BUILD = 'late-join-stage3';
+  const APP_CACHE_NAME = 'pokerito-v0.1.13-late-join-stage3';
+  const SW_URL = './sw.js?v=0.1.13-late-join-stage3';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -2295,11 +2295,12 @@ function renderHistorialDetalle(){
   }
 
   function renderMesaSession(session, { readOnly, backPath, badge }){
-    const s = session;
+    const s = ensureSessionRosterIntegrity(session);
     const players = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
     const chips = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : [];
     const chipValueMap = new Map(chips.map(c => [c.id, numOrZero(c.value)]));
     const pStateMap = new Map((s.game && Array.isArray(s.game.players) ? s.game.players : []).map(p => [p.id, p]));
+    const canMutateSession = !readOnly && safeTrim(s.status) !== 'closed';
 
     const sum = calcSessionSummary(s);
     const deltaClass = Math.abs(sum.delta) < 0.0001 ? 'ok' : (sum.delta > 0 ? 'pos' : 'neg');
@@ -2313,7 +2314,10 @@ function renderHistorialDetalle(){
           </div>
           <div class="row">
             <button class="btn" type="button" id="backBtn">Volver</button>
-            ${readOnly ? `<button class="btn primary" type="button" id="toInicioBtn">Inicio</button>` : `<button class="btn danger" type="button" id="closeBtn">Cerrar Partida</button>`}
+            ${canMutateSession ? `
+              <button class="btn" type="button" id="lateJoinBtn">Agregar jugador</button>
+              <button class="btn danger" type="button" id="closeBtn">Cerrar Partida</button>
+            ` : `<button class="btn primary" type="button" id="toInicioBtn">Inicio</button>`}
           </div>
         </div>
 
@@ -2350,7 +2354,7 @@ function renderHistorialDetalle(){
                     <div class="mesa-player-name">${escapeHtml((name || '').trim())}</div>
                   </div>
                   <div class="rebuy-box">
-                    <button class="btn small" type="button" data-act="rebuy" ${readOnly ? 'disabled' : ''}>+ Rebuy</button>
+                    <button class="btn small" type="button" data-act="rebuy" ${canMutateSession ? '' : 'disabled'}>+ Rebuy</button>
                     <div class="rebuy-meta"><span class="k">Rebuys</span><span class="v" data-role="rebuyCount">${escapeHtml(String((st.rebuys||[]).length))}</span></div>
                   </div>
                 </div>
@@ -2358,7 +2362,7 @@ function renderHistorialDetalle(){
                 <div class="buyin-block">
                   <label class="field compact">
                     <span>Buy-in</span>
-                    <input class="buyin" type="number" inputmode="numeric" pattern="[0-9]*" placeholder="0" value="${escapeAttr(String(numOrZero(st.buyIn) || ''))}" ${readOnly ? 'disabled' : ''} />
+                    <input class="buyin" type="number" inputmode="numeric" pattern="[0-9]*" placeholder="0" value="${escapeAttr(String(numOrZero(st.buyIn) || ''))}" ${canMutateSession ? '' : 'disabled'} />
                   </label>
                 </div>
 
@@ -2377,9 +2381,9 @@ function renderHistorialDetalle(){
                           </div>
                         </div>
                         <div class="counter">
-                          <button class="num-btn" type="button" data-act="dec" ${readOnly ? 'disabled' : ''}>−</button>
-                          <button class="num" type="button" data-act="edit" ${readOnly ? 'disabled' : ''}>${escapeHtml(String(count))}</button>
-                          <button class="num-btn" type="button" data-act="inc" ${readOnly ? 'disabled' : ''}>+</button>
+                          <button class="num-btn" type="button" data-act="dec" ${canMutateSession ? '' : 'disabled'}>−</button>
+                          <button class="num" type="button" data-act="edit" ${canMutateSession ? '' : 'disabled'}>${escapeHtml(String(count))}</button>
+                          <button class="num-btn" type="button" data-act="inc" ${canMutateSession ? '' : 'disabled'}>+</button>
                         </div>
                       </div>
                     `;
@@ -2408,7 +2412,7 @@ function renderHistorialDetalle(){
     const $close = document.getElementById('closeBtn');
     if ($close){
       $close.addEventListener('click', async () => {
-        if (readOnly) return;
+        if (!canMutateSession) return;
         const sum = calcSessionSummary(s);
         const ok = await confirmDialog({
           title: 'Cerrar Partida',
@@ -2423,11 +2427,56 @@ function renderHistorialDetalle(){
       });
     }
 
+    const $lateJoin = document.getElementById('lateJoinBtn');
+    let lateJoinBusy = false;
+    if ($lateJoin){
+      $lateJoin.addEventListener('click', async () => {
+        if (!canMutateSession || lateJoinBusy) return;
+        lateJoinBusy = true;
+        $lateJoin.disabled = true;
+
+        try{
+          const liveSession = getSessionById(s.id);
+          if (!liveSession || safeTrim(liveSession.status) === 'closed') {
+            showToast({ tone: 'error', title: 'No disponible', body: lateJoinReasonMessage(liveSession ? 'closed' : 'missing-session', { session: liveSession || s }) });
+            return;
+          }
+
+          const pid = await lateJoinPlayerDialog({ session: liveSession });
+          if (!pid) return;
+
+          const player = getPlayers().find(p => sameStableEntity(p, pid)) || null;
+          const playerName = playerDisplayName(player || { id: pid, name: '', nick: '' }) || 'Ese jugador';
+          const ok = await confirmDialog({
+            title: 'Confirmar agregado',
+            body: `Se agregará ${playerName} a la partida ${lateJoinSessionLabel(liveSession)}. Entrará con buy-in 0, sin rebuys y sin fichas cargadas.`,
+            okText: 'Agregar',
+            cancelText: 'Cancelar',
+          });
+          if (!ok) return;
+
+          const result = addExistingActivePlayerToDraftSession(liveSession.id, pid);
+          if (!result.ok) {
+            showToast({ tone: (result.reason === 'no-candidates' ? 'info' : 'error'), title: 'No se agregó', body: lateJoinReasonMessage(result.reason, { session: result.session || liveSession, playerName }) });
+            return;
+          }
+
+          const nextSession = result.session || getSessionById(liveSession.id) || liveSession;
+          showToast({ tone: 'success', title: 'Jugador agregado', body: `${playerName} ya forma parte de ${lateJoinSessionLabel(nextSession)}.` });
+          renderMesaSession(nextSession, { readOnly, backPath, badge });
+        } finally {
+          lateJoinBusy = false;
+          const freshBtn = document.getElementById('lateJoinBtn');
+          if (freshBtn) freshBtn.disabled = false;
+        }
+      });
+    }
+
     // buyin change
     root.querySelectorAll('input.buyin').forEach(inp => {
       inp.addEventListener('focus', () => { try{ inp.select(); }catch(e){} });
       inp.addEventListener('input', () => {
-        if (readOnly) return;
+        if (!canMutateSession) return;
         const card = inp.closest('.mesa-player');
         const pid = card ? card.getAttribute('data-pid') : '';
         if (!pid) return;
@@ -2446,7 +2495,7 @@ function renderHistorialDetalle(){
       $grid.addEventListener('click', async (ev) => {
         const btn = ev.target.closest('button[data-act]');
         if (!btn) return;
-        if (readOnly) return;
+        if (!canMutateSession) return;
         const act = btn.getAttribute('data-act');
         const card = btn.closest('.mesa-player');
         if (!card) return;
@@ -3145,6 +3194,194 @@ function renderConfiguracion(){
     });
   }
 
+  function snapshotPlayerEntry(player){
+    const p = player || {};
+    return {
+      id: stableEntityId(p),
+      name: p.name || '',
+      nick: p.nick || '',
+      display: playerDisplayName(p),
+    };
+  }
+
+  function ensureSessionRosterIntegrity(session){
+    const s = session;
+    if (!s || typeof s !== 'object') return s;
+
+    if (!Array.isArray(s.playerIds)) s.playerIds = [];
+    if (!Array.isArray(s.playersSnapshot)) s.playersSnapshot = [];
+    if (!s.game || typeof s.game !== 'object') s.game = {};
+    if (!Array.isArray(s.game.players)) s.game.players = [];
+
+    const masterMap = new Map(getPlayers().filter(p => stableEntityId(p)).map(p => [stableEntityId(p), p]));
+    const snapshotMap = new Map((Array.isArray(s.playersSnapshot) ? s.playersSnapshot : []).filter(p => stableEntityId(p)).map(p => [stableEntityId(p), p]));
+    const stateMap = new Map((Array.isArray(s.game.players) ? s.game.players : []).filter(p => stableEntityId(p)).map(p => [stableEntityId(p), p]));
+
+    const orderedIds = uniqStrings([
+      ...(Array.isArray(s.playersSnapshot) ? s.playersSnapshot.map(stableEntityId) : []),
+      ...(Array.isArray(s.playerIds) ? s.playerIds.map(stableEntityId) : []),
+      ...(Array.isArray(s.game.players) ? s.game.players.map(stableEntityId) : []),
+    ]);
+
+    s.playerIds = orderedIds.slice();
+    s.playersSnapshot = orderedIds.map(pid => {
+      const snap = snapshotMap.get(pid) || null;
+      const master = masterMap.get(pid) || null;
+      const ref = snap || master || { id: pid, name: '', nick: '' };
+      const name = safeTrim((snap && snap.name) || (master && master.name));
+      const nick = safeTrim((snap && snap.nick) || (master && master.nick));
+      const display = safeTrim((snap && snap.display) || playerDisplayName(master || ref));
+      return {
+        id: pid,
+        name,
+        nick,
+        display: display || pid,
+      };
+    });
+
+    const chipIds = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot.map(c => stableEntityId(c)).filter(Boolean) : [];
+    const nextPlayers = orderedIds.map(pid => {
+      const prev = stateMap.get(pid) || buildEmptySessionPlayerState(s, pid);
+      const counts = (prev && prev.counts && typeof prev.counts === 'object') ? prev.counts : {};
+      const nextCounts = {};
+      chipIds.forEach(cid => {
+        nextCounts[cid] = Math.max(0, Math.floor(numOrZero(counts[cid])));
+      });
+      return {
+        id: pid,
+        buyIn: numOrZero(prev && prev.buyIn),
+        rebuys: (Array.isArray(prev && prev.rebuys) ? prev.rebuys : []).map(numOrZero).filter(v => v > 0),
+        counts: nextCounts,
+      };
+    });
+
+    s.game.players = nextPlayers;
+    if (!s.status) s.status = 'draft';
+    if (s.status === 'closed' && !s.closedAt) s.closedAt = numOrZero(s.updatedAt) || Date.now();
+    return s;
+  }
+
+  function buildEmptySessionPlayerState(session, pid){
+    const chipIds = Array.isArray(session && session.chipsSnapshot) ? session.chipsSnapshot.map(c => stableEntityId(c)).filter(Boolean) : [];
+    const counts = {};
+    chipIds.forEach(cid => {
+      counts[cid] = 0;
+    });
+    return { id: pid, buyIn: 0, rebuys: [], counts };
+  }
+
+  function getLateJoinEligiblePlayers(session){
+    const s = ensureSessionRosterIntegrity(session || {});
+    if (safeTrim(s.status) === 'closed') return [];
+    const inSession = new Set(uniqStrings([
+      ...(Array.isArray(s.playerIds) ? s.playerIds.map(stableEntityId) : []),
+      ...(Array.isArray(s.playersSnapshot) ? s.playersSnapshot.map(stableEntityId) : []),
+      ...((s.game && Array.isArray(s.game.players)) ? s.game.players.map(stableEntityId) : []),
+    ]));
+    return getPlayers()
+      .filter(p => !!(p && p.active))
+      .filter(p => !!stableEntityId(p))
+      .filter(p => !inSession.has(stableEntityId(p)))
+      .slice()
+      .sort((a, b) => playerDisplayName(a).localeCompare(playerDisplayName(b), 'es', { sensitivity: 'base' }));
+  }
+
+  function lateJoinSessionLabel(session){
+    const s = session || {};
+    return safeTrim(s.date) || 'sesión activa';
+  }
+
+  function lateJoinReasonMessage(reason, ctx){
+    const sessionLabel = lateJoinSessionLabel(ctx && ctx.session);
+    const playerName = safeTrim(ctx && ctx.playerName);
+    switch (safeTrim(reason)) {
+      case 'duplicate':
+        return playerName ? `${playerName} ya está dentro de ${sessionLabel}.` : 'Ese jugador ya está dentro de la partida.';
+      case 'not-eligible':
+        return playerName ? `${playerName} ya no está disponible para agregar. Solo se permiten jugadores activos que aún no estén en la partida.` : 'Solo puedes agregar jugadores activos que aún no estén en la partida.';
+      case 'no-candidates':
+        return `No quedan jugadores activos elegibles para agregar en ${sessionLabel}.`;
+      case 'closed':
+        return `La partida ${sessionLabel} ya está cerrada.`;
+      case 'missing-session':
+        return 'No hay una partida abierta válida para completar esta acción.';
+      case 'invalid':
+        return 'La selección no es válida. Intenta de nuevo.';
+      case 'clone-failed':
+      case 'mutation-failed':
+      case 'save-failed':
+        return 'No se pudo guardar el cambio. La partida quedó intacta.';
+      default:
+        return 'No se pudo agregar el jugador. La partida quedó intacta.';
+    }
+  }
+
+  function commitSessionMutation(sessionId, mutateDraft){
+    const sid = stableEntityId(sessionId);
+    if (!sid) return { ok: false, reason: 'missing-session' };
+
+    const liveSession = getSessionById(sid);
+    if (!liveSession) return { ok: false, reason: 'missing-session' };
+    if (safeTrim(liveSession.status) === 'closed') return { ok: false, reason: 'closed', session: liveSession };
+
+    const draft = cloneJson(liveSession);
+    if (!draft || typeof draft !== 'object') return { ok: false, reason: 'clone-failed', session: liveSession };
+    ensureSessionRosterIntegrity(draft);
+
+    let mutation = null;
+    try{
+      mutation = (typeof mutateDraft === 'function') ? (mutateDraft(draft) || {}) : {};
+    }catch(error){
+      return { ok: false, reason: 'mutation-failed', error, session: liveSession };
+    }
+
+    if (mutation && mutation.ok === false) {
+      return Object.assign({}, mutation, { session: liveSession });
+    }
+
+    try{
+      saveSession(draft);
+    }catch(error){
+      return { ok: false, reason: 'save-failed', error, session: liveSession };
+    }
+
+    const committed = getSessionById(sid) || draft;
+    return Object.assign({}, mutation || {}, { ok: true, session: committed });
+  }
+
+  function addExistingActivePlayerToDraftSession(session, playerId){
+    const sessionId = stableEntityId(session);
+    const pid = stableEntityId(playerId);
+    if (!sessionId || !pid) return { ok: false, reason: 'invalid' };
+
+    return commitSessionMutation(sessionId, (draft) => {
+      ensureSessionGame(draft);
+      const eligible = getLateJoinEligiblePlayers(draft);
+      if (!eligible.length) return { ok: false, reason: 'no-candidates' };
+
+      const player = getPlayers().find(p => sameStableEntity(p, pid)) || null;
+      if (!player || !player.active) return { ok: false, reason: 'not-eligible' };
+      if (!eligible.some(p => sameStableEntity(p, pid))) {
+        const alreadyInSession = (Array.isArray(draft.playerIds) ? draft.playerIds : []).some(id => sameStableEntity(id, pid))
+          || (Array.isArray(draft.playersSnapshot) ? draft.playersSnapshot : []).some(p => sameStableEntity(p, pid))
+          || ((draft.game && Array.isArray(draft.game.players)) ? draft.game.players.some(p => sameStableEntity(p, pid)) : false);
+        return { ok: false, reason: alreadyInSession ? 'duplicate' : 'not-eligible' };
+      }
+
+      if (!Array.isArray(draft.playerIds)) draft.playerIds = [];
+      if (!Array.isArray(draft.playersSnapshot)) draft.playersSnapshot = [];
+      if (!draft.game || typeof draft.game !== 'object') draft.game = {};
+      if (!Array.isArray(draft.game.players)) draft.game.players = [];
+
+      draft.playerIds.push(pid);
+      draft.playersSnapshot.push(snapshotPlayerEntry(player));
+      draft.game.players.push(buildEmptySessionPlayerState(draft, pid));
+      touchSession(draft);
+      ensureSessionGame(draft);
+      return { ok: true, player: snapshotPlayerEntry(player) };
+    });
+  }
+
   function createDraftSession({ date, playerIds }){
     const now = Date.now();
     const chipsSnapshot = snapshotActiveChips();
@@ -3161,7 +3398,7 @@ function renderConfiguracion(){
       chipsSnapshot,
       game: { players: [] },
     };
-    ensureSessionGame(s);
+    ensureSessionRosterIntegrity(s);
     return s;
   }
 
@@ -3172,6 +3409,7 @@ function renderConfiguracion(){
 
   function saveSession(s){
     if (!s || !stableEntityId(s)) return;
+    ensureSessionRosterIntegrity(s);
     if (!Array.isArray(store.sessions)) store.sessions = [];
     const idx = findIndexByStableId(store.sessions, s);
     if (idx >= 0) store.sessions[idx] = s;
@@ -3181,13 +3419,15 @@ function renderConfiguracion(){
 
   function getSessionById(id){
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
-    return sessions.find(x => sameStableEntity(x, id)) || null;
+    const found = sessions.find(x => sameStableEntity(x, id)) || null;
+    return found ? ensureSessionRosterIntegrity(found) : null;
   }
 
   function getClosedSessions(){
     const sessions = Array.isArray(store.sessions) ? store.sessions : [];
     return sessions
       .filter(s => s && s.status === 'closed')
+      .map(s => ensureSessionRosterIntegrity(s))
       .slice()
       .sort((a,b) => numOrZero(b.closedAt || b.updatedAt) - numOrZero(a.closedAt || a.updatedAt));
   }
@@ -3234,6 +3474,7 @@ function renderConfiguracion(){
     if (!s) return;
     if (s.status === 'closed') return;
 
+    ensureSessionRosterIntegrity(s);
     s.status = 'closed';
     s.closedAt = Date.now();
     touchSession(s);
@@ -3249,7 +3490,7 @@ function renderConfiguracion(){
   }
 
   function ensurePlayerState(session, pid){
-    ensureSessionGame(session);
+    ensureSessionRosterIntegrity(session);
     const arr = session.game.players;
     let st = arr.find(x => x && x.id === pid);
     if (!st){
@@ -3304,7 +3545,7 @@ function renderConfiguracion(){
   }
 
   function calcSessionSummary(s){
-    ensureSessionGame(s);
+    ensureSessionRosterIntegrity(s);
     const players = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
     const chips = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : [];
     const chipValueMap = new Map(chips.map(c => [c.id, numOrZero(c.value)]));
@@ -3324,7 +3565,7 @@ function renderConfiguracion(){
 
   // ===== Etapa 7: Analytics (ranking/stats/records/excel) =====
   function analyzeSession(s){
-    ensureSessionGame(s);
+    ensureSessionRosterIntegrity(s);
     const playersSnap = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
     const chipsSnap = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : [];
     const chipValueMap = new Map(chipsSnap.map(c => [c.id, numOrZero(c.value)]));
@@ -4084,7 +4325,7 @@ function renderConfiguracion(){
         saveStore();
       }
     }
-    return s;
+    return s ? ensureSessionRosterIntegrity(s) : null;
   }
 
   function discardDraftSession(){
@@ -4094,6 +4335,46 @@ function renderConfiguracion(){
     store.sessions = sessions.filter(s => !(s && s.id === id));
     store.draftSessionId = '';
     saveStore();
+  }
+
+  function showToast({ title, body, tone, duration }){
+    const safeTone = ['success','error','info'].includes(tone) ? tone : 'info';
+    const ttl = Math.max(1800, Math.min(4800, Math.floor(numOrZero(duration) || 2400)));
+    let host = document.getElementById('toastStack');
+    if (!host){
+      host = el(`<div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="false"></div>`);
+      document.body.appendChild(host);
+    }
+
+    const item = el(`
+      <div class="toast ${safeTone}" role="status">
+        ${title ? `<div class="toast-title">${escapeHtml(title)}</div>` : ''}
+        ${body ? `<div class="toast-body">${escapeHtml(body)}</div>` : ''}
+      </div>
+    `);
+
+    let closed = false;
+    let hideTimer = 0;
+    function close(){
+      if (closed) return;
+      closed = true;
+      item.classList.remove('show');
+      setTimeout(() => {
+        try{ item.remove(); }catch(e){}
+        if (host && !host.children.length) {
+          try{ host.remove(); }catch(e){}
+        }
+      }, 180);
+    }
+
+    item.addEventListener('click', close);
+    host.appendChild(item);
+    setTimeout(() => item.classList.add('show'), 10);
+    hideTimer = setTimeout(close, ttl);
+    return () => {
+      clearTimeout(hideTimer);
+      close();
+    };
   }
 
   function confirmDialog({ title, body, okText, cancelText, danger }){
@@ -4203,6 +4484,73 @@ function renderConfiguracion(){
     });
   }
 
+
+
+  function lateJoinPlayerDialog({ session }){
+    return new Promise(resolve => {
+      if (!session || safeTrim(session.status) === 'closed') {
+        resolve(null);
+        return;
+      }
+      const eligible = getLateJoinEligiblePlayers(session);
+      const sessionLabel = lateJoinSessionLabel(session);
+      const overlay = el(`
+        <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Agregar jugador tardío">
+          <div class="modal">
+            <div class="modal-head">
+              <div>
+                <div class="modal-title">Agregar jugador</div>
+                <div class="modal-subtitle">Partida ${escapeHtml(sessionLabel)} · ${escapeHtml(String(numOrZero((session.playersSnapshot || []).length)))} jugadores actuales</div>
+              </div>
+              <button class="icon-btn" type="button" data-act="close" aria-label="Cerrar">×</button>
+            </div>
+            <div class="modal-body">
+              <div class="small-note" style="margin-top:0">Solo aparecen jugadores activos que ya existen y aún no están dentro de esta partida.</div>
+              ${eligible.length ? `
+                <div class="pick-grid late-join-grid" style="margin-top:12px">
+                  ${eligible.map(p => `
+                    <button class="pick late-join-pick" type="button" data-act="pick" data-id="${escapeAttr(String(stableEntityId(p)))}">
+                      <div class="pick-nick">${escapeHtml(playerDisplayName(p))}</div>
+                      <div class="pick-name">${escapeHtml(String(p.name || '').trim())}</div>
+                    </button>
+                  `).join('')}
+                </div>
+              ` : `<div class="empty" style="margin-top:12px">No hay jugadores activos elegibles para agregar a esta partida.</div>`}
+            </div>
+            <div class="modal-foot">
+              <button class="btn" type="button" data-act="cancel">${eligible.length ? 'Cancelar' : 'Entendido'}</button>
+            </div>
+          </div>
+        </div>
+      `);
+
+      let closed = false;
+      function close(val){
+        if (closed) return;
+        closed = true;
+        overlay.remove();
+        try{ document.body.style.overflow = ''; }catch(e){}
+        resolve(val || null);
+      }
+
+      overlay.addEventListener('click', (ev) => {
+        if (ev.target === overlay) close(null);
+      });
+      overlay.querySelectorAll('[data-act="close"],[data-act="cancel"]').forEach(b => b.addEventListener('click', () => close(null)));
+      overlay.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-act="pick"]');
+        if (!btn || btn.disabled) return;
+        overlay.querySelectorAll('button[data-act="pick"]').forEach(node => { node.disabled = true; });
+        close((btn.getAttribute('data-id') || '').trim());
+      });
+      overlay.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') { ev.preventDefault(); close(null); }
+      });
+
+      document.body.appendChild(overlay);
+      try{ document.body.style.overflow = 'hidden'; }catch(e){}
+    });
+  }
 
 
   function renderSoporte(){
