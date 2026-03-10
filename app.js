@@ -1,6 +1,7 @@
 /* Pokerito — limpieza final y caché saneada */
 (function(){
   const $app = document.getElementById('app');
+  const $printRoot = document.getElementById('printRoot');
   const $headerRight = document.getElementById('headerRight');
 
   // Theme (Auto/Light/Dark) — persisted
@@ -9,10 +10,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.16';
-  const APP_BUILD = 'impacto-historico-pdf';
-  const APP_CACHE_NAME = 'pokerito-v0.1.16-impacto-historico-pdf';
-  const SW_URL = './sw.js?v=0.1.16-impacto-historico-pdf';
+  const APP_VERSION = '0.1.17';
+  const APP_BUILD = 'pdf-impresion-estable';
+  const APP_CACHE_NAME = 'pokerito-v0.1.17-pdf-impresion-estable';
+  const SW_URL = './sw.js?v=0.1.17-pdf-impresion-estable';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -1420,15 +1421,155 @@ function setPlayerActive(id, active){
   }
 
 
+  let pdfRenderSerial = 0;
+
+  function invalidatePrintRender(){
+    pdfRenderSerial += 1;
+  }
+
+  function resetPrintSurface(){
+    if (!$printRoot) return;
+    try{ $printRoot.innerHTML = ''; }catch(e){}
+  }
+
+  function createAbortError(){
+    const err = new Error('PRINT_PREP_ABORTED');
+    err.name = 'AbortError';
+    return err;
+  }
+
+  function isAbortError(err){
+    return !!(err && (err.name === 'AbortError' || err.message === 'PRINT_PREP_ABORTED'));
+  }
+
+  function throwIfAborted(signal){
+    if (signal && signal.aborted) throw createAbortError();
+  }
+
+  function waitMs(ms, signal){
+    return new Promise((resolve, reject) => {
+      throwIfAborted(signal);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve();
+      }, Math.max(0, Math.floor(numOrZero(ms))));
+      function onAbort(){
+        cleanup();
+        reject(createAbortError());
+      }
+      function cleanup(){
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+      }
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  function nextPaint(signal){
+    return new Promise((resolve, reject) => {
+      throwIfAborted(signal);
+      const done = () => {
+        try{ throwIfAborted(signal); resolve(); }
+        catch(err){ reject(err); }
+      };
+      try{
+        requestAnimationFrame(() => requestAnimationFrame(done));
+      }catch(e){
+        setTimeout(done, 34);
+      }
+    });
+  }
+
+  async function waitForDocumentFonts(signal){
+    throwIfAborted(signal);
+    try{
+      if (document.fonts && document.fonts.ready){
+        await Promise.race([document.fonts.ready, waitMs(1200, signal)]);
+      }
+    }catch(e){}
+  }
+
+  async function waitForPrintImages(root, signal){
+    throwIfAborted(signal);
+    const imgs = Array.from((root && root.querySelectorAll) ? root.querySelectorAll('img') : []);
+    if (!imgs.length) return;
+    await Promise.all(imgs.map(img => {
+      if (img.complete) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve();
+        }, 1500);
+        const cleanup = () => {
+          clearTimeout(timer);
+          img.removeEventListener('load', onDone);
+          img.removeEventListener('error', onDone);
+          if (signal) signal.removeEventListener('abort', onAbort);
+        };
+        const onDone = () => { cleanup(); resolve(); };
+        const onAbort = () => { cleanup(); reject(createAbortError()); };
+        img.addEventListener('load', onDone, { once: true });
+        img.addEventListener('error', onDone, { once: true });
+        if (signal) signal.addEventListener('abort', onAbort, { once: true });
+      });
+    }));
+  }
+
+  async function waitForPrintLayout(root, signal){
+    throwIfAborted(signal);
+    const target = root || $printRoot;
+    if (!target) return;
+    let stablePasses = 0;
+    let prevHeight = -1;
+    let prevSections = -1;
+    const startedAt = Date.now();
+    while ((Date.now() - startedAt) < 2600){
+      await nextPaint(signal);
+      throwIfAborted(signal);
+      const height = Math.max(Math.round(numOrZero(target.scrollHeight)), Math.round(numOrZero(target.getBoundingClientRect && target.getBoundingClientRect().height)));
+      const sections = target.querySelectorAll ? target.querySelectorAll('.print-section, .print-rank-card, .print-impact-card, .print-table tbody tr').length : 0;
+      if (height > 0 && sections > 0 && height == prevHeight && sections == prevSections) stablePasses += 1;
+      else stablePasses = 0;
+      prevHeight = height;
+      prevSections = sections;
+      if (stablePasses >= 2) break;
+    }
+    await nextPaint(signal);
+  }
+
+  async function waitForPrintReady(root, signal){
+    throwIfAborted(signal);
+    await nextPaint(signal);
+    await waitForDocumentFonts(signal);
+    await waitForPrintImages(root, signal);
+    await waitForPrintLayout(root, signal);
+    await nextPaint(signal);
+  }
+
+  function setPrintStatus(root, message, tone){
+    const node = root && root.querySelector ? root.querySelector('#printStatus') : null;
+    if (!node) return;
+    node.textContent = String(message || '');
+    node.dataset.tone = safeTrim(tone) || 'muted';
+  }
+
   function onRoute(){
     const path = getRoute();
     const isPrint = (path === '/pdf');
     try{ document.body.classList.toggle('print-mode', isPrint); }catch(e){}
+    if (!isPrint){
+      invalidatePrintRender();
+      resetPrintSurface();
+    }
     const fn = routes[path] || routes['/inicio'];
     fn();
     updateHeaderControls(path);
-    // keep header fixed and scroll main to top per navigation
-    try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
+    if (!isPrint){
+      // keep header fixed and scroll main to top per navigation
+      try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
+    } else if ($printRoot){
+      try{ window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }catch(e){ try{ window.scrollTo(0,0); }catch(_e){} }
+    }
   }
 
   function el(html){
@@ -2857,8 +2998,10 @@ function renderHistorialDetalle(){
           <div class="empty">Sesión no encontrada.</div>
         </section>
       `);
+      resetPrintSurface();
       $app.innerHTML = '';
-      $app.appendChild(root);
+      if ($printRoot) $printRoot.appendChild(root);
+      else $app.appendChild(root);
       document.getElementById('backBtn').addEventListener('click', () => navigate('/historial'));
       return;
     }
@@ -2876,12 +3019,22 @@ function renderHistorialDetalle(){
     const ddmmyyyy = sessionDDMMYYYY(s);
     const seqNum = (Number.isFinite(s.pdfSeq) && Math.floor(s.pdfSeq) >= 1) ? Math.floor(s.pdfSeq) : 0;
     const printTitle = `${pad3(seqNum)}- Pokerito ${ddmmyyyy}`;
+    const renderSerial = ++pdfRenderSerial;
+    const printAbort = (typeof AbortController !== 'undefined') ? new AbortController() : { signal: { aborted: false }, abort(){ this.signal.aborted = true; } };
+
+    function isStalePrintRender(){
+      return renderSerial !== pdfRenderSerial || !!(printAbort.signal && printAbort.signal.aborted);
+    }
 
     function setPrintTitle(){
       try{ document.title = printTitle; }catch(e){}
     }
     function restoreTitle(){
       try{ document.title = prevTitle; }catch(e){}
+    }
+
+    function cancelPrintPrep(){
+      try{ printAbort.abort(); }catch(e){}
     }
 
     setPrintTitle();
@@ -2988,8 +3141,11 @@ function renderHistorialDetalle(){
     const root = el(`
       <section class="print-screen" aria-label="Reporte PDF">
         <div class="print-actions">
-          <button class="btn primary" type="button" id="printBtn">Imprimir / Guardar PDF</button>
-          <button class="btn" type="button" id="backBtn">Volver</button>
+          <div class="print-status" id="printStatus" role="status" aria-live="polite" data-tone="muted">Preparando documento…</div>
+          <div class="print-action-buttons">
+            <button class="btn primary" type="button" id="printBtn" disabled>Imprimir / Guardar PDF</button>
+            <button class="btn" type="button" id="backBtn">Volver</button>
+          </div>
         </div>
 
         <div class="print-head">
@@ -3019,20 +3175,66 @@ function renderHistorialDetalle(){
       </section>
     `);
 
+    resetPrintSurface();
     $app.innerHTML = '';
-    $app.appendChild(root);
+    if ($printRoot) $printRoot.appendChild(root);
+    else $app.appendChild(root);
 
-    document.getElementById('printBtn').addEventListener('click', () => {
-      try{ setPrintTitle(); }catch(e){}
-      try{ window.print(); }catch(e){}
-    });
-    document.getElementById('backBtn').addEventListener('click', () => {
-      try{ restoreTitle(); }catch(e){}
-      try{ if (window.opener) window.close(); }catch(e){}
-      navigate('/historial');
-    });
+    const printBtn = document.getElementById('printBtn');
+    const backBtn = document.getElementById('backBtn');
+    let printInFlight = null;
+    let lastPrintAt = 0;
 
-    try{ setTimeout(() => { try{ setPrintTitle(); }catch(e){}; try{ window.print(); }catch(e){}; }, 350); }catch(e){}
+    async function runPrintFlow(origin){
+      if (printInFlight) return printInFlight;
+      printInFlight = (async () => {
+        try{
+          setPrintStatus(root, 'Preparando documento…', 'loading');
+          if (printBtn) printBtn.disabled = true;
+          await waitForPrintReady(root, printAbort.signal);
+          if (isStalePrintRender()) return false;
+          try{ window.scrollTo(0, 0); }catch(e){}
+          await nextPaint(printAbort.signal);
+          if (isStalePrintRender()) return false;
+          setPrintStatus(root, 'Documento listo para imprimir.', 'ready');
+          if (printBtn) printBtn.disabled = false;
+          const now = Date.now();
+          if ((now - lastPrintAt) < 1200) return false;
+          lastPrintAt = now;
+          try{ setPrintTitle(); }catch(e){}
+          try{ window.print(); }catch(err){
+            setPrintStatus(root, 'No se pudo abrir la impresión del navegador.', 'error');
+            throw err;
+          }
+          return true;
+        }catch(err){
+          if (isAbortError(err) || isStalePrintRender()) return false;
+          setPrintStatus(root, 'Hubo un problema preparando el PDF.', 'error');
+          throw err;
+        }finally{
+          printInFlight = null;
+          if (printBtn && !isStalePrintRender()) printBtn.disabled = false;
+        }
+      })();
+      return printInFlight;
+    }
+
+    if (printBtn){
+      printBtn.addEventListener('click', () => {
+        runPrintFlow('manual').catch(() => {});
+      });
+    }
+
+    if (backBtn){
+      backBtn.addEventListener('click', () => {
+        cancelPrintPrep();
+        try{ restoreTitle(); }catch(e){}
+        try{ if (window.opener) window.close(); }catch(e){}
+        navigate('/historial');
+      });
+    }
+
+    runPrintFlow('auto').catch(() => {});
   }
 
 // ===== Etapa 7: Ranking global (sin tiempo) =====

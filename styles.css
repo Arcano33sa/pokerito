@@ -1511,12 +1511,19 @@ body{
 body.print-mode{
   background: #fff;
   color: #111;
+  overflow: visible;
 }
-body.print-mode .app-header{ display: none; }
+body.print-mode .app-header,
 body.print-mode .app-main{
-  height: 100vh;
-  margin-top: 0;
-  overflow: auto;
+  display: none !important;
+}
+
+.print-root{
+  display: none;
+}
+body.print-mode .print-root{
+  display: block;
+  min-height: 100vh;
 }
 
 .print-screen{
@@ -1527,11 +1534,26 @@ body.print-mode .app-main{
 }
 .print-actions{
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
+.print-action-buttons{
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.print-status{
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(0,0,0,0.60);
+}
+.print-status[data-tone="ready"]{ color: #0d7a43; }
+.print-status[data-tone="error"]{ color: #b4233c; }
+.print-status[data-tone="loading"]{ color: rgba(0,0,0,0.60); }
 .print-head{
   display: flex;
   justify-content: center;
@@ -1623,8 +1645,10 @@ body.print-mode .app-main{
   margin-top: 14px;
   border: 1px solid rgba(0,0,0,0.14);
   border-radius: 18px;
-  overflow: hidden;
+  overflow: visible;
   background: #fff;
+  break-inside: auto;
+  page-break-inside: auto;
 }
 .print-table{
   width: 100%;
@@ -1930,16 +1954,18 @@ body.print-mode .app-main{
 @media print{
   @page { size: landscape; margin: 12mm; }
 
-  body{ background: #fff !important; }
+  html, body{ height: auto !important; overflow: visible !important; }
+  body{ background: #fff !important; color: #111 !important; }
+  body.print-mode .print-root, .print-root{ display: block !important; }
   .print-actions{ display: none !important; }
-  .app-header{ display: none !important; }
-  .app-main{ height: auto !important; margin-top: 0 !important; overflow: visible !important; }
-  .print-screen{ max-width: none; padding: 0 !important; }
+  .app-header, .app-main{ display: none !important; }
+  .print-screen{ max-width: none; padding: 0 !important; margin: 0 !important; }
   .print-content{ gap: 10px; }
-  .print-section{ break-inside: auto; page-break-inside: auto; }
+  .print-section, .print-section-body, .print-rank-list, .print-impact-list{ break-inside: auto; page-break-inside: auto; }
   .print-section-head{ break-after: avoid; page-break-after: avoid; }
-  .print-rank-card{ break-inside: avoid; page-break-inside: avoid; }
-  .btn, .icon-btn{ display: none !important; }
+  .print-table-wrap, .print-table{ overflow: visible !important; }
+  .print-rank-card, .print-impact-card, .print-meta{ break-inside: avoid; page-break-inside: avoid; }
+  .print-status, .btn, .icon-btn{ display: none !important; }
 }
 
 

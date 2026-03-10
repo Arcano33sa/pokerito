@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.16 impacto-historico-pdf */
-const CACHE_NAME = 'pokerito-v0.1.16-impacto-historico-pdf';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.17 pdf-impresion-estable */
+const CACHE_NAME = 'pokerito-v0.1.17-pdf-impresion-estable';
 const CORE_ASSETS = [
   './',
   './index.html',
