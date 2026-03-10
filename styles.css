@@ -488,6 +488,52 @@ body{
   transform: none !important;
 }
 
+.file-trigger{
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.file-trigger.is-disabled{
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.file-trigger .file-native{
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.0001;
+  cursor: pointer;
+  z-index: 1;
+  border: 0;
+  font-size: 100px;
+}
+
+.file-trigger .file-native::-webkit-file-upload-button{
+  cursor: pointer;
+}
+
+.file-trigger.is-disabled .file-native,
+.file-trigger .file-native:disabled{
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+.file-trigger > span{
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+}
+
 .small-note{
   margin-top: 14px;
   font-size: 12px;

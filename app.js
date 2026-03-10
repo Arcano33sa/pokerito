@@ -10,10 +10,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.17';
-  const APP_BUILD = 'pdf-impresion-estable';
-  const APP_CACHE_NAME = 'pokerito-v0.1.17-pdf-impresion-estable';
-  const SW_URL = './sw.js?v=0.1.17-pdf-impresion-estable';
+  const APP_VERSION = '0.1.18';
+  const APP_BUILD = 'json-import-picker-fix';
+  const APP_CACHE_NAME = 'pokerito-v0.1.18-json-import-picker-fix';
+  const SW_URL = './sw.js?v=0.1.18-json-import-picker-fix';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -5686,10 +5686,12 @@ function renderConfiguracion(){
             <div class="panel-title" style="margin:0">Respaldo</div>
             <div class="row" style="gap:10px; flex-wrap:wrap">
               <button class="btn" type="button" id="exportJsonBtn">Exportar JSON</button>
-              <button class="btn primary" type="button" id="importJsonBtn">Importar JSON</button>
+              <label class="btn primary file-trigger" id="importJsonBtn" for="importFile">
+                <span id="importJsonBtnText">Importar JSON</span>
+                <input id="importFile" class="file-native" type="file" accept=".json,application/json" />
+              </label>
             </div>
           </div>
-          <input id="importFile" type="file" accept=".json,application/json" style="display:none" />
           <div class="small-note" style="margin-top:10px">Importar valida primero, muestra vista previa útil, crea un respaldo local de seguridad antes de aplicar y solo guarda si merge + recálculo terminan bien.</div>
           <div class="small-note" id="importStatusNote" style="margin-top:10px"></div>
         </div>
@@ -5722,6 +5724,7 @@ function renderConfiguracion(){
     // Backup
     const $file = document.getElementById('importFile');
     const $import = document.getElementById('importJsonBtn');
+    const $importText = document.getElementById('importJsonBtnText');
     const $exportJson = document.getElementById('exportJsonBtn');
     const $importStatusNote = document.getElementById('importStatusNote');
 
@@ -5750,25 +5753,42 @@ function renderConfiguracion(){
     }
 
     function setImportUiBusy(busy){
+      const isBusy = !!busy;
       if ($import){
-        $import.disabled = !!busy;
-        $import.textContent = busy ? 'Importando…' : 'Importar JSON';
+        $import.classList.toggle('is-disabled', isBusy);
+        $import.setAttribute('aria-disabled', isBusy ? 'true' : 'false');
       }
-      if ($exportJson) $exportJson.disabled = !!busy;
+      if ($importText) $importText.textContent = isBusy ? 'Importando…' : 'Importar JSON';
+      if ($file) {
+        $file.disabled = isBusy;
+        if (isBusy) {
+          try{ $file.blur(); }catch(e){}
+        }
+      }
+      if ($exportJson) $exportJson.disabled = isBusy;
     }
 
     if ($exportJson) $exportJson.addEventListener('click', () => exportBackupJson());
     renderImportStatusNote();
 
-    function openPicker(){
-      if ($file) { $file.value = ''; $file.click(); }
-    }
-    if ($import) $import.addEventListener('click', () => openPicker());
-
     if ($file){
+      const resetImportSelection = () => {
+        try{ $file.value = ''; }catch(e){}
+      };
+
+      $file.addEventListener('click', () => {
+        if ($file.disabled) return;
+        resetImportSelection();
+      });
+      $file.addEventListener('cancel', () => {
+        resetImportSelection();
+      });
       $file.addEventListener('change', async () => {
         const f = $file.files && $file.files[0];
-        if (!f) return;
+        if (!f) {
+          resetImportSelection();
+          return;
+        }
         setImportUiBusy(true);
         try{
           const txt = await f.text().catch(() => '');
@@ -5780,7 +5800,7 @@ function renderConfiguracion(){
           renderImportStatusNote();
         } finally {
           setImportUiBusy(false);
-          if ($file) $file.value = '';
+          resetImportSelection();
         }
       });
     }

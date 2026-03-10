@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.17 pdf-impresion-estable */
-const CACHE_NAME = 'pokerito-v0.1.17-pdf-impresion-estable';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.18 json-import-picker-fix */
+const CACHE_NAME = 'pokerito-v0.1.18-json-import-picker-fix';
 const CORE_ASSETS = [
   './',
   './index.html',
