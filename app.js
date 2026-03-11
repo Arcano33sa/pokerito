@@ -10,10 +10,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.19';
-  const APP_BUILD = 'json-import-apply-fix';
-  const APP_CACHE_NAME = 'pokerito-v0.1.19-json-import-apply-fix';
-  const SW_URL = './sw.js?v=0.1.19-json-import-apply-fix';
+  const APP_VERSION = '0.1.22';
+  const APP_BUILD = 'json-import-forensic-consolidation';
+  const APP_CACHE_NAME = 'pokerito-v0.1.22-json-import-forensic-consolidation';
+  const SW_URL = './sw.js?v=0.1.22-json-import-forensic-consolidation';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -38,6 +38,7 @@ const PORTABLE_APP = 'Pokerito';
 const PORTABLE_SCHEMA_VERSION = 2;
 const IMPORT_SAFETY_BACKUP_KEY = 'pokerito_import_safety_backup_v1';
 let store = loadStore();
+store = applyStartupForensicSelfHeal(store);
 
 // Chips defaults (Etapa 3)
 function defaultChips(){
@@ -68,6 +69,19 @@ function isPlainObject(v){
 
 function safeTrim(v){
   return String(v == null ? '' : v).trim();
+}
+
+function stripAccentsLoose(value){
+  const str = String(value == null ? '' : value);
+  try{ return str.normalize('NFD').replace(/[̀-ͯ]/g, ''); }catch(e){ return str; }
+}
+
+function normalizeIdentityText(value){
+  return stripAccentsLoose(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function cloneJson(v){
@@ -133,6 +147,833 @@ function deterministicBackfillId(prefix, seed, usedIds){
   while (usedIds && usedIds.has(out)) out = `${root}_${n++}`;
   if (usedIds) usedIds.add(out);
   return out;
+}
+
+function buildPlayerIdentity(player){
+  const src = isPlainObject(player) ? player : {};
+  const normalizedName = normalizeIdentityText(src.name);
+  const normalizedNick = normalizeIdentityText(src.nick);
+  const aliasValues = uniqStrings([normalizedName, normalizedNick].filter(Boolean));
+  const pairKey = (normalizedName && normalizedNick && normalizedName !== normalizedNick)
+    ? `pair:${normalizedName}|${normalizedNick}`
+    : '';
+  const simpleKey = (!pairKey && aliasValues.length === 1)
+    ? `simple:${aliasValues[0]}`
+    : '';
+  const nameKey = normalizedName ? `name:${normalizedName}` : '';
+  const nickKey = normalizedNick ? `nick:${normalizedNick}` : '';
+  return {
+    v: 1,
+    structure: pairKey ? 'pair' : (simpleKey ? 'simple' : ((nameKey || nickKey) ? 'partial' : 'empty')),
+    canonicalKey: pairKey || simpleKey || '',
+    normalized: {
+      name: normalizedName,
+      nick: normalizedNick,
+    },
+    keys: {
+      pair: pairKey,
+      simple: simpleKey,
+      name: nameKey,
+      nick: nickKey,
+    }
+  };
+}
+
+function getPlayerIdentity(player){
+  const src = isPlainObject(player) ? player : {};
+  const identity = isPlainObject(src.identity) ? src.identity : null;
+  if (identity && identity.v === 1 && isPlainObject(identity.keys) && isPlainObject(identity.normalized)) return identity;
+  return buildPlayerIdentity(src);
+}
+
+function playerIdentityDisplay(player){
+  return firstNonEmpty(playerDisplayName(player), safeTrim(player && player.name), safeTrim(player && player.nick), stableEntityId(player), 'Sin nombre');
+}
+
+function buildPlayerIdentityDiagnostics(players){
+  const list = Array.isArray(players) ? players : [];
+  const strongGroups = [];
+  const doubtfulGroups = [];
+  const assignedStrongIds = new Set();
+  const pushGroup = (target, type, key, reason, members) => {
+    const rows = (Array.isArray(members) ? members : []).filter(Boolean);
+    if (rows.length < 2) return;
+    const ids = uniqStrings(rows.map(item => stableEntityId(item)).filter(Boolean));
+    if (ids.length < 2) return;
+    target.push({
+      type,
+      key,
+      reason,
+      playerIds: ids,
+      labels: rows.map(item => playerIdentityDisplay(item)),
+    });
+  };
+
+  const pairGroups = new Map();
+  const simpleGroups = new Map();
+  const nameGroups = new Map();
+  const nickGroups = new Map();
+
+  list.forEach(player => {
+    const identity = getPlayerIdentity(player);
+    if (identity.keys.pair){
+      if (!pairGroups.has(identity.keys.pair)) pairGroups.set(identity.keys.pair, []);
+      pairGroups.get(identity.keys.pair).push(player);
+    }
+    if (identity.keys.simple){
+      if (!simpleGroups.has(identity.keys.simple)) simpleGroups.set(identity.keys.simple, []);
+      simpleGroups.get(identity.keys.simple).push(player);
+    }
+    if (identity.keys.name){
+      if (!nameGroups.has(identity.keys.name)) nameGroups.set(identity.keys.name, []);
+      nameGroups.get(identity.keys.name).push(player);
+    }
+    if (identity.keys.nick){
+      if (!nickGroups.has(identity.keys.nick)) nickGroups.set(identity.keys.nick, []);
+      nickGroups.get(identity.keys.nick).push(player);
+    }
+  });
+
+  pairGroups.forEach((members, key) => {
+    if ((members || []).length < 2) return;
+    members.forEach(item => {
+      const id = stableEntityId(item);
+      if (id) assignedStrongIds.add(id);
+    });
+    pushGroup(strongGroups, 'pair', key, 'exact-normalized-name+nick', members);
+  });
+
+  simpleGroups.forEach((members, key) => {
+    const rows = (members || []).filter(item => {
+      const id = stableEntityId(item);
+      return !(id && assignedStrongIds.has(id));
+    });
+    if (rows.length < 2) return;
+    pushGroup(doubtfulGroups, 'simple', key, 'exact-single-identity-without-full-pair', rows);
+  });
+
+  const pushOverlapGroups = (map, type, reason) => {
+    map.forEach((members, key) => {
+      const rows = (members || []).filter(item => {
+        const id = stableEntityId(item);
+        return !(id && assignedStrongIds.has(id));
+      });
+      if (rows.length < 2) return;
+      const distinctShapes = uniqStrings(rows.map(item => {
+        const identity = getPlayerIdentity(item);
+        return firstNonEmpty(identity.keys.pair, identity.keys.simple, identity.keys.name, identity.keys.nick);
+      }));
+      if (distinctShapes.length < 2) return;
+      pushGroup(doubtfulGroups, type, key, reason, rows);
+    });
+  };
+
+  pushOverlapGroups(nameGroups, 'name', 'same-normalized-name-different-identity-shape');
+  pushOverlapGroups(nickGroups, 'nick', 'same-normalized-nick-different-identity-shape');
+
+  const strongPlayerIds = uniqStrings([].concat.apply([], strongGroups.map(group => group.playerIds || [])));
+  const doubtfulPlayerIds = uniqStrings([].concat.apply([], doubtfulGroups.map(group => group.playerIds || [])));
+  const lastTouchedAt = maxTs.apply(null, list.map(player => maxTs(player && player.updatedAt, player && player.createdAt)).filter(Boolean));
+
+  return {
+    v: 1,
+    updatedAt: lastTouchedAt || 0,
+    counts: {
+      strongGroups: strongGroups.length,
+      strongPlayers: strongPlayerIds.length,
+      doubtfulGroups: doubtfulGroups.length,
+      doubtfulPlayers: doubtfulPlayerIds.length,
+    },
+    strongGroups: strongGroups.slice(0, 100),
+    doubtfulGroups: doubtfulGroups.slice(0, 100),
+  };
+}
+
+function detectCrossStorePlayerIdentity(localPlayers, incomingPlayers){
+  const local = Array.isArray(localPlayers) ? localPlayers : [];
+  const incoming = Array.isArray(incomingPlayers) ? incomingPlayers : [];
+  const localByPair = new Map();
+  const localBySimple = new Map();
+  const localByName = new Map();
+  const localByNick = new Map();
+  const add = (map, key, player) => {
+    if (!key) return;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(player);
+  };
+
+  local.forEach(player => {
+    const identity = getPlayerIdentity(player);
+    add(localByPair, identity.keys.pair, player);
+    add(localBySimple, identity.keys.simple, player);
+    add(localByName, identity.keys.name, player);
+    add(localByNick, identity.keys.nick, player);
+  });
+
+  const strong = [];
+  const doubtful = [];
+  const seen = new Set();
+  const push = (target, type, reason, localPlayer, incomingPlayer, key) => {
+    const localId = stableEntityId(localPlayer);
+    const incomingId = stableEntityId(incomingPlayer);
+    if (!localId || !incomingId || localId === incomingId) return;
+    const token = `${type}|${reason}|${localId}|${incomingId}|${key}`;
+    if (seen.has(token)) return;
+    seen.add(token);
+    target.push({
+      type,
+      reason,
+      key,
+      localId,
+      localLabel: playerIdentityDisplay(localPlayer),
+      incomingId,
+      incomingLabel: playerIdentityDisplay(incomingPlayer),
+    });
+  };
+
+  incoming.forEach(player => {
+    const incomingId = stableEntityId(player);
+    const identity = getPlayerIdentity(player);
+    if (!incomingId) return;
+
+    const strongMatches = localByPair.get(identity.keys.pair) || [];
+    strongMatches.forEach(localPlayer => push(strong, 'pair', 'exact-normalized-name+nick', localPlayer, player, identity.keys.pair));
+
+    if (!strongMatches.length){
+      const simpleMatches = localBySimple.get(identity.keys.simple) || [];
+      simpleMatches.forEach(localPlayer => push(doubtful, 'simple', 'exact-single-identity-without-full-pair', localPlayer, player, identity.keys.simple));
+
+      const nameMatches = localByName.get(identity.keys.name) || [];
+      nameMatches.forEach(localPlayer => {
+        const localIdentity = getPlayerIdentity(localPlayer);
+        if (localIdentity.keys.pair && identity.keys.pair && localIdentity.keys.pair === identity.keys.pair) return;
+        push(doubtful, 'name', 'same-normalized-name', localPlayer, player, identity.keys.name);
+      });
+
+      const nickMatches = localByNick.get(identity.keys.nick) || [];
+      nickMatches.forEach(localPlayer => {
+        const localIdentity = getPlayerIdentity(localPlayer);
+        if (localIdentity.keys.pair && identity.keys.pair && localIdentity.keys.pair === identity.keys.pair) return;
+        push(doubtful, 'nick', 'same-normalized-nick', localPlayer, player, identity.keys.nick);
+      });
+    }
+  });
+
+  return {
+    strong,
+    doubtful,
+    counts: {
+      strong: strong.length,
+      doubtful: doubtful.length,
+    }
+  };
+}
+
+
+function buildPlayerCanonicalMergePlan(localPlayers, incomingPlayers){
+  const local = Array.isArray(localPlayers) ? localPlayers : [];
+  const incoming = Array.isArray(incomingPlayers) ? incomingPlayers : [];
+  const localById = new Map();
+  const localByPair = new Map();
+  const localBySimple = new Map();
+  const localByName = new Map();
+  const localByNick = new Map();
+  const add = (map, key, player) => {
+    if (!key) return;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(player);
+  };
+
+  local.forEach(player => {
+    const id = stableEntityId(player);
+    const identity = getPlayerIdentity(player);
+    if (id && !localById.has(id)) localById.set(id, player);
+    add(localByPair, identity.keys.pair, player);
+    add(localBySimple, identity.keys.simple, player);
+    add(localByName, identity.keys.name, player);
+    add(localByNick, identity.keys.nick, player);
+  });
+
+  const canonicalByIncomingId = new Map();
+  const recognized = [];
+  const doubtful = [];
+  const created = [];
+
+  incoming.forEach(player => {
+    const incomingId = stableEntityId(player);
+    const incomingIdentity = getPlayerIdentity(player);
+    if (!incomingId) return;
+
+    const localSameId = localById.get(incomingId) || null;
+    if (localSameId){
+      canonicalByIncomingId.set(incomingId, incomingId);
+      recognized.push({
+        mode: 'same-id',
+        incomingId,
+        canonicalId: incomingId,
+        incomingLabel: playerIdentityDisplay(player),
+        canonicalLabel: playerIdentityDisplay(localSameId),
+      });
+      return;
+    }
+
+    const pairMatches = incomingIdentity.keys.pair ? (localByPair.get(incomingIdentity.keys.pair) || []) : [];
+    if (pairMatches.length === 1){
+      const canonical = pairMatches[0];
+      const canonicalId = stableEntityId(canonical);
+      if (canonicalId){
+        canonicalByIncomingId.set(incomingId, canonicalId);
+        recognized.push({
+          mode: 'canonical-pair',
+          reason: 'exact-normalized-name+nick',
+          incomingId,
+          canonicalId,
+          incomingLabel: playerIdentityDisplay(player),
+          canonicalLabel: playerIdentityDisplay(canonical),
+        });
+        return;
+      }
+    }
+
+    const doubtfulReasons = [];
+    const simpleMatches = incomingIdentity.keys.simple ? (localBySimple.get(incomingIdentity.keys.simple) || []) : [];
+    const nameMatches = incomingIdentity.keys.name ? (localByName.get(incomingIdentity.keys.name) || []) : [];
+    const nickMatches = incomingIdentity.keys.nick ? (localByNick.get(incomingIdentity.keys.nick) || []) : [];
+    if (pairMatches.length > 1) doubtfulReasons.push('multiple-strong-local-candidates');
+    if (simpleMatches.length) doubtfulReasons.push('exact-single-identity-without-full-pair');
+    if (nameMatches.length) doubtfulReasons.push('same-normalized-name');
+    if (nickMatches.length) doubtfulReasons.push('same-normalized-nick');
+
+    if (doubtfulReasons.length){
+      doubtful.push({
+        incomingId,
+        incomingLabel: playerIdentityDisplay(player),
+        reasons: uniqStrings(doubtfulReasons),
+      });
+      return;
+    }
+
+    created.push({
+      incomingId,
+      incomingLabel: playerIdentityDisplay(player),
+    });
+  });
+
+  return {
+    canonicalByIncomingId,
+    recognized,
+    doubtful,
+    created,
+    counts: {
+      recognizedExisting: recognized.length,
+      canonicalReconciled: recognized.filter(item => item && item.mode === 'canonical-pair').length,
+      sameIdExisting: recognized.filter(item => item && item.mode === 'same-id').length,
+      doubtful: doubtful.length,
+      newReal: created.length,
+    }
+  };
+}
+
+function mergeSessionSnapshotEntry(baseEntry, extraEntry, masterPlayer){
+  const base = isPlainObject(baseEntry) ? baseEntry : {};
+  const extra = isPlainObject(extraEntry) ? extraEntry : {};
+  const master = isPlainObject(masterPlayer) ? masterPlayer : {};
+  const id = stableEntityId(base) || stableEntityId(extra) || stableEntityId(master);
+  const name = preferString(base.name, extra.name, false) || safeTrim(master.name);
+  const nick = preferString(base.nick, extra.nick, false) || safeTrim(master.nick);
+  const display = preferString(base.display, extra.display, false) || nick || name || playerDisplayName(master) || 'Sin nombre';
+  return Object.assign({}, extra, base, {
+    id,
+    name,
+    nick,
+    display,
+  });
+}
+
+function mergeSessionPlayerState(baseState, extraState, chipIds){
+  const base = isPlainObject(baseState) ? baseState : {};
+  const extra = isPlainObject(extraState) ? extraState : {};
+  const mergedCounts = {};
+  const allChipIds = uniqStrings([].concat(Array.isArray(chipIds) ? chipIds : [], Object.keys(isPlainObject(base.counts) ? base.counts : {}), Object.keys(isPlainObject(extra.counts) ? extra.counts : {})));
+  allChipIds.forEach(cid => {
+    mergedCounts[cid] = Math.max(0, Math.floor(numOrZero(base.counts && base.counts[cid]) + numOrZero(extra.counts && extra.counts[cid])));
+  });
+  return Object.assign({}, extra, base, {
+    id: stableEntityId(base) || stableEntityId(extra),
+    buyIn: numOrZero(base.buyIn) + numOrZero(extra.buyIn),
+    rebuys: [].concat(Array.isArray(base.rebuys) ? base.rebuys.map(numOrZero).filter(v => v > 0) : [], Array.isArray(extra.rebuys) ? extra.rebuys.map(numOrZero).filter(v => v > 0) : []),
+    counts: mergedCounts,
+  });
+}
+
+function remapSessionPlayerReferences(session, canonicalByIncomingId, playerById, opts){
+  const src = cloneJson(session) || session || {};
+  const map = (canonicalByIncomingId instanceof Map) ? canonicalByIncomingId : new Map();
+  const masterById = (playerById instanceof Map) ? playerById : new Map();
+  const options = isPlainObject(opts) ? opts : {};
+  const touchedIds = new Set();
+  const touchedStructures = new Set();
+
+  const remapId = (rawId, structure) => {
+    const incomingId = stableEntityId(rawId);
+    if (!incomingId) return '';
+    const mappedId = map.get(incomingId) || incomingId;
+    if (mappedId !== incomingId){
+      touchedIds.add(incomingId);
+      if (structure) touchedStructures.add(String(structure));
+    }
+    return mappedId;
+  };
+
+  const sourceIds = uniqStrings([
+    ...(Array.isArray(src.playerIds) ? src.playerIds.map(pid => remapId(pid, 'playerIds')) : []),
+    ...(Array.isArray(src.playersSnapshot) ? src.playersSnapshot.map(entry => remapId(entry, 'playersSnapshot')) : []),
+    ...((src.game && Array.isArray(src.game.players)) ? src.game.players.map(entry => remapId(entry, 'game.players')) : []),
+  ].filter(Boolean));
+
+  const mappedIds = sourceIds.slice();
+  const chipIds = uniqStrings((Array.isArray(src.chipsSnapshot) ? src.chipsSnapshot : []).map(stableEntityId).filter(Boolean));
+
+  const snapshotMap = new Map();
+  (Array.isArray(src.playersSnapshot) ? src.playersSnapshot : []).forEach(entry => {
+    const mappedId = remapId(entry, 'playersSnapshot');
+    if (!mappedId) return;
+    const master = masterById.get(mappedId) || null;
+    const nextEntry = Object.assign({}, entry, { id: mappedId });
+    const prev = snapshotMap.get(mappedId) || null;
+    snapshotMap.set(mappedId, mergeSessionSnapshotEntry(prev, nextEntry, master));
+  });
+  mappedIds.forEach(pid => {
+    if (snapshotMap.has(pid)) return;
+    const master = masterById.get(pid) || {};
+    snapshotMap.set(pid, mergeSessionSnapshotEntry(null, { id: pid }, master));
+  });
+
+  const gameMap = new Map();
+  const rawGamePlayers = (src && src.game && Array.isArray(src.game.players)) ? src.game.players : [];
+  rawGamePlayers.forEach(entry => {
+    const mappedId = remapId(entry, 'game.players');
+    if (!mappedId) return;
+    const nextEntry = Object.assign({}, entry, { id: mappedId });
+    const prev = gameMap.get(mappedId) || null;
+    gameMap.set(mappedId, mergeSessionPlayerState(prev, nextEntry, chipIds));
+  });
+  mappedIds.forEach(pid => {
+    if (gameMap.has(pid)) return;
+    gameMap.set(pid, mergeSessionPlayerState(null, { id: pid, buyIn: 0, rebuys: [], counts: {} }, chipIds));
+  });
+
+  const out = Object.assign({}, src, {
+    playerIds: mappedIds,
+    playersSnapshot: mappedIds.map(pid => snapshotMap.get(pid)).filter(Boolean),
+    game: Object.assign({}, isPlainObject(src.game) ? src.game : {}, {
+      players: mappedIds.map(pid => gameMap.get(pid)).filter(Boolean),
+    }),
+  });
+
+  if ((options.invalidateDerived !== false) && touchedIds.size){
+    delete out.historicalImpact;
+  }
+
+  return {
+    session: out,
+    changed: touchedIds.size > 0,
+    touchedIds: uniqStrings(Array.from(touchedIds)),
+    touchedStructures: uniqStrings(Array.from(touchedStructures)),
+  };
+}
+
+function remapIncomingSessionPlayers(session, canonicalByIncomingId, localPlayerById){
+  return remapSessionPlayerReferences(session, canonicalByIncomingId, localPlayerById, { invalidateDerived: false }).session;
+}
+
+function countPlayerReferencesAcrossSessions(sessions){
+  const stats = new Map();
+  const touch = (pid, bucket) => {
+    const id = stableEntityId(pid);
+    if (!id) return;
+    if (!stats.has(id)){
+      stats.set(id, {
+        rawRefs: 0,
+        sessionRefs: 0,
+        closedSessionRefs: 0,
+        buckets: new Set(),
+      });
+    }
+    const row = stats.get(id);
+    row.rawRefs += 1;
+    if (bucket) row.buckets.add(String(bucket));
+  };
+
+  (Array.isArray(sessions) ? sessions : []).forEach(session => {
+    const s = isPlainObject(session) ? session : {};
+    const status = safeTrim(s.status);
+    const uniqueInSession = new Set();
+    (Array.isArray(s.playerIds) ? s.playerIds : []).forEach(pid => {
+      const id = stableEntityId(pid);
+      if (!id) return;
+      touch(id, 'playerIds');
+      uniqueInSession.add(id);
+    });
+    (Array.isArray(s.playersSnapshot) ? s.playersSnapshot : []).forEach(entry => {
+      const id = stableEntityId(entry);
+      if (!id) return;
+      touch(id, 'playersSnapshot');
+      uniqueInSession.add(id);
+    });
+    ((s.game && Array.isArray(s.game.players)) ? s.game.players : []).forEach(entry => {
+      const id = stableEntityId(entry);
+      if (!id) return;
+      touch(id, 'game.players');
+      uniqueInSession.add(id);
+    });
+
+    uniqueInSession.forEach(id => {
+      const row = stats.get(id) || { rawRefs: 0, sessionRefs: 0, closedSessionRefs: 0, buckets: new Set() };
+      row.sessionRefs += 1;
+      if (status === 'closed') row.closedSessionRefs += 1;
+      stats.set(id, row);
+    });
+  });
+
+  return stats;
+}
+
+function chooseCanonicalLocalPlayer(players, refStats){
+  const list = (Array.isArray(players) ? players : []).filter(Boolean).slice();
+  const getRef = (player, key) => {
+    const row = refStats.get(stableEntityId(player));
+    return numOrZero(row && row[key]);
+  };
+  const identityCompleteness = (player) => {
+    const identity = getPlayerIdentity(player);
+    return [
+      !!(identity && identity.keys && identity.keys.pair),
+      !!safeTrim(player && player.name),
+      !!safeTrim(player && player.nick),
+    ].filter(Boolean).length;
+  };
+  list.sort((a, b) => {
+    const byClosedRefs = getRef(b, 'closedSessionRefs') - getRef(a, 'closedSessionRefs');
+    if (byClosedRefs) return byClosedRefs;
+    const bySessionRefs = getRef(b, 'sessionRefs') - getRef(a, 'sessionRefs');
+    if (bySessionRefs) return bySessionRefs;
+    const byRawRefs = getRef(b, 'rawRefs') - getRef(a, 'rawRefs');
+    if (byRawRefs) return byRawRefs;
+    const byGames = numOrZero(b && b.stats && b.stats.games) - numOrZero(a && a.stats && a.stats.games);
+    if (byGames) return byGames;
+    const byActive = (b && b.active ? 1 : 0) - (a && a.active ? 1 : 0);
+    if (byActive) return byActive;
+    const byCreated = minPositiveTs(a && a.createdAt, a && a.updatedAt) - minPositiveTs(b && b.createdAt, b && b.updatedAt);
+    if (byCreated) return byCreated;
+    const byCompleteness = identityCompleteness(b) - identityCompleteness(a);
+    if (byCompleteness) return byCompleteness;
+    return String(stableEntityId(a) || '').localeCompare(String(stableEntityId(b) || ''), 'es', { sensitivity: 'base' });
+  });
+  return list[0] || null;
+}
+
+function buildLocalCanonicalReferencePlan(players, sessions){
+  const list = Array.isArray(players) ? players : [];
+  const sessionList = Array.isArray(sessions) ? sessions : [];
+  const refStats = countPlayerReferencesAcrossSessions(sessionList);
+  const groupsByPair = new Map();
+
+  list.forEach(player => {
+    const id = stableEntityId(player);
+    const identity = getPlayerIdentity(player);
+    if (!id || !(identity && identity.keys && identity.keys.pair)) return;
+    if (!groupsByPair.has(identity.keys.pair)) groupsByPair.set(identity.keys.pair, []);
+    groupsByPair.get(identity.keys.pair).push(player);
+  });
+
+  const canonicalByDuplicateId = new Map();
+  const groups = [];
+
+  groupsByPair.forEach((members, pairKey) => {
+    const rows = (members || []).filter(Boolean);
+    if (rows.length < 2) return;
+    const canonicalPlayer = chooseCanonicalLocalPlayer(rows, refStats);
+    const canonicalId = stableEntityId(canonicalPlayer);
+    if (!canonicalId) return;
+    const duplicates = rows
+      .map(player => stableEntityId(player))
+      .filter(pid => !!pid && pid !== canonicalId);
+
+    if (!duplicates.length) return;
+
+    duplicates.forEach(pid => canonicalByDuplicateId.set(pid, canonicalId));
+    groups.push({
+      pairKey,
+      canonicalId,
+      canonicalLabel: playerIdentityDisplay(canonicalPlayer),
+      duplicateIds: duplicates.slice(),
+      duplicateLabels: rows
+        .filter(player => stableEntityId(player) !== canonicalId)
+        .map(player => playerIdentityDisplay(player)),
+      criteria: {
+        closedSessionRefs: numOrZero(refStats.get(canonicalId) && refStats.get(canonicalId).closedSessionRefs),
+        sessionRefs: numOrZero(refStats.get(canonicalId) && refStats.get(canonicalId).sessionRefs),
+        rawRefs: numOrZero(refStats.get(canonicalId) && refStats.get(canonicalId).rawRefs),
+      }
+    });
+  });
+
+  return {
+    canonicalByDuplicateId,
+    groups,
+    counts: {
+      strongGroups: groups.length,
+      duplicatePlayers: canonicalByDuplicateId.size,
+    },
+  };
+}
+
+function remapStoreCanonicalPlayerReferences(inputStore){
+  const base = normalizeStoreObject(inputStore).store;
+  const plan = buildLocalCanonicalReferencePlan(base.players, base.sessions);
+  if (!(plan && plan.canonicalByDuplicateId instanceof Map) || !plan.canonicalByDuplicateId.size){
+    return {
+      store: base,
+      plan,
+      summary: {
+        groups: 0,
+        duplicatePlayers: 0,
+        sessionsTouched: 0,
+        refsChanged: 0,
+        structuresTouched: [],
+        playersCollapsed: 0,
+        canonicalPlayersKept: Array.isArray(base.players) ? base.players.length : 0,
+      }
+    };
+  }
+
+  const playerById = new Map((Array.isArray(base.players) ? base.players : []).filter(p => stableEntityId(p)).map(p => [stableEntityId(p), p]));
+  const sessionResults = (Array.isArray(base.sessions) ? base.sessions : []).map(session => remapSessionPlayerReferences(session, plan.canonicalByDuplicateId, playerById, { invalidateDerived: true }));
+  const structuresTouched = uniqStrings([].concat.apply([], sessionResults.map(item => item && item.touchedStructures ? item.touchedStructures : [])));
+  const refsChanged = uniqStrings([].concat.apply([], sessionResults.map(item => item && item.touchedIds ? item.touchedIds : []))).length;
+  const sessionsTouched = sessionResults.filter(item => item && item.changed).length;
+
+  const groupIdsByCanonical = new Map();
+  (Array.isArray(plan && plan.groups) ? plan.groups : []).forEach(group => {
+    const canonicalId = stableEntityId(group && group.canonicalId);
+    if (!canonicalId) return;
+    const ids = uniqStrings([canonicalId].concat(Array.isArray(group && group.duplicateIds) ? group.duplicateIds : []));
+    if (ids.length) groupIdsByCanonical.set(canonicalId, ids);
+  });
+
+  const nextPlayers = [];
+  const seenCanonicalIds = new Set();
+  (Array.isArray(base.players) ? base.players : []).forEach(player => {
+    const pid = stableEntityId(player);
+    if (!pid || seenCanonicalIds.has(pid)) return;
+    if (plan.canonicalByDuplicateId.has(pid)) return;
+    const groupIds = groupIdsByCanonical.get(pid) || [pid];
+    const groupPlayers = groupIds.map(id => playerById.get(id)).filter(Boolean);
+    const mergedPlayer = groupPlayers.length > 1 ? mergePlayerEntityGroup(player, groupPlayers) : (cloneJson(player) || player);
+    nextPlayers.push(mergedPlayer);
+    seenCanonicalIds.add(pid);
+  });
+
+  const nextUi = Object.assign({}, isPlainObject(base.ui) ? cloneJson(base.ui) || {} : {}, {
+    forensicCanonicalConsolidation: {
+      appliedAt: Date.now(),
+      groups: numOrZero(plan && plan.counts && plan.counts.strongGroups),
+      duplicatePlayers: numOrZero(plan && plan.counts && plan.counts.duplicatePlayers),
+      playersCollapsed: Math.max(0, (Array.isArray(base.players) ? base.players.length : 0) - nextPlayers.length),
+      groupsDetail: cloneJson(Array.isArray(plan && plan.groups) ? plan.groups.slice(0, 50) : []) || [],
+    }
+  });
+
+  const nextStore = normalizeStoreObject(Object.assign({}, base, {
+    players: nextPlayers,
+    sessions: sessionResults.map(item => item && item.session ? item.session : item),
+    ui: nextUi,
+    updatedAt: (sessionsTouched || nextPlayers.length !== (Array.isArray(base.players) ? base.players.length : 0)) ? Date.now() : numOrZero(base.updatedAt),
+  })).store;
+
+  return {
+    store: nextStore,
+    plan,
+    summary: {
+      groups: numOrZero(plan && plan.counts && plan.counts.strongGroups),
+      duplicatePlayers: numOrZero(plan && plan.counts && plan.counts.duplicatePlayers),
+      sessionsTouched,
+      refsChanged,
+      structuresTouched,
+      playersCollapsed: Math.max(0, (Array.isArray(base.players) ? base.players.length : 0) - nextPlayers.length),
+      canonicalPlayersKept: nextPlayers.length,
+    }
+  };
+}
+
+function rebuildStoreDerivedData(baseStore){
+  const priorStore = store;
+  const normalized = normalizeStoreObject(baseStore).store;
+  store = normalized;
+  const analytics = computeAnalytics();
+  const nextPlayers = getPlayers().map(p => {
+    const st = analytics.byPlayer.get(p.id) || null;
+    const next = Object.assign({}, p);
+    next.stats = st ? {
+      netTotal: st.netTotal,
+      games: st.games,
+      wins1: st.wins1,
+      podiums: st.podiums,
+      best: st.best,
+      worst: st.worst,
+      lastSession: st.lastSession,
+      buyInsCount: st.buyInsCount,
+      buyInsTotal: st.buyInsTotal,
+      rebuysCount: st.rebuysCount,
+      rebuysTotal: st.rebuysTotal,
+      itmCount: st.itmCount,
+      investedTotal: st.investedTotal,
+      chipsTotal: st.chipsTotal,
+      payoutsTotal: st.payoutsTotal,
+      roiGlobal: st.roiGlobal,
+      avgNet: st.avgNet,
+      bestWinStreak: cloneJson(st.bestWinStreak) || { length: 0, start: null, end: null },
+      bestItmStreak: cloneJson(st.bestItmStreak) || { length: 0, start: null, end: null },
+    } : {
+      netTotal: 0, games: 0, wins1: 0, podiums: 0, best: null, worst: null, lastSession: null, buyInsCount: 0, buyInsTotal: 0, rebuysCount: 0, rebuysTotal: 0, itmCount: 0, investedTotal: 0, chipsTotal: 0, payoutsTotal: 0, roiGlobal: 0, avgNet: 0, bestWinStreak: { length: 0, start: null, end: null }, bestItmStreak: { length: 0, start: null, end: null },
+    };
+    return next;
+  });
+  const nextStore = normalizeStoreObject(Object.assign({}, normalized, {
+    players: nextPlayers,
+    statsGlobal: {
+      updatedAt: Date.now(),
+      records: cloneJson(analytics.records) || {},
+      ranking: analytics.ranking.map(row => ({
+        pos: row.rankPos,
+        id: row.id,
+        display: row.display,
+        games: row.games,
+        wins1: row.wins1,
+        podiums: row.podiums,
+        buyInsCount: row.buyInsCount,
+        buyInsTotal: row.buyInsTotal,
+        rebuysCount: row.rebuysCount,
+        rebuysTotal: row.rebuysTotal,
+        itmCount: row.itmCount,
+        netTotal: row.netTotal,
+        investedTotal: row.investedTotal,
+        chipsTotal: row.chipsTotal,
+        payoutsTotal: row.payoutsTotal,
+        avgNet: row.avgNet,
+        roiGlobal: row.roiGlobal,
+        best: cloneJson(row.best) || null,
+        worst: cloneJson(row.worst) || null,
+        lastSession: cloneJson(row.lastSession) || null,
+        bestWinStreak: cloneJson(row.bestWinStreak) || { length: 0, start: null, end: null },
+        bestItmStreak: cloneJson(row.bestItmStreak) || { length: 0, start: null, end: null },
+      })),
+      byPlayer: Array.from(analytics.byPlayer.values()).map(st => ({
+        id: st.id,
+        display: st.display,
+        games: st.games,
+        wins1: st.wins1,
+        podiums: st.podiums,
+        buyInsCount: st.buyInsCount,
+        buyInsTotal: st.buyInsTotal,
+        rebuysCount: st.rebuysCount,
+        rebuysTotal: st.rebuysTotal,
+        itmCount: st.itmCount,
+        netTotal: st.netTotal,
+        investedTotal: st.investedTotal,
+        chipsTotal: st.chipsTotal,
+        payoutsTotal: st.payoutsTotal,
+        avgNet: st.avgNet,
+        roiGlobal: st.roiGlobal,
+        best: cloneJson(st.best) || null,
+        worst: cloneJson(st.worst) || null,
+        lastSession: cloneJson(st.lastSession) || null,
+        bestWinStreak: cloneJson(st.bestWinStreak) || { length: 0, start: null, end: null },
+        bestItmStreak: cloneJson(st.bestItmStreak) || { length: 0, start: null, end: null },
+      })),
+      summaryRows: cloneJson(analytics.summaryRows) || [],
+    }
+  })).store;
+  store = priorStore;
+  return nextStore;
+}
+
+function applyStartupForensicSelfHeal(baseStore){
+  const normalized = normalizeStoreObject(baseStore).store;
+  const consolidated = remapStoreCanonicalPlayerReferences(normalized);
+  const summary = isPlainObject(consolidated && consolidated.summary) ? consolidated.summary : {};
+  const changed = [
+    'groups',
+    'duplicatePlayers',
+    'sessionsTouched',
+    'refsChanged',
+    'playersCollapsed',
+  ].some(key => numOrZero(summary[key]) > 0);
+  if (!changed) return normalized;
+  const nextStore = rebuildStoreDerivedData(consolidated.store);
+  const nextUi = Object.assign({}, isPlainObject(nextStore.ui) ? cloneJson(nextStore.ui) || {} : {}, {
+    startupForensicSelfHeal: {
+      appliedAt: Date.now(),
+      groups: numOrZero(summary.groups),
+      duplicatePlayers: numOrZero(summary.duplicatePlayers),
+      sessionsTouched: numOrZero(summary.sessionsTouched),
+      refsChanged: numOrZero(summary.refsChanged),
+      playersCollapsed: numOrZero(summary.playersCollapsed),
+      structuresTouched: cloneJson(summary.structuresTouched) || [],
+    }
+  });
+  const finalStore = normalizeStoreObject(Object.assign({}, nextStore, { ui: nextUi, updatedAt: Date.now() })).store;
+  persistStore(finalStore);
+  return finalStore;
+}
+
+function remapIncomingStorePlayersByCanonical(currentStore, incomingStore){
+  const cur = normalizeStoreObject(currentStore).store;
+  const incoming = normalizeStoreObject(incomingStore).store;
+  const localPlayers = Array.isArray(cur.players) ? cur.players : [];
+  const localPlayerById = new Map(localPlayers.filter(p => stableEntityId(p)).map(p => [stableEntityId(p), p]));
+  const plan = buildPlayerCanonicalMergePlan(localPlayers, incoming.players);
+  const canonicalMap = plan.canonicalByIncomingId;
+
+  const remappedPlayerList = (Array.isArray(incoming.players) ? incoming.players : []).map(player => {
+    const incomingId = stableEntityId(player);
+    const canonicalId = canonicalMap.get(incomingId) || incomingId;
+    if (!canonicalId || canonicalId === incomingId) return cloneJson(player) || player;
+    const localCanonical = localPlayerById.get(canonicalId) || null;
+    const next = Object.assign({}, cloneJson(player) || player, { id: canonicalId });
+    next.identity = buildPlayerIdentity(Object.assign({}, localCanonical || {}, next, { id: canonicalId }));
+    return next;
+  });
+  const remappedPlayers = [];
+  const remappedPlayerById = new Map();
+  remappedPlayerList.forEach(player => {
+    const pid = stableEntityId(player);
+    if (!pid) return;
+    const existing = remappedPlayerById.get(pid) || null;
+    if (!existing){
+      const added = cloneJson(player) || player;
+      remappedPlayers.push(added);
+      remappedPlayerById.set(pid, added);
+      return;
+    }
+    const merged = mergePlayerEntity(existing, player);
+    const idx = remappedPlayers.indexOf(existing);
+    if (idx >= 0) remappedPlayers[idx] = merged;
+    remappedPlayerById.set(pid, merged);
+  });
+
+  const remappedSessions = (Array.isArray(incoming.sessions) ? incoming.sessions : []).map(session => remapIncomingSessionPlayers(session, canonicalMap, localPlayerById));
+
+  const remappedStore = normalizeStoreObject(Object.assign({}, incoming, {
+    players: remappedPlayers,
+    sessions: remappedSessions,
+  })).store;
+
+  return {
+    store: remappedStore,
+    plan,
+  };
 }
 
 function normalizeTimestampPair(createdRaw, updatedRaw, fallbackTs){
@@ -236,10 +1077,19 @@ function normalizePlayerEntity(player, index, usedIds, ctx){
   const stats = isPlainObject(src.stats) ? cloneJson(src.stats) : {};
   if (!isPlainObject(src.stats)) ctx.changed = true;
 
+  const identity = buildPlayerIdentity(Object.assign({}, src, {
+    id,
+    name: safeTrim(src.name),
+    nick: safeTrim(src.nick),
+  }));
+  const priorIdentity = isPlainObject(src.identity) ? cloneJson(src.identity) : null;
+  if (canonicalJson(identity) !== canonicalJson(priorIdentity)) ctx.changed = true;
+
   return Object.assign({}, src, {
     id,
     name: safeTrim(src.name),
     nick: safeTrim(src.nick),
+    identity,
     active,
     stats: stats || {},
     createdAt: pair.createdAt,
@@ -456,6 +1306,7 @@ function normalizeStoreObject(input){
 
   const chips = normalizeChipList(src.chips, ctx);
   const players = normalizePlayerList(src.players, ctx);
+  const identityDiagnostics = buildPlayerIdentityDiagnostics(players);
   const playerMap = new Map(players.filter(p => stableEntityId(p)).map(p => [stableEntityId(p), p]));
   const chipMap = new Map(chips.filter(c => stableEntityId(c)).map(c => [stableEntityId(c), c]));
   const sessions = normalizeSessionList(src.sessions, { playerMap, chipMap }, ctx);
@@ -473,6 +1324,10 @@ function normalizeStoreObject(input){
   if (!isPlainObject(src.ui)) ctx.changed = true;
   if (!isPlainObject(ui.juego)){
     ui.juego = {};
+    ctx.changed = true;
+  }
+  if (canonicalJson(ui.identityDiagnostics || null) !== canonicalJson(identityDiagnostics || null)){
+    ui.identityDiagnostics = identityDiagnostics;
     ctx.changed = true;
   }
 
@@ -573,11 +1428,16 @@ function buildPortableBackupPayload(baseStore, baseThemePref, extraMeta){
         derived: 'excluded-from-export',
       },
       reconciliation: {
-        mergeStrategy: 'id-based-reconciliation-with-full-rebuild',
+        mergeStrategy: 'canonical-player-aware-reconciliation-with-full-rebuild',
         entityKeys: {
           chips: 'id',
-          players: 'id',
+          players: 'id+canonical-identity',
           sessions: 'id',
+        },
+        playerIdentity: {
+          mode: 'canonical-player-identity-v1',
+          strongMatch: 'exact-normalized-name+nick',
+          doubtfulMatch: 'single-field-or-alias-overlap',
         },
       },
       counts: {
@@ -734,6 +1594,11 @@ function importSummaryHasChanges(summary){
     'sessionsAdded',
     'sessionsUpdated',
     'duplicateSessionsCollapsed',
+    'sourceCanonicalReferenceGroups',
+    'sourceDuplicatePlayersRemapped',
+    'sourceSessionsRemapped',
+    'sourcePlayerRefsRemapped',
+    'sourcePlayerCardsConsolidated',
   ].some((key) => numOrZero(s[key]) > 0);
 }
 
@@ -805,7 +1670,7 @@ function mergePlayerEntity(localPlayer, incomingPlayer){
   const local = isPlainObject(localPlayer) ? localPlayer : {};
   const incoming = isPlainObject(incomingPlayer) ? incomingPlayer : {};
   const preferIncoming = numOrZero(incoming.updatedAt) > numOrZero(local.updatedAt);
-  return {
+  const merged = {
     id: stableEntityId(local) || stableEntityId(incoming),
     name: preferString(local.name, incoming.name, preferIncoming),
     nick: preferString(local.nick, incoming.nick, preferIncoming),
@@ -814,6 +1679,22 @@ function mergePlayerEntity(localPlayer, incomingPlayer){
     createdAt: minPositiveTs(local.createdAt, incoming.createdAt) || Date.now(),
     updatedAt: maxTs(local.updatedAt, incoming.updatedAt, local.createdAt, incoming.createdAt) || Date.now(),
   };
+  merged.identity = buildPlayerIdentity(merged);
+  return merged;
+}
+
+function mergePlayerEntityGroup(canonicalPlayer, groupPlayers){
+  const canonical = isPlainObject(canonicalPlayer) ? canonicalPlayer : {};
+  const rows = (Array.isArray(groupPlayers) ? groupPlayers : []).filter(Boolean);
+  let merged = cloneJson(canonical) || canonical;
+  rows.forEach(player => {
+    merged = mergePlayerEntity(merged, player);
+  });
+  merged.id = stableEntityId(canonical) || stableEntityId(merged);
+  merged.createdAt = minPositiveTs.apply(null, rows.map(player => minPositiveTs(player && player.createdAt, player && player.updatedAt)).concat([merged.createdAt])) || Date.now();
+  merged.updatedAt = maxTs.apply(null, rows.map(player => maxTs(player && player.updatedAt, player && player.createdAt)).concat([merged.updatedAt, merged.createdAt])) || Date.now();
+  merged.identity = buildPlayerIdentity(merged);
+  return merged;
 }
 
 function sessionMergeComparable(session){
@@ -860,17 +1741,31 @@ function buildImportSummaryText(summary, opts){
   if (fileMeta && safeTrim(fileMeta.name)) lines.push('', `Archivo: ${safeTrim(fileMeta.name)}`);
   lines.push(
     '',
-    `Jugadores agregados: ${numOrZero(summary && summary.playersAdded)}`,
-    `Jugadores fusionados: ${numOrZero(summary && summary.playersMerged)}`,
+    `Jugadores nuevos reales: ${numOrZero(summary && summary.playersAdded)}`,
+    `Jugadores reconocidos como ya existentes: ${numOrZero(summary && summary.playersRecognizedExisting)}`,
+    `Reconciliados con canónico local (ID distinto): ${numOrZero(summary && summary.playersReconciledCanonical)}`,
+    `Coincidencias dudosas no auto-fusionadas: ${numOrZero(summary && summary.playersDoubtfulDeferred)}`,
+    `Jugadores fusionados en maestro local: ${numOrZero(summary && summary.playersMerged)}`,
     `Sesiones agregadas: ${numOrZero(summary && summary.sessionsAdded)}`,
     `Sesiones actualizadas: ${numOrZero(summary && summary.sessionsUpdated)}`,
     `Sesiones conservadas localmente: ${numOrZero(summary && summary.sessionsKeptLocal)}`,
     `Duplicados omitidos: ${numOrZero(summary && summary.duplicatesSkipped)}`,
     `Colisiones reconciliadas: ${numOrZero(summary && summary.conflictsResolved)}`,
     `Duplicados históricos colapsados: ${numOrZero(summary && summary.duplicateSessionsCollapsed)}`,
+    `Grupos históricos remapeados al canónico: ${numOrZero(summary && summary.sourceCanonicalReferenceGroups)}`,
+    `Sesiones históricas remapeadas: ${numOrZero(summary && summary.sourceSessionsRemapped)}`,
+    `Referencias de jugador corregidas en fuente: ${numOrZero(summary && summary.sourcePlayerRefsRemapped)}`,
+    `Fichas duplicadas consolidadas en Jugadores: ${numOrZero(summary && summary.sourcePlayerCardsConsolidated)}`,
   );
   if (numOrZero(summary && summary.chipsAdded) > 0 || numOrZero(summary && summary.chipsMerged) > 0){
     lines.push('', `Fichas agregadas: ${numOrZero(summary && summary.chipsAdded)}`, `Fichas fusionadas: ${numOrZero(summary && summary.chipsMerged)}`);
+  }
+  if (numOrZero(summary && summary.identityStrongCandidates) > 0 || numOrZero(summary && summary.identityDoubtfulCandidates) > 0){
+    lines.push(
+      '',
+      `Coincidencias canónicas fuertes detectadas: ${numOrZero(summary && summary.identityStrongCandidates)}`,
+      `Coincidencias canónicas dudosas detectadas: ${numOrZero(summary && summary.identityDoubtfulCandidates)}`,
+    );
   }
   if (attemptedApply && safetyBackup && safetyBackup.ok && numOrZero(safetyBackup.createdAt) > 0){
     lines.push('', `Respaldo local previo: ${formatDateTimeShort(safetyBackup.createdAt)} · ${numOrZero(safetyBackup.counts && safetyBackup.counts.sessions)} sesiones · ${numOrZero(safetyBackup.counts && safetyBackup.counts.players)} jugadores · ${numOrZero(safetyBackup.counts && safetyBackup.counts.chips)} fichas`);
@@ -881,7 +1776,8 @@ function buildImportSummaryText(summary, opts){
   if (errorsRejected > 0){
     lines.push('', `Registros descartados por error: ${errorsRejected}`);
   }
-  lines.push('', 'Regla final: misma sesión + mismo contenido = duplicado; misma sesión + contenido distinto = se resuelve por updatedAt, sin degradar una cerrada a draft, y luego se recalcula todo desde sesiones cerradas reconciliadas.');
+  lines.push('', 'Regla final: si el jugador importado ya existe por ID se fusiona directo; si llega con ID distinto pero coincide fuerte por nombre+nick normalizados se reconcilia con el canónico local; si la coincidencia es dudosa, no se auto-fusiona.');
+  lines.push('Las sesiones siguen la misma regla: misma sesión + mismo contenido = duplicado; misma sesión + contenido distinto = se resuelve por updatedAt, sin degradar una cerrada a draft, y luego se recalcula todo desde sesiones cerradas reconciliadas.');
   return lines.join('\n');
 }
 
@@ -903,9 +1799,27 @@ function buildImportPreflightText(parsed, summary, opts){
     `Sesiones en archivo: ${sessionsN}`,
     `Sesiones cerradas: ${closedN}`,
     '',
-    `Vista previa · agregaría ${numOrZero(preview.playersAdded) + numOrZero(preview.sessionsAdded) + numOrZero(preview.chipsAdded)} registros nuevos y fusionaría ${numOrZero(preview.playersMerged) + numOrZero(preview.chipsMerged) + numOrZero(preview.sessionsUpdated)} existentes.`,
-    'Se aplicará merge con reconciliación histórica y luego recálculo global completo desde datos fuente.',
+    `Jugadores nuevos reales a crear: ${numOrZero(preview.playersAdded)}`,
+    `Jugadores importados reconocidos como ya existentes: ${numOrZero(preview.playersRecognizedExisting)}`,
+    `Reconciliaciones fuertes con canónico local por identidad: ${numOrZero(preview.playersReconciledCanonical)}`,
+    `Coincidencias dudosas que NO se auto-fusionarán: ${numOrZero(preview.playersDoubtfulDeferred)}`,
+    `Sesiones nuevas a insertar: ${numOrZero(preview.sessionsAdded)}`,
+    `Sesiones existentes a actualizar: ${numOrZero(preview.sessionsUpdated)}`,
+    `Duplicados de sesión a omitir: ${numOrZero(preview.duplicatesSkipped)}`,
+    `Grupos históricos locales remapeados al canónico: ${numOrZero(preview.sourceCanonicalReferenceGroups)}`,
+    `Sesiones históricas/locales tocadas por remapeo: ${numOrZero(preview.sourceSessionsRemapped)}`,
+    `Fichas duplicadas locales a consolidar en Jugadores: ${numOrZero(preview.sourcePlayerCardsConsolidated)}`,
+    '',
+    'Decisión del merge: mismo ID = jugador existente; distinto ID + match fuerte nombre+nick normalizados = reconciliar con el canónico local; match dudoso = no fusionar automático.',
+    'Luego se mantiene el merge no destructivo, se remapean referencias históricas fuertes al canónico, se colapsan fichas duplicadas seguras y se recalculan ranking, récords y estadísticas desde datos fuente.',
   );
+  if (numOrZero(preview.identityStrongCandidates) > 0 || numOrZero(preview.identityDoubtfulCandidates) > 0){
+    lines.push(
+      '',
+      `Diagnóstico de identidad local · fuertes: ${numOrZero(preview.identityStrongCandidates)} · dudosas: ${numOrZero(preview.identityDoubtfulCandidates)}.`,
+      'Las coincidencias fuertes seguras sí se consolidan forensemente en esta importación; las dudosas siguen sin auto-fusionarse.',
+    );
+  }
   if (options.themeWillChange) lines.push('La preferencia de tema del respaldo también cambiará en este dispositivo.');
   return lines.join('\n');
 }
@@ -1090,7 +2004,9 @@ function dedupeSessionsBySignature(list){
 
 function buildMergedStoreNonDestructive(currentStore, incomingStore){
   const cur = normalizeStoreObject(currentStore).store;
-  const incoming = normalizeStoreObject(incomingStore).store;
+  const remapped = remapIncomingStorePlayersByCanonical(cur, incomingStore);
+  const incoming = remapped.store;
+  const canonicalPlan = remapped.plan;
 
   const chips = Array.isArray(cur.chips) ? cur.chips.map(ch => cloneJson(ch) || ch) : [];
   const players = Array.isArray(cur.players) ? cur.players.map(pl => cloneJson(pl) || pl) : [];
@@ -1117,11 +2033,18 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
     if (signature && !sessionBySignature.has(signature)) sessionBySignature.set(signature, session);
   });
 
+  const identityPreview = detectCrossStorePlayerIdentity(players, incoming.players);
+
   const summary = {
     chipsAdded: 0,
     chipsMerged: 0,
     playersAdded: 0,
     playersMerged: 0,
+    playersRecognizedExisting: numOrZero(canonicalPlan && canonicalPlan.counts && canonicalPlan.counts.recognizedExisting),
+    playersReconciledCanonical: numOrZero(canonicalPlan && canonicalPlan.counts && canonicalPlan.counts.canonicalReconciled),
+    playersExistingSameId: numOrZero(canonicalPlan && canonicalPlan.counts && canonicalPlan.counts.sameIdExisting),
+    playersDoubtfulDeferred: numOrZero(canonicalPlan && canonicalPlan.counts && canonicalPlan.counts.doubtful),
+    playersNewRealDetected: numOrZero(canonicalPlan && canonicalPlan.counts && canonicalPlan.counts.newReal),
     sessionsAdded: 0,
     sessionsUpdated: 0,
     sessionsKeptLocal: 0,
@@ -1129,6 +2052,12 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
     conflictsResolved: 0,
     conflictsDetected: 0,
     duplicateSessionsCollapsed: 0,
+    identityStrongCandidates: numOrZero(identityPreview && identityPreview.counts && identityPreview.counts.strong),
+    identityDoubtfulCandidates: numOrZero(identityPreview && identityPreview.counts && identityPreview.counts.doubtful),
+    identityStrongPairs: Array.isArray(identityPreview && identityPreview.strong) ? identityPreview.strong.slice(0, 50) : [],
+    identityDoubtfulPairs: Array.isArray(identityPreview && identityPreview.doubtful) ? identityPreview.doubtful.slice(0, 50) : [],
+    playerRecognitionPairs: Array.isArray(canonicalPlan && canonicalPlan.recognized) ? (cloneJson(canonicalPlan.recognized) || []).slice(0, 50) : [],
+    playerDoubtfulPairs: Array.isArray(canonicalPlan && canonicalPlan.doubtful) ? (cloneJson(canonicalPlan.doubtful) || []).slice(0, 50) : [],
     conflicts: [],
   };
 
@@ -1224,37 +2153,60 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
     summary.duplicateSessionsCollapsed += dedupedSessions.removed;
   }
   const finalSessions = dedupedSessions.sessions;
+  const sourceReferenceRemap = remapStoreCanonicalPlayerReferences({
+    chips,
+    players,
+    sessions: finalSessions,
+    pdfSeqNext: Math.max(numOrZero(cur.pdfSeqNext), numOrZero(incoming.pdfSeqNext), 1),
+    draftSessionId: firstNonEmpty(cur.draftSessionId, incoming.draftSessionId),
+    updatedAt: Date.now(),
+    ui: Object.assign({}, isPlainObject(cur.ui) ? cloneJson(cur.ui) || {} : {}),
+  });
+  const canonicalizedStore = sourceReferenceRemap.store;
+  const remapSummary = isPlainObject(sourceReferenceRemap && sourceReferenceRemap.summary) ? sourceReferenceRemap.summary : {};
+  const remapPlan = sourceReferenceRemap && sourceReferenceRemap.plan ? sourceReferenceRemap.plan : null;
 
+  summary.sourceCanonicalReferenceGroups = numOrZero(remapSummary.groups);
+  summary.sourceDuplicatePlayersRemapped = numOrZero(remapSummary.duplicatePlayers);
+  summary.sourceSessionsRemapped = numOrZero(remapSummary.sessionsTouched);
+  summary.sourcePlayerRefsRemapped = numOrZero(remapSummary.refsChanged);
+  summary.sourcePlayerCardsConsolidated = numOrZero(remapSummary.playersCollapsed);
+  summary.sourceStructuresRemapped = uniqStrings(remapSummary.structuresTouched || []);
+  summary.sourceReferenceRemapGroups = Array.isArray(remapPlan && remapPlan.groups) ? (cloneJson(remapPlan.groups) || []).slice(0, 50) : [];
+
+  const finalSessionsCanonical = Array.isArray(canonicalizedStore.sessions) ? canonicalizedStore.sessions : [];
   const finalSessionById = new Map();
-  finalSessions.forEach(session => {
+  finalSessionsCanonical.forEach(session => {
     const sid = stableEntityId(session);
     if (sid && !finalSessionById.has(sid)) finalSessionById.set(sid, session);
   });
 
-  const requestedDraftId = firstNonEmpty(cur.draftSessionId, incoming.draftSessionId);
+  const requestedDraftId = firstNonEmpty(cur.draftSessionId, incoming.draftSessionId, canonicalizedStore.draftSessionId);
   let nextDraftId = '';
   if (requestedDraftId && finalSessionById.has(requestedDraftId)){
     const draftCandidate = finalSessionById.get(requestedDraftId);
     if (draftCandidate && draftCandidate.status === 'draft') nextDraftId = requestedDraftId;
   }
   if (!nextDraftId){
-    const firstDraft = finalSessions.find(s => s && s.status === 'draft');
+    const firstDraft = finalSessionsCanonical.find(s => s && s.status === 'draft');
     nextDraftId = firstDraft ? stableEntityId(firstDraft) : '';
   }
 
-  const mergedStore = normalizeStoreObject(Object.assign({}, cur, {
-    chips,
-    players,
-    sessions: finalSessions,
-    pdfSeqNext: Math.max(numOrZero(cur.pdfSeqNext), numOrZero(incoming.pdfSeqNext), 1),
+  const mergedStore = normalizeStoreObject(Object.assign({}, cur, canonicalizedStore, {
+    pdfSeqNext: Math.max(numOrZero(cur.pdfSeqNext), numOrZero(incoming.pdfSeqNext), numOrZero(canonicalizedStore.pdfSeqNext), 1),
     draftSessionId: nextDraftId,
     updatedAt: Date.now(),
-    ui: Object.assign({}, isPlainObject(cur.ui) ? cloneJson(cur.ui) || {} : {}, {
+    ui: Object.assign({}, isPlainObject(cur.ui) ? cloneJson(cur.ui) || {} : {}, isPlainObject(canonicalizedStore.ui) ? cloneJson(canonicalizedStore.ui) || {} : {}, {
       importLastSummary: {
         appliedAt: Date.now(),
-        rule: 'same-session-same-content=duplicate; same-session-different-content=updatedAt-without-downgrading-closed-to-draft; rebuild-derived-from-source',
+        rule: 'same-session-same-content=duplicate; same-session-different-content=updatedAt-without-downgrading-closed-to-draft; strong-canonical-remap-on-source-before-derived-rebuild',
         playersAdded: summary.playersAdded,
         playersMerged: summary.playersMerged,
+        playersRecognizedExisting: summary.playersRecognizedExisting,
+        playersReconciledCanonical: summary.playersReconciledCanonical,
+        playersExistingSameId: summary.playersExistingSameId,
+        playersDoubtfulDeferred: summary.playersDoubtfulDeferred,
+        playersNewRealDetected: summary.playersNewRealDetected,
         sessionsAdded: summary.sessionsAdded,
         sessionsUpdated: summary.sessionsUpdated,
         sessionsKeptLocal: summary.sessionsKeptLocal,
@@ -1264,6 +2216,19 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
         duplicateSessionsCollapsed: summary.duplicateSessionsCollapsed,
         chipsAdded: summary.chipsAdded,
         chipsMerged: summary.chipsMerged,
+        identityStrongCandidates: summary.identityStrongCandidates,
+        identityDoubtfulCandidates: summary.identityDoubtfulCandidates,
+        sourceCanonicalReferenceGroups: summary.sourceCanonicalReferenceGroups,
+        sourceDuplicatePlayersRemapped: summary.sourceDuplicatePlayersRemapped,
+        sourceSessionsRemapped: summary.sourceSessionsRemapped,
+        sourcePlayerRefsRemapped: summary.sourcePlayerRefsRemapped,
+        sourcePlayerCardsConsolidated: summary.sourcePlayerCardsConsolidated,
+        sourceStructuresRemapped: cloneJson(summary.sourceStructuresRemapped) || [],
+        identityStrongPairs: cloneJson(summary.identityStrongPairs) || [],
+        identityDoubtfulPairs: cloneJson(summary.identityDoubtfulPairs) || [],
+        playerRecognitionPairs: cloneJson(summary.playerRecognitionPairs) || [],
+        playerDoubtfulPairs: cloneJson(summary.playerDoubtfulPairs) || [],
+        sourceReferenceRemapGroups: cloneJson(summary.sourceReferenceRemapGroups) || [],
         conflicts: summary.conflicts.slice(0, 50),
       }
     }),
@@ -4904,88 +5869,7 @@ function renderConfiguracion(){
   }
 
   function recalcAndPersistStats(){
-    const a = computeAnalytics();
-    // persist into players.stats (for convenience) + global block rebuilt from source sessions
-    const players = getPlayers();
-    players.forEach(p => {
-      const st = a.byPlayer.get(p.id) || null;
-      p.stats = st ? {
-        netTotal: st.netTotal,
-        games: st.games,
-        wins1: st.wins1,
-        podiums: st.podiums,
-        best: st.best,
-        worst: st.worst,
-        lastSession: st.lastSession,
-        buyInsCount: st.buyInsCount,
-        buyInsTotal: st.buyInsTotal,
-        rebuysCount: st.rebuysCount,
-        rebuysTotal: st.rebuysTotal,
-        itmCount: st.itmCount,
-        investedTotal: st.investedTotal,
-        chipsTotal: st.chipsTotal,
-        payoutsTotal: st.payoutsTotal,
-        roiGlobal: st.roiGlobal,
-        avgNet: st.avgNet,
-        bestWinStreak: cloneJson(st.bestWinStreak) || { length: 0, start: null, end: null },
-        bestItmStreak: cloneJson(st.bestItmStreak) || { length: 0, start: null, end: null },
-      } : {
-        netTotal: 0, games: 0, wins1: 0, podiums: 0, best: null, worst: null, lastSession: null, buyInsCount: 0, buyInsTotal: 0, rebuysCount: 0, rebuysTotal: 0, itmCount: 0, investedTotal: 0, chipsTotal: 0, payoutsTotal: 0, roiGlobal: 0, avgNet: 0, bestWinStreak: { length: 0, start: null, end: null }, bestItmStreak: { length: 0, start: null, end: null },
-      };
-    });
-    store.players = players;
-    store.statsGlobal = {
-      updatedAt: Date.now(),
-      records: cloneJson(a.records) || {},
-      ranking: a.ranking.map(row => ({
-        pos: row.rankPos,
-        id: row.id,
-        display: row.display,
-        games: row.games,
-        wins1: row.wins1,
-        podiums: row.podiums,
-        buyInsCount: row.buyInsCount,
-        buyInsTotal: row.buyInsTotal,
-        rebuysCount: row.rebuysCount,
-        rebuysTotal: row.rebuysTotal,
-        itmCount: row.itmCount,
-        netTotal: row.netTotal,
-        investedTotal: row.investedTotal,
-        chipsTotal: row.chipsTotal,
-        payoutsTotal: row.payoutsTotal,
-        avgNet: row.avgNet,
-        roiGlobal: row.roiGlobal,
-        best: cloneJson(row.best) || null,
-        worst: cloneJson(row.worst) || null,
-        lastSession: cloneJson(row.lastSession) || null,
-        bestWinStreak: cloneJson(row.bestWinStreak) || { length: 0, start: null, end: null },
-        bestItmStreak: cloneJson(row.bestItmStreak) || { length: 0, start: null, end: null },
-      })),
-      byPlayer: Array.from(a.byPlayer.values()).map(st => ({
-        id: st.id,
-        display: st.display,
-        games: st.games,
-        wins1: st.wins1,
-        podiums: st.podiums,
-        buyInsCount: st.buyInsCount,
-        buyInsTotal: st.buyInsTotal,
-        rebuysCount: st.rebuysCount,
-        rebuysTotal: st.rebuysTotal,
-        itmCount: st.itmCount,
-        netTotal: st.netTotal,
-        investedTotal: st.investedTotal,
-        chipsTotal: st.chipsTotal,
-        payoutsTotal: st.payoutsTotal,
-        avgNet: st.avgNet,
-        roiGlobal: st.roiGlobal,
-        best: cloneJson(st.best) || null,
-        worst: cloneJson(st.worst) || null,
-        lastSession: cloneJson(st.lastSession) || null,
-        bestWinStreak: cloneJson(st.bestWinStreak) || { length: 0, start: null, end: null },
-        bestItmStreak: cloneJson(st.bestItmStreak) || { length: 0, start: null, end: null },
-      })),
-      summaryRows: cloneJson(a.summaryRows) || [],
-    };
+    store = rebuildStoreDerivedData(store);
     saveStore();
   }
 
@@ -5842,7 +6726,7 @@ function renderConfiguracion(){
       if (last && numOrZero(last.appliedAt) > 0){
         const label = safeTrim(last.fileName) || 'respaldo sin nombre';
         chunks.push(`Último import: ${formatDateTimeShort(last.appliedAt)} · ${label}`);
-        chunks.push(`Agregado ${numOrZero(last.playersAdded) + numOrZero(last.sessionsAdded) + numOrZero(last.chipsAdded)} · fusionado ${numOrZero(last.playersMerged) + numOrZero(last.chipsMerged)} · duplicado omitido ${numOrZero(last.duplicatesSkipped)} · reconciliado ${numOrZero(last.sessionsUpdated)}`);
+        chunks.push(`Nuevo ${numOrZero(last.playersAdded) + numOrZero(last.sessionsAdded) + numOrZero(last.chipsAdded)} · existente ${numOrZero(last.playersRecognizedExisting)} · canónico ${numOrZero(last.playersReconciledCanonical)} · fusionado ${numOrZero(last.playersMerged) + numOrZero(last.chipsMerged)} · duplicado omitido ${numOrZero(last.duplicatesSkipped)} · sesión reconciliada ${numOrZero(last.sessionsUpdated)}`);
       } else {
         chunks.push('Aún no hay imports registrados en este dispositivo.');
       }
