@@ -13,9 +13,9 @@
   let themePref = loadThemePref();
 
   const APP_VERSION = '0.1.30';
-  const APP_BUILD = 'impact-names-fix';
-  const APP_CACHE_NAME = 'pokerito-v0.1.30-impact-names-fix';
-  const SW_URL = './sw.js?v=0.1.30-impact-names-fix';
+  const APP_BUILD = 'historical-impact-refresh';
+  const APP_CACHE_NAME = 'pokerito-v0.1.30-historical-impact-refresh';
+  const SW_URL = './sw.js?v=0.1.30-historical-impact-refresh';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -908,6 +908,9 @@ function rebuildStoreDerivedData(baseStore){
   const normalized = normalizeStoreObject(baseStore).store;
   store = normalized;
   const analytics = computeAnalytics();
+  const currentPlayers = Array.isArray(normalized.players) ? normalized.players : [];
+  const closedSessionsOrdered = sortSessionsForAnalytics(Array.isArray(normalized.sessions) ? normalized.sessions : []);
+  const historicalImpactBaseSeed = buildHistoricalImpactContextBaseSeed(closedSessionsOrdered, currentPlayers);
   const nextPlayers = getPlayers().map(p => {
     const st = analytics.byPlayer.get(p.id) || null;
     const next = Object.assign({}, p);
@@ -936,8 +939,15 @@ function rebuildStoreDerivedData(baseStore){
     };
     return next;
   });
+  const nextSessions = (Array.isArray(normalized.sessions) ? normalized.sessions : []).map(session => {
+    if (!session || session.status !== 'closed') return session;
+    if (isHistoricalImpactSnapshotFresh(session, session.historicalImpact, { closedSessions: closedSessionsOrdered, players: currentPlayers, baseSeed: historicalImpactBaseSeed })) return session;
+    const rebuiltImpact = buildSessionHistoricalImpactSnapshot(session, { closedSessions: closedSessionsOrdered, players: currentPlayers, baseSeed: historicalImpactBaseSeed });
+    return Object.assign({}, session, { historicalImpact: rebuiltImpact });
+  });
   const nextStore = normalizeStoreObject(Object.assign({}, normalized, {
     players: nextPlayers,
+    sessions: nextSessions,
     statsGlobal: {
       updatedAt: Date.now(),
       records: cloneJson(analytics.records) || {},
@@ -2197,6 +2207,7 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
 
   (Array.isArray(incoming.sessions) ? incoming.sessions : []).forEach(inSession => {
     const candidate = cloneJson(inSession) || inSession;
+    if (candidate && typeof candidate === 'object' && candidate.historicalImpact) delete candidate.historicalImpact;
     const id = stableEntityId(candidate);
     const signature = sessionMergeSignature(candidate);
     const localById = id ? sessionById.get(id) : null;
@@ -3482,7 +3493,7 @@ function renderHistorialDetalle(){
 
   const PDF_GLOBAL_RANKING_CRITERION = 'Orden oficial: ganancia neta global, ROI global, victorias y sesiones jugadas.';
   const ROI_RECORD_MIN_GAMES = 3;
-  const HISTORICAL_IMPACT_VERSION = 2;
+  const HISTORICAL_IMPACT_VERSION = 4;
 
   function calcGlobalRoi(net, invested){
     const base = numOrZero(invested);
@@ -3535,9 +3546,65 @@ function renderHistorialDetalle(){
   }
 
 
-  function getSessionSortTs(session){
+  function ymdToDayStartTs(ymd){
+    const txt = normalizeYmdLoose(ymd);
+    if (!txt) return 0;
+    const m = txt.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return 0;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0);
+    const ts = d.getTime();
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  function getSessionChronology(session){
     const s = session || {};
-    return numOrZero(s.closedAt || s.updatedAt || s.createdAt);
+    const explicitDate = normalizeYmdLoose(s.date);
+    const closedAt = numOrZero(s.closedAt);
+    const createdAt = numOrZero(s.createdAt);
+    const updatedAt = numOrZero(s.updatedAt);
+    const earliestTs = minPositiveTs(closedAt, createdAt, updatedAt);
+    const fallbackRevisionTs = maxTs(updatedAt, closedAt, createdAt);
+    const candidates = [
+      { key: 'closedAt', ts: closedAt, ymd: closedAt ? ymdFromTimestamp(closedAt) : '', weight: 30 },
+      { key: 'createdAt', ts: createdAt, ymd: createdAt ? ymdFromTimestamp(createdAt) : '', weight: 20 },
+      { key: 'updatedAt', ts: updatedAt, ymd: updatedAt ? ymdFromTimestamp(updatedAt) : '', weight: 10 },
+    ].filter(item => item.ts > 0);
+
+    const derivedDate = explicitDate || (earliestTs ? ymdFromTimestamp(earliestTs) : '');
+    const effectiveDate = explicitDate || derivedDate || '';
+    const dayTs = ymdToDayStartTs(effectiveDate) || earliestTs || fallbackRevisionTs || 0;
+
+    const sameDayCandidate = effectiveDate
+      ? candidates
+        .filter(item => item.ymd === effectiveDate)
+        .sort((a, b) => {
+          const dw = numOrZero(b.weight) - numOrZero(a.weight);
+          if (dw) return dw;
+          const dt = a.ts - b.ts;
+          if (Math.abs(dt) > 0.0001) return dt;
+          return String(a.key).localeCompare(String(b.key), 'es', { sensitivity: 'base' });
+        })[0] || null
+      : null;
+
+    const exactTs = numOrZero(sameDayCandidate && sameDayCandidate.ts);
+    const anchorTs = exactTs || (dayTs ? (dayTs + (12 * 60 * 60 * 1000)) : 0) || earliestTs || fallbackRevisionTs || 0;
+    const precision = exactTs ? (explicitDate ? 'date+timestamp' : 'timestamp-derived') : (effectiveDate ? 'date-only' : (fallbackRevisionTs ? 'timestamp-fallback' : 'undated'));
+    const sortTs = anchorTs || fallbackRevisionTs || 0;
+    const compareTs = exactTs || fallbackRevisionTs || sortTs;
+
+    return {
+      effectiveDate,
+      dayTs,
+      sortTs,
+      compareTs,
+      exactTs,
+      precision,
+      source: safeTrim(sameDayCandidate && sameDayCandidate.key) || (explicitDate ? 'date' : (earliestTs ? 'timestamp' : 'fallback')),
+    };
+  }
+
+  function getSessionSortTs(session){
+    return numOrZero(getSessionChronology(session).sortTs);
   }
 
   function compactRecordLabels(labels, maxItems){
@@ -3914,6 +3981,54 @@ function renderHistorialDetalle(){
     return { tone: 'flat', label: 'Se mantiene', detail: `${getImpactRankLabel(prev)} → ${getImpactRankLabel(next)}` };
   }
 
+
+  function buildHistoricalImpactContextBaseSeed(inputSessions, inputPlayers){
+    const closedSessions = sortSessionsForAnalytics(inputSessions || getClosedSessions());
+    const players = (Array.isArray(inputPlayers) ? inputPlayers : getPlayers())
+      .map(player => ({
+        id: stableEntityId(player),
+        name: safeTrim(player && player.name),
+        nick: safeTrim(player && player.nick),
+        updatedAt: numOrZero(player && player.updatedAt),
+      }))
+      .filter(row => row.id)
+      .sort((a, b) => String(a.id).localeCompare(String(b.id), 'es', { sensitivity: 'base' }));
+    const timeline = closedSessions.map(session => {
+      const chronology = getSessionChronology(session);
+      return {
+        id: stableEntityId(session),
+        signature: sessionMergeSignature(session),
+        date: normalizeYmdLoose(session && session.date),
+        effectiveDate: chronology.effectiveDate,
+        sortTs: chronology.sortTs,
+        compareTs: chronology.compareTs,
+        precision: chronology.precision,
+        source: chronology.source,
+        updatedAt: numOrZero(session && session.updatedAt),
+        closedAt: numOrZero(session && session.closedAt),
+        createdAt: numOrZero(session && session.createdAt),
+        pdfSeq: Math.floor(numOrZero(session && session.pdfSeq)),
+      };
+    });
+    return { players, timeline };
+  }
+
+  function getHistoricalImpactContextKey(session, options){
+    const opts = options && typeof options === 'object' ? options : {};
+    const baseSeed = opts.baseSeed || buildHistoricalImpactContextBaseSeed(opts.closedSessions, opts.players);
+    const targetId = stableEntityId(session) || '';
+    return `hix_${HISTORICAL_IMPACT_VERSION}_${hashTiny(canonicalJson({ targetId, baseSeed }))}`;
+  }
+
+  function isHistoricalImpactSnapshotFresh(session, snapshot, options){
+    if (!session || !isPlainObject(snapshot)) return false;
+    if (numOrZero(snapshot.version) !== HISTORICAL_IMPACT_VERSION) return false;
+    if (!Array.isArray(snapshot.players)) return false;
+    if (stableEntityId(snapshot.sessionId) !== stableEntityId(session)) return false;
+    const currentKey = getHistoricalImpactContextKey(session, options);
+    return safeTrim(snapshot.contextKey) === currentKey;
+  }
+
   function getRecordItemMap(records){
     const items = Array.isArray(records && records.items) ? records.items : [];
     const out = new Map();
@@ -3975,14 +4090,21 @@ function renderHistorialDetalle(){
     return bits.join(' ');
   }
 
-  function buildSessionHistoricalImpactSnapshot(session){
+  function buildSessionHistoricalImpactSnapshot(session, options){
+    const opts = options && typeof options === 'object' ? options : {};
     const targetId = stableEntityId(session);
     const reportName = makeReportNameResolver(session);
-    const ordered = sortSessionsForAnalytics(getClosedSessions());
+    const ordered = sortSessionsForAnalytics(opts.closedSessions || getClosedSessions());
+    const contextKey = getHistoricalImpactContextKey(session, {
+      closedSessions: ordered,
+      players: opts.players,
+      baseSeed: opts.baseSeed,
+    });
     const idx = ordered.findIndex(item => sameStableEntity(item, targetId));
     if (idx < 0){
       return {
         version: HISTORICAL_IMPACT_VERSION,
+        contextKey,
         sessionId: targetId || '',
         sessionRef: pdfSessionReferenceLabel(session),
         summary: {
@@ -4046,6 +4168,7 @@ function renderHistorialDetalle(){
 
     return {
       version: HISTORICAL_IMPACT_VERSION,
+      contextKey,
       sessionId: stableEntityId(target) || '',
       sessionRef: pdfSessionReferenceLabel(target),
       summary: {
@@ -4063,10 +4186,11 @@ function renderHistorialDetalle(){
   }
 
   function resolveSessionHistoricalImpact(session, options){
+    const opts = options && typeof options === 'object' ? options : {};
     const stored = session && session.historicalImpact;
-    if (stored && numOrZero(stored.version) === HISTORICAL_IMPACT_VERSION && Array.isArray(stored.players)) return stored;
-    const rebuilt = buildSessionHistoricalImpactSnapshot(session);
-    if (session && typeof session === 'object' && options && options.persist){
+    if (isHistoricalImpactSnapshotFresh(session, stored, opts)) return stored;
+    const rebuilt = buildSessionHistoricalImpactSnapshot(session, opts);
+    if (session && typeof session === 'object' && opts.persist){
       session.historicalImpact = rebuilt;
       try{ saveSession(session); }catch(e){}
     }
@@ -5945,8 +6069,16 @@ function formatMoney(n){
       .map(s => ensureSessionRosterIntegrity(s))
       .slice()
       .sort((a, b) => {
-        const dt = getSessionSortTs(a) - getSessionSortTs(b);
+        const ca = getSessionChronology(a);
+        const cb = getSessionChronology(b);
+        const dayDt = numOrZero(ca.dayTs) - numOrZero(cb.dayTs);
+        if (Math.abs(dayDt) > 0.0001) return dayDt;
+        const dt = numOrZero(ca.sortTs) - numOrZero(cb.sortTs);
         if (Math.abs(dt) > 0.0001) return dt;
+        const cmpDt = numOrZero(ca.compareTs) - numOrZero(cb.compareTs);
+        if (Math.abs(cmpDt) > 0.0001) return cmpDt;
+        const pdfDt = Math.floor(numOrZero(a && a.pdfSeq)) - Math.floor(numOrZero(b && b.pdfSeq));
+        if (pdfDt) return pdfDt;
         return String(stableEntityId(a)).localeCompare(String(stableEntityId(b)), 'es', { sensitivity: 'base' });
       });
   }

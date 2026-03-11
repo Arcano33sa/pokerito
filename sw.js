@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.30 impact-names-fix */
-const CACHE_NAME = 'pokerito-v0.1.30-impact-names-fix';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.30 historical-impact-refresh */
+const CACHE_NAME = 'pokerito-v0.1.30-historical-impact-refresh';
 const CORE_ASSETS = [
   './',
   './index.html',

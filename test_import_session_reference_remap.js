@@ -96,7 +96,9 @@ hooks.setStore(localBrokenStore);
   if (String(sessDup.playerIds[0]) !== 'p_canon') throw new Error('historical playerIds not remapped');
   if (String(sessDup.playersSnapshot[0].id) !== 'p_canon') throw new Error('historical playersSnapshot not remapped');
   if (String(sessDup.game.players[0].id) !== 'p_canon') throw new Error('historical game.players not remapped');
-  if (sessDup.historicalImpact && sessDup.historicalImpact.players && sessDup.historicalImpact.players.length) throw new Error('stale historicalImpact should be invalidated on touched session');
+  if (!sessDup.historicalImpact || !Array.isArray(sessDup.historicalImpact.players) || !sessDup.historicalImpact.players.length) throw new Error('historicalImpact should be regenerated on touched session');
+  if (!String(sessDup.historicalImpact.contextKey || '').trim()) throw new Error('regenerated historicalImpact should include contextKey');
+  if ((sessDup.historicalImpact.players || []).some(player => String(player && player.id) !== 'p_canon')) throw new Error('regenerated historicalImpact should use canonical player id');
 
   const analytics = hooks.computeAnalytics();
   if ((analytics.ranking || []).length !== 1) throw new Error('ranking should consolidate into one player after source remap');
