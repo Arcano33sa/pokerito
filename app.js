@@ -10,10 +10,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.22';
-  const APP_BUILD = 'json-import-forensic-consolidation';
-  const APP_CACHE_NAME = 'pokerito-v0.1.22-json-import-forensic-consolidation';
-  const SW_URL = './sw.js?v=0.1.22-json-import-forensic-consolidation';
+  const APP_VERSION = '0.1.23';
+  const APP_BUILD = 'ipad-input-hardening';
+  const APP_CACHE_NAME = 'pokerito-v0.1.23-ipad-input-hardening';
+  const SW_URL = './sw.js?v=0.1.23-ipad-input-hardening';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -2866,6 +2866,8 @@ function setPlayerActive(id, active){
     const $grid = document.getElementById('playerPickGrid');
     const $start = document.getElementById('startSessionBtn');
     const $date = document.getElementById('sessionDate');
+    let startBusy = false;
+    let discardBusy = false;
 
     function renderPickGrid(){
       if (!activePlayers.length){
@@ -2910,11 +2912,13 @@ function setPlayerActive(id, active){
     });
 
     $start.addEventListener('click', () => {
-      if (draft) return;
+      if (draft || startBusy) return;
       const date = ($date.value || '').trim() || todayYMD();
       const ids = Array.from(selected);
       if (!ids.length) return;
 
+      startBusy = true;
+      $start.disabled = true;
       const session = createDraftSession({ date, playerIds: ids });
       store.sessions = store.sessions || [];
       store.sessions.push(session);
@@ -2931,16 +2935,22 @@ function setPlayerActive(id, active){
       const $discard = document.getElementById('discardDraftBtn');
       if ($continue) $continue.addEventListener('click', () => navigate('/juego/mesa'));
       if ($discard) $discard.addEventListener('click', async () => {
-        const ok = await confirmDialog({
-          title: 'Descartar borrador',
-          body: 'Esto eliminará la sesión en borrador. No hay “Ctrl+Z” (aún).',
-          okText: 'Descartar',
-          cancelText: 'Cancelar',
-          danger: true,
-        });
-        if (!ok) return;
-        discardDraftSession();
-        onRoute();
+        if (discardBusy) return;
+        discardBusy = true;
+        try{
+          const ok = await confirmDialog({
+            title: 'Descartar borrador',
+            body: 'Esto eliminará la sesión en borrador. No hay “Ctrl+Z” (aún).',
+            okText: 'Descartar',
+            cancelText: 'Cancelar',
+            danger: true,
+          });
+          if (!ok) return;
+          discardDraftSession();
+          onRoute();
+        } finally {
+          discardBusy = false;
+        }
       });
     }
 
@@ -4446,7 +4456,7 @@ function renderHistorialDetalle(){
                 <div class="buyin-block">
                   <label class="field compact">
                     <span>Buy-in</span>
-                    <input class="buyin" type="number" inputmode="numeric" pattern="[0-9]*" placeholder="0" value="${escapeAttr(String(numOrZero(st.buyIn) || ''))}" ${canMutateSession ? '' : 'disabled'} />
+                    <input class="buyin" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" enterkeyhint="done" placeholder="0" value="${escapeAttr(String(numOrZero(st.buyIn) || ''))}" ${canMutateSession ? '' : 'disabled'} />
                   </label>
                 </div>
 
@@ -4496,23 +4506,30 @@ function renderHistorialDetalle(){
     const $close = document.getElementById('closeBtn');
     if ($close){
       $close.addEventListener('click', async () => {
-        if (!canMutateSession) return;
-        const sum = calcSessionSummary(s);
-        const ok = await confirmDialog({
-          title: 'Cerrar Partida',
-          body: `Se guardará en historial como sesión cerrada (inmutable).\n\nTotal invertido: ${formatMoney(sum.totalInvested)}\nTotal fichas: ${formatMoney(sum.totalChipsValue)}\nDelta: ${formatMoney(sum.delta)}`,
-          okText: 'Cerrar',
-          cancelText: 'Cancelar',
-          danger: true,
-        });
-        if (!ok) return;
-        closeSession(s.id);
-        navigate('/juego');
+        if (!canMutateSession || closeBusy) return;
+        closeBusy = true;
+        try{
+          const sum = calcSessionSummary(s);
+          const ok = await confirmDialog({
+            title: 'Cerrar Partida',
+            body: `Se guardará en historial como sesión cerrada (inmutable).\n\nTotal invertido: ${formatMoney(sum.totalInvested)}\nTotal fichas: ${formatMoney(sum.totalChipsValue)}\nDelta: ${formatMoney(sum.delta)}`,
+            okText: 'Cerrar',
+            cancelText: 'Cancelar',
+            danger: true,
+          });
+          if (!ok) return;
+          closeSession(s.id);
+          navigate('/juego');
+        } finally {
+          closeBusy = false;
+        }
       });
     }
 
     const $lateJoin = document.getElementById('lateJoinBtn');
     let lateJoinBusy = false;
+    let closeBusy = false;
+    let sessionDialogBusy = false;
     if ($lateJoin){
       $lateJoin.addEventListener('click', async () => {
         if (!canMutateSession || lateJoinBusy) return;
@@ -4558,7 +4575,7 @@ function renderHistorialDetalle(){
 
     // buyin change
     root.querySelectorAll('input.buyin').forEach(inp => {
-      inp.addEventListener('focus', () => { try{ inp.select(); }catch(e){} });
+      hardenNumericInput(inp, { selectOnFocus: true });
       inp.addEventListener('input', () => {
         if (!canMutateSession) return;
         const card = inp.closest('.mesa-player');
@@ -4587,28 +4604,34 @@ function renderHistorialDetalle(){
         if (!pid) return;
 
         if (act === 'rebuy'){
-          const st = ensurePlayerState(s, pid);
-          const def = lastRebuyOrBuyIn(st);
-          const amt = await numberInputDialog({
-            title: 'Rebuy',
-            body: 'Monto del rebuy para este jugador',
-            value: (def ? String(def) : ''),
-            placeholder: '0',
-            okText: 'Agregar',
-            cancelText: 'Cancelar'
-          });
-          if (amt === null) return;
-          const n = numOrZero(amt);
-          if (n <= 0) return;
-          if (!Array.isArray(st.rebuys)) st.rebuys = [];
-          st.rebuys.push(n);
-          touchSession(s);
-          saveSession(s);
-          const $rc = card.querySelector('[data-role="rebuyCount"]');
-          if ($rc) $rc.textContent = String(st.rebuys.length);
-          refreshTotalsForPlayer(card, st, chipValueMap);
-          refreshKpis(s);
-          return;
+          if (sessionDialogBusy) return;
+          sessionDialogBusy = true;
+          try{
+            const st = ensurePlayerState(s, pid);
+            const def = lastRebuyOrBuyIn(st);
+            const amt = await numberInputDialog({
+              title: 'Rebuy',
+              body: 'Monto del rebuy para este jugador',
+              value: (def ? String(def) : ''),
+              placeholder: '0',
+              okText: 'Agregar',
+              cancelText: 'Cancelar'
+            });
+            if (amt === null) return;
+            const n = numOrZero(amt);
+            if (n <= 0) return;
+            if (!Array.isArray(st.rebuys)) st.rebuys = [];
+            st.rebuys.push(n);
+            touchSession(s);
+            saveSession(s);
+            const $rc = card.querySelector('[data-role="rebuyCount"]');
+            if ($rc) $rc.textContent = String(st.rebuys.length);
+            refreshTotalsForPlayer(card, st, chipValueMap);
+            refreshKpis(s);
+            return;
+          } finally {
+            sessionDialogBusy = false;
+          }
         }
 
         const row = btn.closest('.chip-row');
@@ -4633,23 +4656,29 @@ function renderHistorialDetalle(){
         }
 
         if (act === 'edit'){
-          const amt = await numberInputDialog({
-            title: 'Cantidad de fichas',
-            body: 'Escribe la cantidad exacta',
-            value: (exists ? String(cur) : ''),
-            placeholder: '0',
-            okText: 'OK',
-            cancelText: 'Cancelar'
-          });
-          if (amt === null) return;
-          const next = Math.max(0, Math.floor(numOrZero(amt)));
-          st.counts[cid] = next;
-          btn.textContent = String(next);
-          touchSession(s);
-          saveSession(s);
-          refreshTotalsForPlayer(card, st, chipValueMap);
-          refreshKpis(s);
-          return;
+          if (sessionDialogBusy) return;
+          sessionDialogBusy = true;
+          try{
+            const amt = await numberInputDialog({
+              title: 'Cantidad de fichas',
+              body: 'Escribe la cantidad exacta',
+              value: (exists ? String(cur) : ''),
+              placeholder: '0',
+              okText: 'OK',
+              cancelText: 'Cancelar'
+            });
+            if (amt === null) return;
+            const next = Math.max(0, Math.floor(numOrZero(amt)));
+            st.counts[cid] = next;
+            btn.textContent = String(next);
+            touchSession(s);
+            saveSession(s);
+            refreshTotalsForPlayer(card, st, chipValueMap);
+            refreshKpis(s);
+            return;
+          } finally {
+            sessionDialogBusy = false;
+          }
         }
       });
     }
@@ -4943,6 +4972,8 @@ function renderConfiguracion(){
   }
 
   function openChipModal({ mode, chip, onSave }){
+    if (hasOpenOverlay()) return null;
+    const previousActive = rememberFocusable();
     const isEdit = (mode === 'edit');
     const base = chip || { id: uid('chip'), name: '', value: '', color: '#808080', active: true };
 
@@ -4963,14 +4994,14 @@ function renderConfiguracion(){
 
               <label class="field">
                 <span>Valor</span>
-                <input id="chipValue" type="number" inputmode="numeric" pattern="[0-9]*" placeholder="Ej. 250" value="${escapeAttr((base.value===0||base.value)?String(base.value):'')}" />
+                <input id="chipValue" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" enterkeyhint="done" placeholder="Ej. 250" value="${escapeAttr((base.value===0||base.value)?String(base.value):'')}" />
               </label>
 
               <div class="field">
                 <span>Color</span>
                 <div class="color-row">
                   <input id="chipColor" class="color" type="color" value="${escapeAttr(normHex(base.color) || '#808080')}" />
-                  <input id="chipColorHex" class="text" type="text" maxlength="7" placeholder="#RRGGBB" value="${escapeAttr(normHex(base.color) || '#808080')}" autocapitalize="none" spellcheck="false" />
+                  <input id="chipColorHex" class="text" type="text" maxlength="7" placeholder="#RRGGBB" value="${escapeAttr(normHex(base.color) || '#808080')}" autocapitalize="none" autocomplete="off" spellcheck="false" />
                   <div class="chip-preview" id="chipPreview" aria-hidden="true"></div>
                 </div>
                 <div class="hint">Tip: escribe el hex (#RRGGBB) o usa el selector.</div>
@@ -5000,6 +5031,7 @@ function renderConfiguracion(){
     const $hex = overlay.querySelector('#chipColorHex');
     const $preview = overlay.querySelector('#chipPreview');
     const $active = overlay.querySelector('#chipActive');
+    hardenNumericInput($value, { selectOnFocus: isEdit });
 
     function setPreview(hex){
       const h = normHex(hex) || '#808080';
@@ -5027,9 +5059,14 @@ function renderConfiguracion(){
     $color.addEventListener('input', syncHexFromColor);
 
     // Close handlers
+    let closed = false;
+    let saveBusy = false;
     function close(){
+      if (closed) return;
+      closed = true;
       overlay.remove();
       try{ document.body.style.overflow = ''; }catch(e){}
+      restoreFocusSafe(previousActive);
     }
     overlay.addEventListener('click', (ev) => {
       if (ev.target === overlay) close();
@@ -5039,6 +5076,7 @@ function renderConfiguracion(){
     });
 
     overlay.querySelector('[data-act="save"]').addEventListener('click', () => {
+      if (saveBusy || closed) return;
       const name = ($name.value || '').trim();
       const color = normHex($hex.value) || normHex($color.value);
       const valRaw = ($value.value || '').trim();
@@ -5070,24 +5108,33 @@ function renderConfiguracion(){
         updatedAt: Date.now(),
       };
 
+      saveBusy = true;
       upsertChip(payload);
       if (typeof onSave === 'function') onSave();
       close();
+    });
+
+    overlay.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); close(); return; }
+      if (ev.key === 'Enter' && ev.target !== $color) {
+        ev.preventDefault();
+        const saveBtn = overlay.querySelector('[data-act="save"]');
+        if (saveBtn) saveBtn.click();
+      }
     });
 
     // Mount
     document.body.appendChild(overlay);
     try{ document.body.style.overflow = 'hidden'; }catch(e){}
     setPreview(normHex(base.color) || '#808080');
-
-    // autofocus
-    setTimeout(() => {
-      try{ $name.focus(); }catch(e){}
-    }, 0);
+    focusFieldForTouch($name, { selectIfFilled: isEdit });
+    return overlay;
   }
 
   
   function openPlayerModal({ mode, player, onSave }){
+    if (hasOpenOverlay()) return null;
+    const previousActive = rememberFocusable();
     const isEdit = (mode === 'edit');
     const base = player || { id: uid('player'), name: '', nick: '', active: true, stats: {} };
 
@@ -5138,9 +5185,14 @@ function renderConfiguracion(){
     const $nick = overlay.querySelector('#playerNick');
     const $active = overlay.querySelector('#playerActive');
 
+    let closed = false;
+    let saveBusy = false;
     function close(){
+      if (closed) return;
+      closed = true;
       overlay.remove();
       try{ document.body.style.overflow = ''; }catch(e){}
+      restoreFocusSafe(previousActive);
     }
 
     overlay.addEventListener('click', (ev) => {
@@ -5152,6 +5204,7 @@ function renderConfiguracion(){
     });
 
     overlay.querySelector('[data-act="save"]').addEventListener('click', () => {
+      if (saveBusy || closed) return;
       const name = ($name.value || '').trim();
       const nick = ($nick.value || '').trim();
 
@@ -5170,17 +5223,25 @@ function renderConfiguracion(){
         updatedAt: Date.now(),
       };
 
+      saveBusy = true;
       upsertPlayer(payload);
       if (typeof onSave === 'function') onSave();
       close();
     });
 
+    overlay.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); close(); return; }
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        const saveBtn = overlay.querySelector('[data-act="save"]');
+        if (saveBtn) saveBtn.click();
+      }
+    });
+
     document.body.appendChild(overlay);
     try{ document.body.style.overflow = 'hidden'; }catch(e){}
-
-    setTimeout(() => {
-      try{ $name.focus(); }catch(e){}
-    }, 0);
+    focusFieldForTouch($name, { selectIfFilled: isEdit });
+    return overlay;
   }
 
 
@@ -5202,7 +5263,80 @@ function renderConfiguracion(){
     return (Number.isFinite(n) ? n : 0);
   }
 
-  function formatMoney(n){
+  function rememberFocusable(){
+  const el = document.activeElement;
+  if (!el || el === document.body || typeof el.focus !== 'function') return null;
+  return el;
+}
+
+function restoreFocusSafe(el){
+  if (!el || !document.contains(el) || typeof el.focus !== 'function') return;
+  try{ el.focus({ preventScroll: true }); }catch(e){
+    try{ el.focus(); }catch(e2){}
+  }
+}
+
+function hasOpenOverlay(){
+  return !!document.querySelector('.modal-overlay');
+}
+
+function sanitizeUnsignedIntInput(value){
+  return String(value == null ? '' : value).replace(/[^0-9]/g, '');
+}
+
+function hardenNumericInput(input, { selectOnFocus } = {}){
+  if (!input || input.dataset.numericHardened === '1') return input;
+  input.dataset.numericHardened = '1';
+  try{ input.setAttribute('inputmode', 'numeric'); }catch(e){}
+  try{ input.setAttribute('pattern', '[0-9]*'); }catch(e){}
+  try{ input.setAttribute('autocomplete', 'off'); }catch(e){}
+  try{ input.setAttribute('autocorrect', 'off'); }catch(e){}
+  try{ input.setAttribute('spellcheck', 'false'); }catch(e){}
+  try{ input.setAttribute('enterkeyhint', 'done'); }catch(e){}
+
+  const normalize = () => {
+    const before = String(input.value || '');
+    const after = sanitizeUnsignedIntInput(before);
+    if (after === before) return;
+    const end = (typeof input.selectionEnd === 'number') ? input.selectionEnd : before.length;
+    const removed = before.slice(0, end).length - sanitizeUnsignedIntInput(before.slice(0, end)).length;
+    input.value = after;
+    try{
+      const nextPos = Math.max(0, end - removed);
+      if (typeof input.setSelectionRange === 'function') input.setSelectionRange(nextPos, nextPos);
+    }catch(e){}
+  };
+
+  input.addEventListener('input', normalize);
+  input.addEventListener('blur', normalize);
+  if (selectOnFocus){
+    input.addEventListener('focus', () => {
+      const val = String(input.value || '');
+      if (!val) return;
+      try{
+        if (typeof input.setSelectionRange === 'function') input.setSelectionRange(0, val.length);
+        else if (typeof input.select === 'function') input.select();
+      }catch(e){}
+    });
+  }
+  return input;
+}
+
+function focusFieldForTouch(input, { selectIfFilled } = {}){
+  if (!input || typeof input.focus !== 'function') return;
+  try{ input.focus({ preventScroll: true }); }catch(e){
+    try{ input.focus(); }catch(e2){}
+  }
+  if (!selectIfFilled) return;
+  const val = String(input.value || '');
+  if (!val) return;
+  try{
+    if (typeof input.setSelectionRange === 'function') input.setSelectionRange(0, val.length);
+    else if (typeof input.select === 'function') input.select();
+  }catch(e){}
+}
+
+function formatMoney(n){
     const x = numOrZero(n);
     // sin moneda fija: cada quien juega su “economía”
     try{
@@ -6472,7 +6606,9 @@ function renderConfiguracion(){
   }
 
   function confirmDialog({ title, body, okText, cancelText, danger }){
+    if (hasOpenOverlay()) return Promise.resolve(false);
     return new Promise(resolve => {
+      const previousActive = rememberFocusable();
       const overlay = el(`
         <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Confirmación">
           <div class="modal">
@@ -6491,9 +6627,13 @@ function renderConfiguracion(){
         </div>
       `);
 
+      let closed = false;
       function close(val){
+        if (closed) return;
+        closed = true;
         overlay.remove();
         try{ document.body.style.overflow = ''; }catch(e){}
+        restoreFocusSafe(previousActive);
         resolve(!!val);
       }
 
@@ -6502,6 +6642,10 @@ function renderConfiguracion(){
       });
       overlay.querySelectorAll('[data-act="close"],[data-act="cancel"]').forEach(b => b.addEventListener('click', () => close(false)));
       overlay.querySelector('[data-act="ok"]').addEventListener('click', () => close(true));
+      overlay.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') { ev.preventDefault(); close(false); }
+        if (ev.key === 'Enter') { ev.preventDefault(); close(true); }
+      });
 
       document.body.appendChild(overlay);
       try{ document.body.style.overflow = 'hidden'; }catch(e){}
@@ -6509,8 +6653,10 @@ function renderConfiguracion(){
   }
 
   function numberInputDialog({ title, body, value, placeholder, okText, cancelText }){
+    if (hasOpenOverlay()) return Promise.resolve(null);
     return new Promise(resolve => {
-      const safeValue = (value === undefined || value === null) ? '' : String(value);
+      const previousActive = rememberFocusable();
+      const safeValue = sanitizeUnsignedIntInput((value === undefined || value === null) ? '' : String(value));
       const overlay = el(`
         <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Número">
           <div class="modal">
@@ -6534,10 +6680,15 @@ function renderConfiguracion(){
       `);
 
       const $inp = overlay.querySelector('#numInput');
+      hardenNumericInput($inp, { selectOnFocus: true });
 
+      let closed = false;
       function close(val){
+        if (closed) return;
+        closed = true;
         overlay.remove();
         try{ document.body.style.overflow = ''; }catch(e){}
+        restoreFocusSafe(previousActive);
         resolve(val);
       }
 
@@ -6555,37 +6706,20 @@ function renderConfiguracion(){
       try{ document.body.style.overflow = 'hidden'; }catch(e){}
 
       // iPad Safari: el teclado SOLO se abre si el focus ocurre dentro del mismo gesto (tap/click).
-      // Evitar setTimeout/requestAnimationFrame aquí.
-      try{
-        // preventScroll no existe en todos los browsers
-        $inp.focus({ preventScroll: true });
-      }catch(e){
-        try{ $inp.focus(); }catch(e2){}
-      }
-      const shouldSelect = (($inp.value || '').length > 0);
-      const reselect = () => {
-        try{
-          const len = ($inp.value || '').length;
-          if (typeof $inp.setSelectionRange === 'function') $inp.setSelectionRange(0, len);
-          else if (typeof $inp.select === 'function') $inp.select();
-        }catch(e){}
-      };
-      if (shouldSelect){
-        reselect();
-        // Safari iPad PWA: segundo intento leve para que quede seleccionado “de verdad”
-        setTimeout(reselect, 60);
-      }
+      focusFieldForTouch($inp, { selectIfFilled: true });
     });
   }
 
 
 
   function lateJoinPlayerDialog({ session }){
+    if (hasOpenOverlay()) return Promise.resolve(null);
     return new Promise(resolve => {
       if (!session || safeTrim(session.status) === 'closed') {
         resolve(null);
         return;
       }
+      const previousActive = rememberFocusable();
       const eligible = getLateJoinEligiblePlayers(session);
       const sessionLabel = lateJoinSessionLabel(session);
       const overlay = el(`
@@ -6624,6 +6758,7 @@ function renderConfiguracion(){
         closed = true;
         overlay.remove();
         try{ document.body.style.overflow = ''; }catch(e){}
+        restoreFocusSafe(previousActive);
         resolve(val || null);
       }
 
@@ -6869,6 +7004,137 @@ function renderConfiguracion(){
     applyTheme();
   }
 
+  function installTouchZoomGuard(){
+    const doc = document;
+    if (!doc || !doc.documentElement) return;
+    const root = doc.documentElement;
+    root.setAttribute('data-touch-zoom-guard', 'on');
+
+    let lastTouchAt = 0;
+    let lastX = 0;
+    let lastY = 0;
+    let lastGuardTarget = null;
+    let gestureMoved = false;
+    let startX = 0;
+    let startY = 0;
+
+    const interactiveSelector = [
+      'button',
+      'a',
+      'label',
+      'summary',
+      'input',
+      'select',
+      'textarea',
+      '[role="button"]',
+      '.btn',
+      '.icon-btn',
+      '.card',
+      '.seg',
+      '.list-row',
+      '.player-row',
+      '.rank-row',
+      '.session-row',
+      '.table-row',
+      '.clickable',
+      '.tap-target'
+    ].join(',');
+
+    function labelTargetsEditable(el){
+      if (!el || !el.closest) return false;
+      const label = el.closest('label');
+      if (!label) return false;
+      if (label.querySelector('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return true;
+      const forId = safeTrim(label.getAttribute('for'));
+      if (!forId) return false;
+      const control = document.getElementById(forId);
+      return !!(control && control.matches('input, textarea, select, [contenteditable=""], [contenteditable="true"]'));
+    }
+
+    function isEditableTarget(node){
+      const el = (node && node.nodeType === 1) ? node : null;
+      if (!el) return false;
+      if (el.closest('input, textarea, select, option, [contenteditable=""], [contenteditable="true"]')) return true;
+      if (labelTargetsEditable(el)) return true;
+      return false;
+    }
+
+    function resolveGuardTarget(node){
+      const el = (node && node.nodeType === 1) ? node : null;
+      if (!el || !el.closest) return null;
+      return el.closest(interactiveSelector) || el;
+    }
+
+    function sameGuardZone(a, b){
+      if (!a || !b) return false;
+      return a === b || a.contains(b) || b.contains(a);
+    }
+
+    function fireSyntheticClick(target){
+      if (!target || typeof target.click === 'function'){
+        try{ if (target) target.click(); return; }catch(e){}
+      }
+      try{
+        const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+        target.dispatchEvent(evt);
+      }catch(e){}
+    }
+
+    doc.addEventListener('touchstart', (ev) => {
+      if (document.body && document.body.classList.contains('print-mode')) return;
+      if (!ev || !ev.touches || ev.touches.length !== 1){
+        lastTouchAt = 0;
+        lastGuardTarget = null;
+        gestureMoved = false;
+        return;
+      }
+      const touch = ev.touches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+      gestureMoved = false;
+    }, { passive: true, capture: true });
+
+    doc.addEventListener('touchmove', (ev) => {
+      if (!ev || !ev.touches || ev.touches.length !== 1) return;
+      const touch = ev.touches[0];
+      if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10){
+        gestureMoved = true;
+      }
+    }, { passive: true, capture: true });
+
+    doc.addEventListener('touchend', (ev) => {
+      if (document.body && document.body.classList.contains('print-mode')) return;
+      const touches = ev && ev.changedTouches;
+      if (!touches || touches.length !== 1) return;
+      if (gestureMoved){
+        lastTouchAt = 0;
+        lastGuardTarget = null;
+        gestureMoved = false;
+        return;
+      }
+
+      const touch = touches[0];
+      const target = (ev.target && ev.target.nodeType === 1) ? ev.target : null;
+      const guardTarget = resolveGuardTarget(target);
+      const now = Date.now();
+      const elapsed = now - lastTouchAt;
+      const closeInTime = elapsed > 0 && elapsed < 320;
+      const closeInSpace = Math.abs(touch.clientX - lastX) < 24 && Math.abs(touch.clientY - lastY) < 24;
+      const repeatedZone = sameGuardZone(guardTarget, lastGuardTarget);
+      const shouldBlockZoom = !!guardTarget && closeInTime && closeInSpace && repeatedZone && !isEditableTarget(target);
+
+      lastTouchAt = now;
+      lastX = touch.clientX;
+      lastY = touch.clientY;
+      lastGuardTarget = guardTarget;
+      gestureMoved = false;
+
+      if (!shouldBlockZoom) return;
+      try{ ev.preventDefault(); }catch(e){}
+      fireSyntheticClick(guardTarget);
+    }, { passive: false, capture: true });
+  }
+
   function updateThemeColorMeta(){
     const meta = document.querySelector('meta[name="theme-color"]');
     if (!meta) return;
@@ -6949,6 +7215,7 @@ function renderConfiguracion(){
   window.addEventListener('hashchange', onRoute);
   window.addEventListener('DOMContentLoaded', () => {
     purgeLegacyClientResidue();
+    installTouchZoomGuard();
     // ensure default route
     if (!window.location.hash) window.location.hash = '#/inicio';
     applyTheme();

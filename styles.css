@@ -59,7 +59,32 @@ html[data-theme="dark"]{
 
 *{ box-sizing: border-box; }
 html, body{ height: 100%; }
-html{ overflow-x: hidden; }
+html{ overflow-x: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body, .app-main{
+  touch-action: manipulation;
+}
+
+button,
+a,
+input,
+select,
+textarea,
+label,
+summary,
+[role="button"],
+.btn,
+.icon-btn,
+.card,
+.seg,
+.list-row,
+.player-row,
+.rank-row,
+.session-row,
+.table-row,
+.clickable,
+.tap-target{
+  touch-action: manipulation;
+}
 body{
   margin: 0;
   font-family: ui-sans-serif, -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
@@ -571,6 +596,7 @@ body{
   min-width: 0;
   height: 44px;
   padding: 0 14px;
+  font-size: 16px;
   border-radius: 16px;
   border: 1px solid var(--border);
   background: color-mix(in oklab, var(--panel) 96%, transparent);
@@ -940,7 +966,7 @@ body{
 }
 
 .field.compact > span{ font-size: 11px; }
-.field.compact input{ height: 46px; border-radius: 14px; font-size: 15px; padding: 0 12px; }
+.field.compact input{ min-height: 48px; height: 48px; border-radius: 14px; font-size: 16px; line-height: 1.2; padding: 0 12px; }
 
 .rebuy-box{
   display: grid;
@@ -1463,6 +1489,8 @@ body{
   font-size: 16px;
   font-weight: 800;
   outline: none;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .field input[type="number"]{ -moz-appearance: textfield; }

@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.22 json-import-forensic-consolidation */
-const CACHE_NAME = 'pokerito-v0.1.22-json-import-forensic-consolidation';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.23 ipad-input-hardening */
+const CACHE_NAME = 'pokerito-v0.1.23-ipad-input-hardening';
 const CORE_ASSETS = [
   './',
   './index.html',
