@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.29';
-  const APP_BUILD = 'header-nav-final';
-  const APP_CACHE_NAME = 'pokerito-v0.1.29-header-nav-final';
-  const SW_URL = './sw.js?v=0.1.29-header-nav-final';
+  const APP_VERSION = '0.1.30';
+  const APP_BUILD = 'impact-names-fix';
+  const APP_CACHE_NAME = 'pokerito-v0.1.30-impact-names-fix';
+  const SW_URL = './sw.js?v=0.1.30-impact-names-fix';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -3482,7 +3482,7 @@ function renderHistorialDetalle(){
 
   const PDF_GLOBAL_RANKING_CRITERION = 'Orden oficial: ganancia neta global, ROI global, victorias y sesiones jugadas.';
   const ROI_RECORD_MIN_GAMES = 3;
-  const HISTORICAL_IMPACT_VERSION = 1;
+  const HISTORICAL_IMPACT_VERSION = 2;
 
   function calcGlobalRoi(net, invested){
     const base = numOrZero(invested);
@@ -3977,6 +3977,7 @@ function renderHistorialDetalle(){
 
   function buildSessionHistoricalImpactSnapshot(session){
     const targetId = stableEntityId(session);
+    const reportName = makeReportNameResolver(session);
     const ordered = sortSessionsForAnalytics(getClosedSessions());
     const idx = ordered.findIndex(item => sameStableEntity(item, targetId));
     if (idx < 0){
@@ -4016,7 +4017,7 @@ function renderHistorialDetalle(){
       const milestoneLabels = getImpactMilestones(preRow, postRow, postAnalytics && postAnalytics.ranking ? postAnalytics.ranking.length : 0);
       const entry = {
         id: row.id,
-        display: row.display,
+        display: reportName(row.id, row.display),
         sessionPos: row.pos,
         sessionNet: row.net,
         beforeRank,
@@ -4061,10 +4062,15 @@ function renderHistorialDetalle(){
     };
   }
 
-  function resolveSessionHistoricalImpact(session){
+  function resolveSessionHistoricalImpact(session, options){
     const stored = session && session.historicalImpact;
     if (stored && numOrZero(stored.version) === HISTORICAL_IMPACT_VERSION && Array.isArray(stored.players)) return stored;
-    return buildSessionHistoricalImpactSnapshot(session);
+    const rebuilt = buildSessionHistoricalImpactSnapshot(session);
+    if (session && typeof session === 'object' && options && options.persist){
+      session.historicalImpact = rebuilt;
+      try{ saveSession(session); }catch(e){}
+    }
+    return rebuilt;
   }
 
   function buildPdfImpactSections(impact){
@@ -4072,7 +4078,7 @@ function renderHistorialDetalle(){
     const players = Array.isArray(data.players) ? data.players : [];
     if (!players.length){
       return buildPdfSection({
-        title: 'Impacto de esta sesión',
+        title: 'Impacto de esta Sesión',
         subtitle: 'Comparación del histórico inmediatamente antes y después del cierre.',
         body: `<div class="empty">Todavía no hay suficiente histórico para mostrar impacto comparativo de esta sesión.</div>`,
         subtle: true,
@@ -4134,7 +4140,7 @@ function renderHistorialDetalle(){
       }).join('');
 
       return buildPdfSection({
-        title: 'Impacto de esta sesión',
+        title: 'Impacto de esta Sesión',
         subtitle: idx === 0 ? 'Cómo cambió el histórico global al cerrar esta partida.' : `Continuación ${idx + 1} de ${chunks.length}`,
         body: `${summaryHtml}<div class="print-impact-list">${cards}</div>`,
         breakBefore: idx > 0,
@@ -4279,7 +4285,7 @@ function renderHistorialDetalle(){
 
     const playerChunks = chunkList(playerRows, 18);
     const globalBase = getPdfGlobalBaseData(s, analytics);
-    const impactData = resolveSessionHistoricalImpact(s);
+    const impactData = resolveSessionHistoricalImpact(s, { persist: true });
     const impactSections = buildPdfImpactSections(impactData);
     const rankingSections = buildPdfRankingSections(analytics.ranking || []);
     const recordSections = buildPdfRecordsSections(analytics.records || {});

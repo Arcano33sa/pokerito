@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.29 header-nav-final */
-const CACHE_NAME = 'pokerito-v0.1.29-header-nav-final';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.30 impact-names-fix */
+const CACHE_NAME = 'pokerito-v0.1.30-impact-names-fix';
 const CORE_ASSETS = [
   './',
   './index.html',
