@@ -10,7 +10,9 @@
   --accent: #b71f33;
   --gold: #d4af37;
   --radius: 22px;
-  --header-h: 64px;
+  --header-bar-h: 64px;
+  --header-safe-top: env(safe-area-inset-top);
+  --header-h: calc(var(--header-bar-h) + var(--header-safe-top));
   --pad: 22px;
   --tap: 56px;
   --maxw: 980px;
@@ -124,48 +126,57 @@ body{
 }
 
 .header-inner{
-  height: 100%;
+  height: var(--header-h);
   width: min(100%, var(--screen-maxw));
   max-width: var(--screen-maxw);
   margin: 0 auto;
-  padding: 0 var(--screen-pad-right) 0 var(--screen-pad-x);
-  display: flex;
+  padding: var(--header-safe-top) var(--screen-pad-right) 0 var(--screen-pad-x);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   min-width: 0;
   gap: 12px;
 }
 
-.brand{
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.brand-icon{
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
-  background: color-mix(in oklab, var(--panel-solid) 70%, transparent);
-  box-shadow: 0 6px 16px rgba(0,0,0,0.18);
-}
-
-.brand-title{
-  font-weight: 900;
-  letter-spacing: 0.08em;
-  font-size: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 52vw;
-}
-
+.header-nav,
 .header-right{
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.header-nav{
+  justify-content: flex-start;
+}
+
+.header-center{
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  align-content: center;
+}
+
+.header-eyebrow{
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 950;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-title{
+  font-size: 18px;
+  line-height: 1.12;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hide{ display: none !important; }
@@ -190,6 +201,32 @@ body{
 }
 
 .icon-btn svg{ width: 22px; height: 22px; }
+
+.header-nav .icon-btn,
+.header-right .icon-btn{
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+}
+
+.header-nav .icon-btn{
+  box-shadow: 0 7px 18px rgba(0,0,0,0.08);
+}
+
+.header-nav:empty::before{
+  content: '';
+  display: block;
+  width: 42px;
+  height: 42px;
+}
+
+.legacy-nav-hide{
+  display: none !important;
+}
+
+.legacy-nav-wrap-hide{
+  display: none !important;
+}
 
 .app-main{
   width: 100%;
@@ -260,7 +297,8 @@ body{
 }
 
 @media (max-width: 520px){
-  .brand-title{ max-width: 46vw; font-size: 17px; letter-spacing: 0.06em; }
+  .header-title{ font-size: 16px; }
+  .header-eyebrow{ font-size: 9px; letter-spacing: 0.12em; }
   :root{ --pad: 16px; }
 }
 
@@ -1149,7 +1187,7 @@ body{
 
 /* iPad landscape breathing */
 @media (min-width: 1024px){
-  :root{ --pad: 28px; --header-h: 68px; }
+  :root{ --pad: 28px; --header-bar-h: 68px; }
   .screen-title{ font-size: 32px; }
   .card:not(.home-card){ min-height: 178px; padding: 20px 22px 20px 26px; }
   .card-title{ font-size: 24px; }
@@ -2331,12 +2369,16 @@ html[data-vp-width="compact"] .modal{
   width: min(760px, calc(var(--app-vw, 100vw) - 24px));
 }
 
-html[data-vp-orientation="portrait"] .brand-title{
-  max-width: 60vw;
+html[data-vp-orientation="portrait"] .header-title{
+  font-size: 17px;
+}
+
+html[data-vp-orientation="portrait"] .header-eyebrow{
+  letter-spacing: 0.14em;
 }
 
 @media (max-height: 740px){
-  :root{ --header-h: 60px; }
+  :root{ --header-bar-h: 60px; }
   .screen{ padding-top: 16px; }
 }
 

@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.26 rotation-polish */
-const CACHE_NAME = 'pokerito-v0.1.26-rotation-polish';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.27 smart-header-base */
+const CACHE_NAME = 'pokerito-v0.1.27-smart-header-base';
 const CORE_ASSETS = [
   './',
   './index.html',

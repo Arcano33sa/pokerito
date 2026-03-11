@@ -2,6 +2,8 @@
 (function(){
   const $app = document.getElementById('app');
   const $printRoot = document.getElementById('printRoot');
+  const $headerNav = document.getElementById('headerNav');
+  const $headerTitle = document.getElementById('headerTitle');
   const $headerRight = document.getElementById('headerRight');
 
   // Theme (Auto/Light/Dark) — persisted
@@ -10,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.26';
-  const APP_BUILD = 'rotation-polish';
-  const APP_CACHE_NAME = 'pokerito-v0.1.26-rotation-polish';
-  const SW_URL = './sw.js?v=0.1.26-rotation-polish';
+  const APP_VERSION = '0.1.27';
+  const APP_BUILD = 'smart-header-base';
+  const APP_CACHE_NAME = 'pokerito-v0.1.27-smart-header-base';
+  const SW_URL = './sw.js?v=0.1.27-smart-header-base';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -26,6 +28,33 @@
       <path d="M21 13.2A7.4 7.4 0 0 1 10.8 3a8.9 8.9 0 1 0 10.2 10.2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
     </svg>
   `;
+  const ICON_HOME = `
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M3 10.8 12 3l9 7.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M5.5 9.8V20h13V9.8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M10 20v-5.2h4V20" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    </svg>
+  `;
+  const ICON_BACK = `
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M15 5 8 12l7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  `;
+
+  const HEADER_ROUTE_META = {
+    '/inicio': { level: 0, title: 'Inicio', fallbackBack: '/inicio' },
+    '/juego': { level: 1, title: 'Juego', fallbackBack: '/inicio' },
+    '/configuracion': { level: 1, title: 'Configuración', fallbackBack: '/inicio' },
+    '/soporte': { level: 1, title: 'Soporte', fallbackBack: '/inicio' },
+    '/juego/mesa': { level: 2, title: 'Mesa', fallbackBack: '/juego' },
+    '/juego/sesion': { level: 2, title: 'Mesa', fallbackBack: '/juego' },
+    '/historial': { level: 2, title: 'Historial', fallbackBack: '/juego' },
+    '/ranking': { level: 2, title: 'Ranking', fallbackBack: '/configuracion' },
+    '/historial/detalle': { level: 3, title: 'Historial detalle', fallbackBack: '/historial' },
+    '/pdf': { level: 3, title: 'PDF', fallbackBack: '/historial' },
+  };
+  const headerNavTrail = [];
+  let currentHeaderRouteHref = '/inicio';
 
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
@@ -2685,6 +2714,7 @@ function setPlayerActive(id, active){
 
   function onRoute(){
     const path = getRoute();
+    const href = getRouteHref();
     const isPrint = (path === '/pdf');
     try{ document.body.classList.toggle('print-mode', isPrint); }catch(e){}
     if (!isPrint){
@@ -2693,6 +2723,7 @@ function setPlayerActive(id, active){
     }
     const fn = routes[path] || routes['/inicio'];
     fn();
+    rememberHeaderRoute(href);
     updateHeaderControls(path);
     if (!isPrint){
       // keep header fixed and scroll main to top per navigation
@@ -7247,11 +7278,105 @@ function formatMoney(n){
     }
   }
 
+  function getRouteHref(){
+    const hash = window.location.hash || '#/inicio';
+    const clean = hash.startsWith('#') ? hash.slice(1) : hash;
+    return clean || '/inicio';
+  }
+
+  function resolveHeaderRoute(path){
+    const key = HEADER_ROUTE_META[path] ? path : '/inicio';
+    const meta = HEADER_ROUTE_META[key] || HEADER_ROUTE_META['/inicio'];
+    const q = getHashQuery();
+    let title = meta.title;
+    if (key === '/historial/detalle'){
+      const id = safeTrim(q.get('id'));
+      const session = id ? getSessionById(id) : null;
+      if (session && safeTrim(session.date)) title = `Historial · ${safeTrim(session.date)}`;
+    }
+    if (key === '/pdf'){
+      const id = safeTrim(q.get('id'));
+      const session = id ? getSessionById(id) : null;
+      title = session && safeTrim(session.date) ? `PDF · ${safeTrim(session.date)}` : 'PDF';
+    }
+    let fallbackBack = meta.fallbackBack || '/inicio';
+    if (key === '/pdf'){
+      const id = safeTrim(q.get('id'));
+      fallbackBack = id ? `/historial/detalle?id=${encodeURIComponent(id)}` : '/historial';
+    }
+    return {
+      key,
+      path: key,
+      title,
+      level: numOrZero(meta.level),
+      fallbackBack,
+      showHome: numOrZero(meta.level) >= 1,
+      showBack: numOrZero(meta.level) >= 2,
+      isPrint: (key === '/pdf'),
+    };
+  }
+
+  function rememberHeaderRoute(href){
+    const clean = safeTrim(href) || '/inicio';
+    if (!clean) return;
+    const last = headerNavTrail.length ? headerNavTrail[headerNavTrail.length - 1] : '';
+    if (last === clean) return;
+    headerNavTrail.push(clean);
+    if (headerNavTrail.length > 24) headerNavTrail.splice(0, headerNavTrail.length - 24);
+    currentHeaderRouteHref = clean;
+  }
+
+  function findHeaderBackTarget(ctx){
+    const current = safeTrim(currentHeaderRouteHref) || safeTrim(getRouteHref()) || ctx.key;
+    for (let i = headerNavTrail.length - 2; i >= 0; i--){
+      const candidate = safeTrim(headerNavTrail[i]);
+      if (!candidate || candidate === current) continue;
+      return candidate;
+    }
+    return safeTrim(ctx && ctx.fallbackBack) || '/inicio';
+  }
+
+  function createHeaderIconButton(kind, label, onClick){
+    const icon = (kind === 'back') ? ICON_BACK : ICON_HOME;
+    const btn = el(`<button class="icon-btn" type="button" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}">${icon}</button>`);
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  function syncLegacyNavButtons(ctx){
+    if (!$app || !ctx || ctx.isPrint) return;
+    $app.querySelectorAll('#backBtn, #toInicioBtn').forEach(node => {
+      node.classList.add('legacy-nav-hide');
+      const wrap = node.closest('.row, .panel-actions, .mesa-head-actions, .history-detail-actions');
+      if (!wrap) return;
+      const visibleButtons = Array.from(wrap.querySelectorAll('button, a')).filter(elm => !elm.classList.contains('legacy-nav-hide') && !elm.hidden && getComputedStyle(elm).display !== 'none');
+      const visibleNonButtons = Array.from(wrap.children).filter(elm => !elm.matches('button, a') && !elm.classList.contains('legacy-nav-hide') && !elm.hidden && getComputedStyle(elm).display !== 'none');
+      wrap.classList.toggle('legacy-nav-wrap-hide', !visibleButtons.length && !visibleNonButtons.length);
+    });
+  }
+
   function updateHeaderControls(path){
-    if (!$themeToggle) return;
-    const show = (path === '/juego' || path === '/juego/mesa' || path === '/juego/sesion' || path.startsWith('/historial') || path === '/ranking');
-    $themeToggle.classList.toggle('hide', !show);
-    if (show) updateThemeToggleIcon();
+    const ctx = resolveHeaderRoute(path);
+    if ($app){
+      $app.dataset.route = ctx.key;
+      $app.dataset.routeLevel = String(ctx.level || 0);
+    }
+    if ($headerTitle) $headerTitle.textContent = ctx.title || 'Pokerito';
+    if ($headerNav){
+      $headerNav.innerHTML = '';
+      if (ctx.showBack){
+        const backHref = findHeaderBackTarget(ctx);
+        $headerNav.appendChild(createHeaderIconButton('back', 'Volver', () => navigate(backHref)));
+      }
+      if (ctx.showHome){
+        $headerNav.appendChild(createHeaderIconButton('home', 'Ir a inicio', () => navigate('/inicio')));
+      }
+    }
+    if ($themeToggle){
+      $themeToggle.classList.toggle('hide', !!ctx.isPrint);
+      if (!ctx.isPrint) updateThemeToggleIcon();
+    }
+    syncLegacyNavButtons(ctx);
   }
 
   function syncSupportThemeUI(){
