@@ -32,10 +32,13 @@ function makeEl(tag='div'){
 }
 const storage = new Map();
 const document = {
-  documentElement: { setAttribute(){}, removeAttribute(){} },
+  documentElement: { setAttribute(){}, removeAttribute(){}, dataset: {}, style: { setProperty(){} }, classList: { toggle(){}, add(){}, remove(){} }, clientWidth: 1024, clientHeight: 768 },
   body: Object.assign(makeEl('body'), { style: {} }),
   getElementById(id){ if (!this.__els) this.__els = {}; if (!this.__els[id]) this.__els[id] = makeEl('div'); return this.__els[id]; },
-  createElement(tag){ return makeEl(tag); },
+  createElement(tag){
+    if (tag === 'template') return { innerHTML: '', content: { firstElementChild: makeEl('div') } };
+    return makeEl(tag);
+  },
   querySelector(sel){ if (sel === 'meta[name="theme-color"]') return { setAttribute(){} }; return null; },
 };
 const windowObj = {

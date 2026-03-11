@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.27';
-  const APP_BUILD = 'smart-header-base';
-  const APP_CACHE_NAME = 'pokerito-v0.1.27-smart-header-base';
-  const SW_URL = './sw.js?v=0.1.27-smart-header-base';
+  const APP_VERSION = '0.1.29';
+  const APP_BUILD = 'header-nav-final';
+  const APP_CACHE_NAME = 'pokerito-v0.1.29-header-nav-final';
+  const SW_URL = './sw.js?v=0.1.29-header-nav-final';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -55,6 +55,7 @@
   };
   const headerNavTrail = [];
   let currentHeaderRouteHref = '/inicio';
+  let pendingHeaderNavIntent = null;
 
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
@@ -2558,9 +2559,21 @@ function setPlayerActive(id, active){
     try{ return new URLSearchParams(q); }catch(e){ return new URLSearchParams(''); }
   }
 
-  function navigate(path){
-    if (!path.startsWith('/')) path = '/' + path;
-    window.location.hash = '#' + path;
+  function normalizeNavigationHref(path){
+    const raw = safeTrim(path) || '/inicio';
+    return raw.startsWith('/') ? raw : ('/' + raw);
+  }
+
+  function navigate(path, options){
+    const href = normalizeNavigationHref(path);
+    const stackMode = safeTrim(options && options.stackMode) || 'push';
+    pendingHeaderNavIntent = { kind: stackMode, href };
+    if (getRouteHref() === href){
+      applyHeaderNavigationState(href);
+      updateHeaderControls(getRoute());
+      return;
+    }
+    window.location.hash = '#' + href;
   }
 
   // ===== Etapa 2: Export PDF (sin dependencias) =====
@@ -2723,8 +2736,9 @@ function setPlayerActive(id, active){
     }
     const fn = routes[path] || routes['/inicio'];
     fn();
-    rememberHeaderRoute(href);
+    applyHeaderNavigationState(href);
     updateHeaderControls(path);
+    syncAppModalState();
     if (!isPrint){
       // keep header fixed and scroll main to top per navigation
       try { $app.parentElement.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch(e){ $app.parentElement.scrollTop = 0; }
@@ -2909,7 +2923,6 @@ function setPlayerActive(id, active){
 
           <div class="row panel-actions game-actions" style="margin-top:14px">
             <button class="btn primary" type="button" id="startSessionBtn">Iniciar Partida</button>
-            <button class="btn" type="button" id="backBtn">Volver</button>
           </div>
 
           ${draft ? `<div class="small-note">Hay un borrador activo. Para crear una nueva partida, descártalo primero (sí, duele, pero es sano).</div>` : ''}
@@ -2955,7 +2968,6 @@ function setPlayerActive(id, active){
     $app.innerHTML = '';
     $app.appendChild(root);
 
-    document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
     document.getElementById('toConfigBtn').addEventListener('click', () => navigate('/configuracion'));
     const $toHist = document.getElementById('toHistorialBtn');
     if ($toHist) $toHist.addEventListener('click', () => navigate('/historial'));
@@ -3169,7 +3181,6 @@ function setPlayerActive(id, active){
               <div class="panel-title" style="margin:0">Sesiones</div>
               <div class="row panel-actions">
                 <button class="btn" type="button" id="toRankingBtn">Ranking</button>
-                <button class="btn" type="button" id="backBtn">Volver</button>
               </div>
             </div>
 
@@ -3188,7 +3199,6 @@ function setPlayerActive(id, active){
       $app.innerHTML = '';
       $app.appendChild(root);
 
-      document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
       document.getElementById('toRankingBtn').addEventListener('click', () => navigate('/ranking'));
 
       const $list = document.getElementById('histList');
@@ -3302,7 +3312,6 @@ function renderHistorialDetalle(){
             <div class="mesa-sub">${escapeHtml(String(analysis.rows.length))} jugadores · sesión cerrada</div>
           </div>
           <div class="row panel-actions history-detail-actions">
-            <button class="btn" type="button" id="backBtn">Volver</button>
             <button class="btn" type="button" id="toMesaBtn">Ver mesa</button>
           </div>
         </div>
@@ -3362,7 +3371,6 @@ function renderHistorialDetalle(){
     $app.innerHTML = '';
     $app.appendChild(root);
 
-    document.getElementById('backBtn').addEventListener('click', () => navigate('/historial'));
     document.getElementById('toMesaBtn').addEventListener('click', () => navigate('/juego/sesion?id=' + encodeURIComponent(s.id)));
   }
 
@@ -4163,9 +4171,6 @@ function renderHistorialDetalle(){
     if (!s){
       const root = el(`
         <section class="print-screen" aria-label="Reporte PDF">
-          <div class="print-actions">
-            <button class="btn" type="button" id="backBtn">Volver</button>
-          </div>
           <div class="empty">Sesión no encontrada.</div>
         </section>
       `);
@@ -4173,7 +4178,6 @@ function renderHistorialDetalle(){
       $app.innerHTML = '';
       if ($printRoot) $printRoot.appendChild(root);
       else $app.appendChild(root);
-      document.getElementById('backBtn').addEventListener('click', () => navigate('/historial'));
       return;
     }
 
@@ -4315,7 +4319,6 @@ function renderHistorialDetalle(){
           <div class="print-status" id="printStatus" role="status" aria-live="polite" data-tone="muted">Preparando documento…</div>
           <div class="print-action-buttons">
             <button class="btn primary" type="button" id="printBtn" disabled>Imprimir / Guardar PDF</button>
-            <button class="btn" type="button" id="backBtn">Volver</button>
           </div>
         </div>
 
@@ -4352,7 +4355,6 @@ function renderHistorialDetalle(){
     else $app.appendChild(root);
 
     const printBtn = document.getElementById('printBtn');
-    const backBtn = document.getElementById('backBtn');
     let printInFlight = null;
     let lastPrintAt = 0;
 
@@ -4396,15 +4398,6 @@ function renderHistorialDetalle(){
       });
     }
 
-    if (backBtn){
-      backBtn.addEventListener('click', () => {
-        cancelPrintPrep();
-        try{ restoreTitle(); }catch(e){}
-        try{ if (window.opener) window.close(); }catch(e){}
-        navigate('/historial');
-      });
-    }
-
     runPrintFlow('auto').catch(() => {});
   }
 
@@ -4421,7 +4414,6 @@ function renderHistorialDetalle(){
             <div class="panel-title" style="margin:0">Jugadores</div>
             <div class="row panel-actions">
               <button class="btn" type="button" id="toHistBtn">Histórico</button>
-              <button class="btn" type="button" id="backBtn">Volver</button>
             </div>
           </div>
 
@@ -4481,7 +4473,6 @@ function renderHistorialDetalle(){
     $app.innerHTML = '';
     $app.appendChild(root);
 
-    document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
     document.getElementById('toHistBtn').addEventListener('click', () => navigate('/historial'));
   }
 
@@ -4503,13 +4494,12 @@ function renderHistorialDetalle(){
             <div class="mesa-h1">Mesa <span class="badge">${escapeHtml(badge || '')}</span></div>
             <div class="mesa-sub">${escapeHtml(String(s.date || ''))} · ${escapeHtml(String(players.length))} jugadores · snapshot ${escapeHtml(String(chips.length))} fichas</div>
           </div>
-          <div class="row mesa-head-actions">
-            <button class="btn" type="button" id="backBtn">Volver</button>
-            ${canMutateSession ? `
+          ${canMutateSession ? `
+            <div class="row mesa-head-actions">
               <button class="btn" type="button" id="lateJoinBtn">Agregar jugador</button>
               <button class="btn danger" type="button" id="closeBtn">Cerrar Partida</button>
-            ` : `<button class="btn primary" type="button" id="toInicioBtn">Inicio</button>`}
-          </div>
+            </div>
+          ` : ''}
         </div>
 
         <div class="panel mesa-summary-panel" role="region" aria-label="Cuadre">
@@ -4595,10 +4585,6 @@ function renderHistorialDetalle(){
 
     $app.innerHTML = '';
     $app.appendChild(root);
-
-    document.getElementById('backBtn').addEventListener('click', () => navigate(backPath || '/juego'));
-    const $toInicio = document.getElementById('toInicioBtn');
-    if ($toInicio) $toInicio.addEventListener('click', () => navigate('/inicio'));
 
     const $close = document.getElementById('closeBtn');
     if ($close){
@@ -4859,9 +4845,7 @@ function renderConfiguracion(){
           <div class="small-note">“Desactivar” no borra: solo la saca del uso (historial futuro intacto).</div>
         </div>
 
-        <div class="row panel-actions" style="margin-top:14px">
-          <button class="btn" type="button" id="backBtn">Volver</button>
-        </div>
+
       </section>
     `);
 
@@ -5062,7 +5046,6 @@ function renderConfiguracion(){
       openChipModal({ mode: 'add', onSave: renderChips });
     });
 
-    document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
 
     renderPlayers();
     renderChips();
@@ -5165,6 +5148,7 @@ function renderConfiguracion(){
       closed = true;
       overlay.remove();
       try{ document.body.style.overflow = ''; }catch(e){}
+      syncAppModalState(false);
       restoreFocusSafe(previousActive);
     }
     overlay.addEventListener('click', (ev) => {
@@ -5225,6 +5209,7 @@ function renderConfiguracion(){
     // Mount
     document.body.appendChild(overlay);
     try{ document.body.style.overflow = 'hidden'; }catch(e){}
+    syncAppModalState(true);
     setPreview(normHex(base.color) || '#808080');
     focusFieldForTouch($name, { selectIfFilled: isEdit });
     return overlay;
@@ -5293,6 +5278,7 @@ function renderConfiguracion(){
       closed = true;
       overlay.remove();
       try{ document.body.style.overflow = ''; }catch(e){}
+      syncAppModalState(false);
       restoreFocusSafe(previousActive);
     }
 
@@ -5341,6 +5327,7 @@ function renderConfiguracion(){
 
     document.body.appendChild(overlay);
     try{ document.body.style.overflow = 'hidden'; }catch(e){}
+    syncAppModalState(true);
     focusFieldForTouch($name, { selectIfFilled: isEdit });
     return overlay;
   }
@@ -5379,6 +5366,13 @@ function restoreFocusSafe(el){
 
 function hasOpenOverlay(){
   return !!document.querySelector('.modal-overlay');
+}
+
+function syncAppModalState(forceOpen){
+  const open = (typeof forceOpen === 'boolean') ? forceOpen : hasOpenOverlay();
+  try{ document.documentElement.classList.toggle('has-modal-open', open); }catch(e){}
+  try{ document.body.classList.toggle('has-modal-open', open); }catch(e){}
+  return open;
 }
 
 function sanitizeUnsignedIntInput(value){
@@ -6736,6 +6730,7 @@ function formatMoney(n){
         closed = true;
         overlay.remove();
         try{ document.body.style.overflow = ''; }catch(e){}
+        syncAppModalState(false);
         restoreFocusSafe(previousActive);
         resolve(!!val);
       }
@@ -6752,6 +6747,7 @@ function formatMoney(n){
 
       document.body.appendChild(overlay);
       try{ document.body.style.overflow = 'hidden'; }catch(e){}
+      syncAppModalState(true);
     });
   }
 
@@ -6793,6 +6789,7 @@ function formatMoney(n){
         closed = true;
         overlay.remove();
         try{ document.body.style.overflow = ''; }catch(e){}
+        syncAppModalState(false);
         restoreFocusSafe(previousActive);
         resolve(val);
       }
@@ -6809,6 +6806,7 @@ function formatMoney(n){
 
       document.body.appendChild(overlay);
       try{ document.body.style.overflow = 'hidden'; }catch(e){}
+      syncAppModalState(true);
 
       // iPad Safari: el teclado SOLO se abre si el focus ocurre dentro del mismo gesto (tap/click).
       focusFieldForTouch($inp, { selectIfFilled: true });
@@ -6863,6 +6861,7 @@ function formatMoney(n){
         closed = true;
         overlay.remove();
         try{ document.body.style.overflow = ''; }catch(e){}
+        syncAppModalState(false);
         restoreFocusSafe(previousActive);
         resolve(val || null);
       }
@@ -6883,6 +6882,7 @@ function formatMoney(n){
 
       document.body.appendChild(overlay);
       try{ document.body.style.overflow = 'hidden'; }catch(e){}
+      syncAppModalState(true);
     });
   }
 
@@ -6929,9 +6929,7 @@ function formatMoney(n){
           <div class="small-note" style="margin-top:10px">“Borrar” elimina jugadores, fichas y sesiones guardadas en este dispositivo.</div>
         </div>
 
-        <div class="row panel-actions support-actions" style="margin-top:14px">
-          <button class="btn primary" type="button" id="backBtn">Volver</button>
-        </div>
+
       </section>
     `);
     $app.innerHTML = '';
@@ -6942,7 +6940,6 @@ function formatMoney(n){
       b.addEventListener('click', () => setThemePref(b.getAttribute('data-theme')));
     });
     syncSupportThemeUI();
-    document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
 
 
     // Backup
@@ -7056,7 +7053,7 @@ function formatMoney(n){
       if (!ok) return;
       resetAllData();
       await confirmDialog({ title: 'Hecho', body: 'Datos locales borrados.', okText: 'OK', cancelText: 'Cerrar' });
-      navigate('/inicio');
+      navigate('/inicio', { stackMode: 'home' });
     });
   }
 
@@ -7072,7 +7069,7 @@ function formatMoney(n){
     `);
     $app.innerHTML = '';
     $app.appendChild(root);
-    document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio'));
+    document.getElementById('backBtn').addEventListener('click', () => navigate('/inicio', { stackMode: 'home' }));
   }
 
   function loadThemePref(){
@@ -7300,6 +7297,13 @@ function formatMoney(n){
       title = session && safeTrim(session.date) ? `PDF · ${safeTrim(session.date)}` : 'PDF';
     }
     let fallbackBack = meta.fallbackBack || '/inicio';
+    if (key === '/juego/sesion'){
+      const id = safeTrim(q.get('id'));
+      const session = id ? getSessionById(id) : null;
+      if (session && safeTrim(session.status) === 'closed'){
+        fallbackBack = `/historial/detalle?id=${encodeURIComponent(id)}`;
+      }
+    }
     if (key === '/pdf'){
       const id = safeTrim(q.get('id'));
       fallbackBack = id ? `/historial/detalle?id=${encodeURIComponent(id)}` : '/historial';
@@ -7316,23 +7320,63 @@ function formatMoney(n){
     };
   }
 
-  function rememberHeaderRoute(href){
-    const clean = safeTrim(href) || '/inicio';
-    if (!clean) return;
-    const last = headerNavTrail.length ? headerNavTrail[headerNavTrail.length - 1] : '';
-    if (last === clean) return;
-    headerNavTrail.push(clean);
+  function applyHeaderNavigationState(href){
+    const clean = normalizeNavigationHref(href);
+    const current = headerNavTrail.length ? safeTrim(headerNavTrail[headerNavTrail.length - 1]) : '';
+    const previous = headerNavTrail.length > 1 ? safeTrim(headerNavTrail[headerNavTrail.length - 2]) : '';
+    const intent = pendingHeaderNavIntent;
+    pendingHeaderNavIntent = null;
+
+    if (!headerNavTrail.length){
+      headerNavTrail.push(clean);
+      currentHeaderRouteHref = clean;
+      return;
+    }
+
+    const pushIfNeeded = () => {
+      if (current !== clean) headerNavTrail.push(clean);
+    };
+
+    switch (safeTrim(intent && intent.kind)){
+      case 'home':
+        headerNavTrail.splice(0, headerNavTrail.length, clean);
+        break;
+      case 'replace':
+        headerNavTrail.splice(Math.max(0, headerNavTrail.length - 1), 1, clean);
+        break;
+      case 'back': {
+        if (previous && previous === clean){
+          headerNavTrail.pop();
+        } else {
+          const idx = headerNavTrail.lastIndexOf(clean);
+          if (idx >= 0) headerNavTrail.splice(idx + 1);
+          else pushIfNeeded();
+        }
+        break;
+      }
+      case 'push':
+        pushIfNeeded();
+        break;
+      default: {
+        if (previous && previous === clean){
+          headerNavTrail.pop();
+        } else {
+          const idx = headerNavTrail.lastIndexOf(clean);
+          if (idx >= 0 && idx < (headerNavTrail.length - 1)) headerNavTrail.splice(idx + 1);
+          else pushIfNeeded();
+        }
+        break;
+      }
+    }
+
+    if (!headerNavTrail.length) headerNavTrail.push(clean);
     if (headerNavTrail.length > 24) headerNavTrail.splice(0, headerNavTrail.length - 24);
-    currentHeaderRouteHref = clean;
+    currentHeaderRouteHref = safeTrim(headerNavTrail[headerNavTrail.length - 1]) || clean;
   }
 
   function findHeaderBackTarget(ctx){
-    const current = safeTrim(currentHeaderRouteHref) || safeTrim(getRouteHref()) || ctx.key;
-    for (let i = headerNavTrail.length - 2; i >= 0; i--){
-      const candidate = safeTrim(headerNavTrail[i]);
-      if (!candidate || candidate === current) continue;
-      return candidate;
-    }
+    const previous = headerNavTrail.length > 1 ? safeTrim(headerNavTrail[headerNavTrail.length - 2]) : '';
+    if (previous && previous !== safeTrim(currentHeaderRouteHref)) return previous;
     return safeTrim(ctx && ctx.fallbackBack) || '/inicio';
   }
 
@@ -7366,10 +7410,10 @@ function formatMoney(n){
       $headerNav.innerHTML = '';
       if (ctx.showBack){
         const backHref = findHeaderBackTarget(ctx);
-        $headerNav.appendChild(createHeaderIconButton('back', 'Volver', () => navigate(backHref)));
+        $headerNav.appendChild(createHeaderIconButton('back', 'Volver', () => navigate(backHref, { stackMode: 'back' })));
       }
       if (ctx.showHome){
-        $headerNav.appendChild(createHeaderIconButton('home', 'Ir a inicio', () => navigate('/inicio')));
+        $headerNav.appendChild(createHeaderIconButton('home', 'Ir a inicio', () => navigate('/inicio', { stackMode: 'home' })));
       }
     }
     if ($themeToggle){
