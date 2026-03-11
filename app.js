@@ -10,10 +10,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.23';
-  const APP_BUILD = 'ipad-input-hardening';
-  const APP_CACHE_NAME = 'pokerito-v0.1.23-ipad-input-hardening';
-  const SW_URL = './sw.js?v=0.1.23-ipad-input-hardening';
+  const APP_VERSION = '0.1.26';
+  const APP_BUILD = 'rotation-polish';
+  const APP_CACHE_NAME = 'pokerito-v0.1.26-rotation-polish';
+  const SW_URL = './sw.js?v=0.1.26-rotation-polish';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -29,6 +29,72 @@
 
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
+
+
+  const $root = document.documentElement;
+
+  let viewportSyncTimer = 0;
+
+  function queueViewportSync(delay){
+    if (viewportSyncTimer) clearTimeout(viewportSyncTimer);
+    if (delay > 0){
+      viewportSyncTimer = setTimeout(() => {
+        viewportSyncTimer = 0;
+        syncViewportProfile();
+      }, delay);
+      return;
+    }
+    syncViewportProfile();
+  }
+
+  syncViewportProfile();
+  window.addEventListener('resize', () => queueViewportSync(0), { passive: true });
+  window.addEventListener('orientationchange', () => {
+    requestAnimationFrame(() => queueViewportSync(0));
+    queueViewportSync(180);
+  }, { passive: true });
+  if (window.visualViewport && typeof window.visualViewport.addEventListener === 'function'){
+    window.visualViewport.addEventListener('resize', () => queueViewportSync(0), { passive: true });
+  }
+
+  function coerceViewportNumber(value, fallback){
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
+  }
+
+  function readViewportBox(){
+    const vv = window.visualViewport;
+    const width = coerceViewportNumber(vv && vv.width, coerceViewportNumber(window.innerWidth, coerceViewportNumber($root && $root.clientWidth, 1024)));
+    const height = coerceViewportNumber(vv && vv.height, coerceViewportNumber(window.innerHeight, coerceViewportNumber($root && $root.clientHeight, 768)));
+    return { width, height };
+  }
+
+  function getViewportBucket(width, height){
+    const safeWidth = coerceViewportNumber(width, 0);
+    const safeHeight = coerceViewportNumber(height, 0);
+    const shortEdge = Math.min(safeWidth, safeHeight);
+    const longEdge = Math.max(safeWidth, safeHeight);
+    if (shortEdge >= 900 || longEdge >= 1366) return 'wide';
+    if (shortEdge >= 700 || longEdge >= 1024) return 'regular';
+    return 'compact';
+  }
+
+  function syncViewportProfile(){
+    if (!$root) return;
+    const box = readViewportBox();
+    const width = Math.max(1, box.width);
+    const height = Math.max(1, box.height);
+    const shortEdge = Math.min(width, height);
+    const longEdge = Math.max(width, height);
+    const orientation = height > width ? 'portrait' : 'landscape';
+    const bucket = getViewportBucket(width, height);
+    $root.dataset.vpOrientation = orientation;
+    $root.dataset.vpWidth = bucket;
+    $root.style.setProperty('--app-vw', `${width}px`);
+    $root.style.setProperty('--app-vh', `${height}px`);
+    $root.style.setProperty('--app-short-edge', `${shortEdge}px`);
+    $root.style.setProperty('--app-long-edge', `${longEdge}px`);
+  }
 
 
 // Storage (versioned) — local only for now
@@ -2766,7 +2832,7 @@ function setPlayerActive(id, active){
     const closedSessions = getClosedSessions();
 
     const root = el(`
-      <section class="screen" aria-label="Crear/Continuar Partida">
+      <section class="screen screen--juego" aria-label="Crear/Continuar Partida">
         <h1 class="screen-title">Juego</h1>
         <p class="screen-sub">Crea una partida del día o retoma el borrador. (Tu “yo del futuro” te lo agradecerá.)</p>
 
@@ -2774,7 +2840,7 @@ function setPlayerActive(id, active){
           <div class="panel" role="region" aria-label="Partida en borrador">
             <div class="panel-head">
               <div class="panel-title" style="margin:0">Partida en borrador</div>
-              <div class="row">
+              <div class="row panel-actions game-actions">
                 <button class="btn primary" type="button" id="continueDraftBtn">Continuar</button>
                 <button class="btn danger" type="button" id="discardDraftBtn">Descartar</button>
               </div>
@@ -2810,7 +2876,7 @@ function setPlayerActive(id, active){
             <div class="pick-grid" id="playerPickGrid" aria-live="polite"></div>
           </div>
 
-          <div class="row" style="margin-top:14px">
+          <div class="row panel-actions game-actions" style="margin-top:14px">
             <button class="btn primary" type="button" id="startSessionBtn">Iniciar Partida</button>
             <button class="btn" type="button" id="backBtn">Volver</button>
           </div>
@@ -2821,7 +2887,7 @@ function setPlayerActive(id, active){
         <div class="panel" role="region" aria-label="Historial" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Historial</div>
-            <div class="row" style="gap:10px">
+            <div class="row panel-actions" style="gap:10px">
               <div class="small-note" style="margin:0">Sesiones cerradas (solo lectura).</div>
               <button class="btn" type="button" id="toHistorialBtn">Histórico</button>
             </div>
@@ -3063,14 +3129,14 @@ function setPlayerActive(id, active){
       });
 
       const root = el(`
-        <section class="screen" aria-label="Histórico">
+        <section class="screen screen--historial" aria-label="Histórico">
           <h1 class="screen-title">Histórico</h1>
           <p class="screen-sub">Sesiones cerradas. Más reciente arriba.</p>
 
           <div class="panel" role="region" aria-label="Listado">
             <div class="panel-head">
               <div class="panel-title" style="margin:0">Sesiones</div>
-              <div class="row">
+              <div class="row panel-actions">
                 <button class="btn" type="button" id="toRankingBtn">Ranking</button>
                 <button class="btn" type="button" id="backBtn">Volver</button>
               </div>
@@ -3198,13 +3264,13 @@ function renderHistorialDetalle(){
     const deltaClass = Math.abs(sum.delta) < 0.0001 ? 'ok' : (sum.delta > 0 ? 'pos' : 'neg');
 
     const root = el(`
-      <section class="screen" aria-label="Detalle de sesión">
+      <section class="screen screen--historial-detail" aria-label="Detalle de sesión">
         <div class="mesa-head">
           <div class="mesa-title">
             <div class="mesa-h1">Historial <span class="badge">${escapeHtml(String(s.date || ''))}</span></div>
             <div class="mesa-sub">${escapeHtml(String(analysis.rows.length))} jugadores · sesión cerrada</div>
           </div>
-          <div class="row">
+          <div class="row panel-actions history-detail-actions">
             <button class="btn" type="button" id="backBtn">Volver</button>
             <button class="btn" type="button" id="toMesaBtn">Ver mesa</button>
           </div>
@@ -3230,7 +3296,7 @@ function renderHistorialDetalle(){
         <div class="panel" role="region" aria-label="Tabla" style="margin-top:14px">
           <div class="panel-title">Por jugador</div>
           <div class="table-wrap" role="region" aria-label="Tabla de jugadores">
-            <table class="table">
+            <table class="table table--session-detail">
               <thead>
                 <tr>
                   <th>Pos</th>
@@ -4315,14 +4381,14 @@ function renderHistorialDetalle(){
   function renderRanking(){
     const a = computeAnalytics();
     const root = el(`
-      <section class="screen" aria-label="Ranking">
+      <section class="screen screen--ranking" aria-label="Ranking">
         <h1 class="screen-title">Ranking global</h1>
         <p class="screen-sub">Orden oficial: neto acumulado, ROI, victorias y sesiones jugadas.</p>
 
         <div class="panel" role="region" aria-label="Ranking">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Jugadores</div>
-            <div class="row">
+            <div class="row panel-actions">
               <button class="btn" type="button" id="toHistBtn">Histórico</button>
               <button class="btn" type="button" id="backBtn">Volver</button>
             </div>
@@ -4400,13 +4466,13 @@ function renderHistorialDetalle(){
     const deltaClass = Math.abs(sum.delta) < 0.0001 ? 'ok' : (sum.delta > 0 ? 'pos' : 'neg');
 
     const root = el(`
-      <section class="screen" aria-label="Mesa">
-        <div class="mesa-head">
+      <section class="screen screen--mesa mesa-screen" aria-label="Mesa">
+        <div class="mesa-head mesa-head-active">
           <div class="mesa-title">
             <div class="mesa-h1">Mesa <span class="badge">${escapeHtml(badge || '')}</span></div>
             <div class="mesa-sub">${escapeHtml(String(s.date || ''))} · ${escapeHtml(String(players.length))} jugadores · snapshot ${escapeHtml(String(chips.length))} fichas</div>
           </div>
-          <div class="row">
+          <div class="row mesa-head-actions">
             <button class="btn" type="button" id="backBtn">Volver</button>
             ${canMutateSession ? `
               <button class="btn" type="button" id="lateJoinBtn">Agregar jugador</button>
@@ -4415,8 +4481,8 @@ function renderHistorialDetalle(){
           </div>
         </div>
 
-        <div class="panel" role="region" aria-label="Cuadre">
-          <div class="kpi-row">
+        <div class="panel mesa-summary-panel" role="region" aria-label="Cuadre">
+          <div class="kpi-row mesa-kpi-row">
             <div class="kpi">
               <div class="k">Total invertido</div>
               <div class="v" id="kpiInvested">${escapeHtml(formatMoney(sum.totalInvested))}</div>
@@ -4433,7 +4499,7 @@ function renderHistorialDetalle(){
           <div class="small-note" style="margin-top:10px">Δ = fichas − invertido. Idealmente: 0. Si no: alguien está “creando valor” (spoiler: no es el mercado).</div>
         </div>
 
-        <div class="mesa-grid" aria-live="polite" style="margin-top:14px">
+        <div class="mesa-grid mesa-active-grid" aria-live="polite" style="margin-top:14px">
           ${players.length ? players.map(p => {
             const disp = (p && p.display) ? String(p.display) : playerDisplayName(p);
             const name = (p && p.name) ? String(p.name) : '';
@@ -4441,32 +4507,32 @@ function renderHistorialDetalle(){
             const totals = calcPlayerTotals(st, chipValueMap);
             const netClass = Math.abs(totals.neto) < 0.0001 ? 'ok' : (totals.neto > 0 ? 'pos' : 'neg');
             return `
-              <article class="mesa-player" data-pid="${escapeAttr(p.id)}">
+              <article class="mesa-player mesa-player-card" data-pid="${escapeAttr(p.id)}">
                 <div class="mesa-player-top">
                   <div class="mesa-player-ident">
                     <div class="mesa-player-nick">${escapeHtml(disp || 'Sin nombre')}</div>
                     <div class="mesa-player-name">${escapeHtml((name || '').trim())}</div>
                   </div>
-                  <div class="rebuy-box">
+                  <div class="rebuy-box mesa-rebuy-box">
                     <button class="btn small" type="button" data-act="rebuy" ${canMutateSession ? '' : 'disabled'}>+ Rebuy</button>
                     <div class="rebuy-meta"><span class="k">Rebuys</span><span class="v" data-role="rebuyCount">${escapeHtml(String((st.rebuys||[]).length))}</span></div>
                   </div>
                 </div>
 
-                <div class="buyin-block">
+                <div class="buyin-block mesa-buyin-block">
                   <label class="field compact">
                     <span>Buy-in</span>
                     <input class="buyin" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" enterkeyhint="done" placeholder="0" value="${escapeAttr(String(numOrZero(st.buyIn) || ''))}" ${canMutateSession ? '' : 'disabled'} />
                   </label>
                 </div>
 
-                <div class="chips-block">
+                <div class="chips-block mesa-chips-block">
                   ${chips.length ? chips.map(c => {
                     const color = normHex(c.color) || '#888888';
                     const value = numOrZero(c.value);
                     const count = numOrZero((st.counts||{})[c.id]);
                     return `
-                      <div class="chip-row" data-cid="${escapeAttr(c.id)}">
+                      <div class="chip-row mesa-chip-row" data-cid="${escapeAttr(c.id)}">
                         <div class="chip-mini">
                           <div class="chip-mini-ico">${chipIconSvg(color, 28)}</div>
                           <div class="chip-mini-meta">
@@ -4474,7 +4540,7 @@ function renderHistorialDetalle(){
                             <div class="chip-mini-val">${escapeHtml(formatMoney(value))}</div>
                           </div>
                         </div>
-                        <div class="counter">
+                        <div class="counter mesa-counter">
                           <button class="num-btn" type="button" data-act="dec" ${canMutateSession ? '' : 'disabled'}>−</button>
                           <button class="num" type="button" data-act="edit" ${canMutateSession ? '' : 'disabled'}>${escapeHtml(String(count))}</button>
                           <button class="num-btn" type="button" data-act="inc" ${canMutateSession ? '' : 'disabled'}>+</button>
@@ -4484,7 +4550,7 @@ function renderHistorialDetalle(){
                   }).join('') : `<div class="empty">No hay fichas en el snapshot.</div>`}
                 </div>
 
-                <div class="totals-block">
+                <div class="totals-block mesa-totals-block">
                   <div class="pillstat"><span class="k">Total fichas</span><span class="v" data-role="chipsValue">${escapeHtml(formatMoney(totals.totalChipsValue))}</span></div>
                   <div class="pillstat"><span class="k">Invertido</span><span class="v" data-role="invested">${escapeHtml(formatMoney(totals.totalBuyIn))}</span></div>
                   <div class="pillstat"><span class="k">Neto</span><span class="v net ${netClass}" data-role="neto">${escapeHtml(formatMoney(totals.neto))}</span></div>
@@ -4716,14 +4782,14 @@ function renderHistorialDetalle(){
   
 function renderConfiguracion(){
     const root = el(`
-      <section class="screen" aria-label="Configuración">
+      <section class="screen screen--config" aria-label="Configuración">
         <h1 class="screen-title">Configuración</h1>
         <p class="screen-sub">Configuras una vez y luego solo juegas. (Ok, también discutes. Pero con estilo.)</p>
 
         <div class="panel" role="region" aria-label="Ranking global">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Ranking global</div>
-            <div class="row">
+            <div class="row panel-actions">
               <button class="btn" type="button" id="toRankingBtn">Ver ranking</button>
               <button class="btn" type="button" id="toHistorialBtn">Historial</button>
             </div>
@@ -4762,7 +4828,7 @@ function renderConfiguracion(){
           <div class="small-note">“Desactivar” no borra: solo la saca del uso (historial futuro intacto).</div>
         </div>
 
-        <div class="row" style="margin-top:14px">
+        <div class="row panel-actions" style="margin-top:14px">
           <button class="btn" type="button" id="backBtn">Volver</button>
         </div>
       </section>
@@ -4979,9 +5045,11 @@ function renderConfiguracion(){
 
     const overlay = el(`
       <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="${isEdit ? 'Editar ficha' : 'Agregar ficha'}">
-        <div class="modal">
+        <div class="modal modal--form">
           <div class="modal-head">
-            <div class="modal-title">${isEdit ? 'Editar ficha' : 'Agregar ficha'}</div>
+            <div class="modal-title-wrap">
+              <div class="modal-title">${isEdit ? 'Editar ficha' : 'Agregar ficha'}</div>
+            </div>
             <button class="icon-btn" type="button" data-act="close" aria-label="Cerrar">×</button>
           </div>
 
@@ -5140,9 +5208,11 @@ function renderConfiguracion(){
 
     const overlay = el(`
       <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="${isEdit ? 'Editar jugador' : 'Agregar jugador'}">
-        <div class="modal">
+        <div class="modal modal--form">
           <div class="modal-head">
-            <div class="modal-title">${isEdit ? 'Editar jugador' : 'Agregar jugador'}</div>
+            <div class="modal-title-wrap">
+              <div class="modal-title">${isEdit ? 'Editar jugador' : 'Agregar jugador'}</div>
+            </div>
             <button class="icon-btn" type="button" data-act="close" aria-label="Cerrar">×</button>
           </div>
 
@@ -6611,9 +6681,11 @@ function formatMoney(n){
       const previousActive = rememberFocusable();
       const overlay = el(`
         <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Confirmación">
-          <div class="modal">
+          <div class="modal modal--confirm">
             <div class="modal-head">
-              <div class="modal-title">${escapeHtml(title || 'Confirmar')}</div>
+              <div class="modal-title-wrap">
+                <div class="modal-title">${escapeHtml(title || 'Confirmar')}</div>
+              </div>
               <button class="icon-btn" type="button" data-act="close" aria-label="Cerrar">×</button>
             </div>
             <div class="modal-body">
@@ -6659,9 +6731,11 @@ function formatMoney(n){
       const safeValue = sanitizeUnsignedIntInput((value === undefined || value === null) ? '' : String(value));
       const overlay = el(`
         <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Número">
-          <div class="modal">
+          <div class="modal modal--compact">
             <div class="modal-head">
-              <div class="modal-title">${escapeHtml(title || 'Número')}</div>
+              <div class="modal-title-wrap">
+                <div class="modal-title">${escapeHtml(title || 'Número')}</div>
+              </div>
               <button class="icon-btn" type="button" data-act="close" aria-label="Cerrar">×</button>
             </div>
             <div class="modal-body">
@@ -6724,9 +6798,9 @@ function formatMoney(n){
       const sessionLabel = lateJoinSessionLabel(session);
       const overlay = el(`
         <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Agregar jugador tardío">
-          <div class="modal">
+          <div class="modal modal--selector">
             <div class="modal-head">
-              <div>
+              <div class="modal-title-wrap">
                 <div class="modal-title">Agregar jugador</div>
                 <div class="modal-subtitle">Partida ${escapeHtml(sessionLabel)} · ${escapeHtml(String(numOrZero((session.playersSnapshot || []).length)))} jugadores actuales</div>
               </div>
@@ -6784,7 +6858,7 @@ function formatMoney(n){
 
   function renderSoporte(){
     const root = el(`
-      <section class="screen" aria-label="Soporte">
+      <section class="screen screen--soporte" aria-label="Soporte">
         <h1 class="screen-title">Soporte</h1>
         <p class="screen-sub">Herramientas y ajustes generales. (Sí, aquí vive el “modo oscuro”.)</p>
 
@@ -6803,7 +6877,7 @@ function formatMoney(n){
         <div class="panel" role="region" aria-label="Respaldo" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Respaldo</div>
-            <div class="row" style="gap:10px; flex-wrap:wrap">
+            <div class="row panel-actions support-actions" style="gap:10px; flex-wrap:wrap">
               <button class="btn" type="button" id="exportJsonBtn">Exportar JSON</button>
               <label class="btn primary file-trigger" id="importJsonBtn" for="importFile">
                 <span id="importJsonBtnText">Importar JSON</span>
@@ -6817,14 +6891,14 @@ function formatMoney(n){
 
         <div class="panel" role="region" aria-label="Mantenimiento" style="margin-top:14px">
           <div class="panel-title">Mantenimiento</div>
-          <div class="row" style="gap:10px; flex-wrap:wrap">
+          <div class="row panel-actions support-actions" style="gap:10px; flex-wrap:wrap">
             <button class="btn" type="button" id="recalcBtn">Recalcular estadísticas</button>
             <button class="btn danger" type="button" id="clearBtn">Borrar datos locales</button>
           </div>
           <div class="small-note" style="margin-top:10px">“Borrar” elimina jugadores, fichas y sesiones guardadas en este dispositivo.</div>
         </div>
 
-        <div class="row" style="margin-top:14px">
+        <div class="row panel-actions support-actions" style="margin-top:14px">
           <button class="btn primary" type="button" id="backBtn">Volver</button>
         </div>
       </section>

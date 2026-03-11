@@ -14,6 +14,21 @@
   --pad: 22px;
   --tap: 56px;
   --maxw: 980px;
+  --screen-maxw: min(1180px, calc(var(--app-vw, 100vw) - (var(--pad) * 2)));
+  --screen-pad-x: max(var(--pad), calc(env(safe-area-inset-left) + 12px));
+  --screen-pad-right: max(var(--pad), calc(env(safe-area-inset-right) + 12px));
+  --screen-pad-bottom: calc(26px + env(safe-area-inset-bottom));
+  --grid-home-cols: 2;
+  --grid-pick-cols: 2;
+  --grid-record-cols: 2;
+  --grid-chip-snap-cols: 2;
+  --grid-mesa-cols: 2;
+  --grid-kpi-cols: 3;
+  --grid-totals-cols: 3;
+  --grid-mesa-body-cols: 2;
+  --grid-chip-cols: 2;
+  --grid-player-cols: 2;
+  --grid-stats-extended-cols: 2;
 }
 
 @media (prefers-color-scheme: dark){
@@ -110,9 +125,10 @@ body{
 
 .header-inner{
   height: 100%;
-  max-width: var(--maxw);
+  width: min(100%, var(--screen-maxw));
+  max-width: var(--screen-maxw);
   margin: 0 auto;
-  padding: 0 var(--pad);
+  padding: 0 var(--screen-pad-right) 0 var(--screen-pad-x);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -176,16 +192,21 @@ body{
 .icon-btn svg{ width: 22px; height: 22px; }
 
 .app-main{
-  height: calc(100vh - var(--header-h));
+  width: 100%;
+  min-width: 0;
+  height: calc(var(--app-vh, 100dvh) - var(--header-h));
+  min-height: calc(var(--app-vh, 100dvh) - var(--header-h));
   margin-top: var(--header-h);
   overflow-y: auto;
   overflow-x: hidden;
 }
 
 .screen{
-  max-width: var(--maxw);
+  width: min(100%, var(--screen-maxw));
+  max-width: var(--screen-maxw);
+  min-width: 0;
   margin: 0 auto;
-  padding: 18px var(--pad) 26px;
+  padding: 18px var(--screen-pad-right) var(--screen-pad-bottom) var(--screen-pad-x);
 }
 
 .screen-title{
@@ -2111,4 +2132,791 @@ body.print-mode .print-root{
     bottom: 12px;
     width: auto;
   }
+}
+
+
+/* ===== Etapa 1/3: base responsive/orientation automática ===== */
+html, body{
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+}
+
+body{
+  min-height: var(--app-vh, 100dvh);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.app-header,
+.app-main,
+.screen,
+.panel,
+.card,
+.player-card,
+.chip-card,
+.mesa-player,
+.modal,
+.hist-item,
+.table-wrap,
+.search-wrap,
+.row,
+.panel-head,
+.pick-head,
+.mesa-head,
+.player-top,
+.modal-head,
+.modal-foot,
+.header-right{
+  min-width: 0;
+}
+
+.header-right,
+.row,
+.player-actions,
+.hist-right,
+.modal-foot{
+  flex-wrap: wrap;
+}
+
+.row > *,
+.header-right > *,
+.panel-head > *,
+.pick-head > *,
+.mesa-head > *,
+.player-top > *,
+.hist-right > *,
+.modal-head > *,
+.modal-foot > *{
+  min-width: 0;
+  max-width: 100%;
+}
+
+.btn,
+.icon-btn,
+.file-trigger{
+  max-width: 100%;
+}
+
+.cards.home-grid,
+.pick-grid,
+.records-grid,
+.chip-snap-grid,
+.mesa-grid,
+.kpi-row,
+.totals-block,
+.mesa-player-body,
+.chip-grid,
+.player-grid,
+.stats-mini-grid.stats-extended{
+  min-width: 0;
+  align-items: stretch;
+}
+
+.cards.home-grid{ grid-template-columns: repeat(var(--grid-home-cols), minmax(0, 1fr)); }
+.pick-grid{ grid-template-columns: repeat(var(--grid-pick-cols), minmax(0, 1fr)); }
+.records-grid{ grid-template-columns: repeat(var(--grid-record-cols), minmax(0, 1fr)); }
+.chip-snap-grid{ grid-template-columns: repeat(var(--grid-chip-snap-cols), minmax(0, 1fr)); }
+.mesa-grid{ grid-template-columns: repeat(var(--grid-mesa-cols), minmax(0, 1fr)); }
+.kpi-row{ grid-template-columns: repeat(var(--grid-kpi-cols), minmax(0, 1fr)); }
+.totals-block{ grid-template-columns: repeat(var(--grid-totals-cols), minmax(0, 1fr)); }
+.mesa-player-body{ grid-template-columns: repeat(var(--grid-mesa-body-cols), minmax(0, 1fr)); }
+.chip-grid{ grid-template-columns: repeat(var(--grid-chip-cols), minmax(0, 1fr)); }
+.player-grid{ grid-template-columns: repeat(var(--grid-player-cols), minmax(0, 1fr)); }
+.stats-mini-grid.stats-extended{ grid-template-columns: repeat(var(--grid-stats-extended-cols), minmax(0, 1fr)); }
+
+html[data-vp-width="compact"]{
+  --screen-maxw: min(100%, calc(var(--app-vw, 100vw) - (var(--pad) * 2)));
+  --grid-home-cols: 1;
+  --grid-pick-cols: 1;
+  --grid-record-cols: 1;
+  --grid-chip-snap-cols: 1;
+  --grid-mesa-cols: 1;
+  --grid-kpi-cols: 1;
+  --grid-totals-cols: 1;
+  --grid-mesa-body-cols: 1;
+  --grid-chip-cols: 1;
+  --grid-player-cols: 1;
+  --grid-stats-extended-cols: 1;
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"],
+html[data-vp-orientation="portrait"][data-vp-width="wide"]{
+  --screen-maxw: min(920px, calc(var(--app-vw, 100vw) - (var(--pad) * 2)));
+  --grid-home-cols: 2;
+  --grid-pick-cols: 2;
+  --grid-record-cols: 2;
+  --grid-chip-snap-cols: 2;
+  --grid-mesa-cols: 2;
+  --grid-kpi-cols: 2;
+  --grid-totals-cols: 2;
+  --grid-mesa-body-cols: 1;
+  --grid-chip-cols: 2;
+  --grid-player-cols: 2;
+  --grid-stats-extended-cols: 2;
+}
+
+html[data-vp-orientation="landscape"][data-vp-width="regular"]{
+  --screen-maxw: min(1160px, calc(var(--app-vw, 100vw) - (var(--pad) * 2)));
+  --grid-home-cols: 2;
+  --grid-pick-cols: 2;
+  --grid-record-cols: 3;
+  --grid-chip-snap-cols: 3;
+  --grid-mesa-cols: 3;
+  --grid-kpi-cols: 3;
+  --grid-totals-cols: 3;
+  --grid-mesa-body-cols: 2;
+  --grid-chip-cols: 3;
+  --grid-player-cols: 3;
+  --grid-stats-extended-cols: 3;
+}
+
+html[data-vp-orientation="landscape"][data-vp-width="wide"]{
+  --screen-maxw: min(1240px, calc(var(--app-vw, 100vw) - (var(--pad) * 2)));
+  --grid-home-cols: 2;
+  --grid-pick-cols: 3;
+  --grid-record-cols: 4;
+  --grid-chip-snap-cols: 3;
+  --grid-mesa-cols: 3;
+  --grid-kpi-cols: 3;
+  --grid-totals-cols: 3;
+  --grid-mesa-body-cols: 2;
+  --grid-chip-cols: 3;
+  --grid-player-cols: 3;
+  --grid-stats-extended-cols: 4;
+}
+
+html[data-vp-orientation="portrait"] .panel-head,
+html[data-vp-orientation="portrait"] .mesa-head,
+html[data-vp-orientation="portrait"] .pick-head,
+html[data-vp-width="compact"] .panel-head,
+html[data-vp-width="compact"] .mesa-head,
+html[data-vp-width="compact"] .pick-head{
+  align-items: stretch;
+}
+
+html[data-vp-orientation="portrait"] .panel-head > .row,
+html[data-vp-orientation="portrait"] .mesa-head > .row,
+html[data-vp-width="compact"] .panel-head > .row,
+html[data-vp-width="compact"] .mesa-head > .row{
+  width: 100%;
+  justify-content: flex-start;
+}
+
+html[data-vp-orientation="portrait"] .card.home-card,
+html[data-vp-width="compact"] .card.home-card{
+  min-height: 300px;
+}
+
+html[data-vp-orientation="portrait"] .home-hero,
+html[data-vp-orientation="portrait"] .card-hero,
+html[data-vp-width="compact"] .home-hero,
+html[data-vp-width="compact"] .card-hero{
+  height: clamp(128px, 18vh, 190px);
+}
+
+html[data-vp-orientation="portrait"] .search-wrap,
+html[data-vp-width="compact"] .search-wrap{
+  flex-wrap: wrap;
+}
+
+html[data-vp-orientation="portrait"] .hist-right,
+html[data-vp-width="compact"] .hist-right{
+  width: 100%;
+  justify-content: flex-start;
+}
+
+html[data-vp-orientation="portrait"] .modal,
+html[data-vp-width="compact"] .modal{
+  width: min(760px, calc(var(--app-vw, 100vw) - 24px));
+}
+
+html[data-vp-orientation="portrait"] .brand-title{
+  max-width: 60vw;
+}
+
+@media (max-height: 740px){
+  :root{ --header-h: 60px; }
+  .screen{ padding-top: 16px; }
+}
+
+/* ===== Etapa 2/3: mesa activa vertical 2 por fila + pulido interno ===== */
+.mesa-screen{
+  --mesa-grid-gap: clamp(12px, 1.6vw, 16px);
+}
+
+.mesa-title{
+  min-width: 0;
+}
+
+.mesa-head-active{
+  gap: 14px 16px;
+}
+
+.mesa-head-actions{
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.mesa-head-actions .btn{
+  min-height: 48px;
+}
+
+.mesa-summary-panel{
+  padding: 16px;
+}
+
+.mesa-kpi-row{
+  gap: 12px;
+}
+
+.mesa-summary-note{
+  line-height: 1.45;
+}
+
+.mesa-active-grid{
+  gap: var(--mesa-grid-gap);
+  align-items: start;
+}
+
+.mesa-player-card{
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.mesa-player-card > *{
+  min-width: 0;
+}
+
+.mesa-player-top{
+  gap: 12px;
+  align-items: start;
+}
+
+.mesa-player-nick{
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.mesa-player-name{
+  line-height: 1.35;
+}
+
+.mesa-rebuy-box{
+  min-width: 118px;
+}
+
+.mesa-rebuy-box .btn.small{
+  min-height: 42px;
+  padding-inline: 12px;
+}
+
+.mesa-buyin-block{
+  margin-top: 0;
+}
+
+.mesa-buyin-block .field.compact{
+  display: grid;
+  gap: 6px;
+}
+
+.mesa-buyin-block .field.compact > span{
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-weight: 900;
+  color: var(--muted);
+}
+
+.mesa-buyin-block .field.compact input{
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.mesa-chips-block{
+  margin-top: 0;
+  gap: 8px;
+}
+
+.mesa-chip-row{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.mesa-chip-row .chip-mini-ico{
+  flex: 0 0 auto;
+}
+
+.mesa-chip-row .chip-mini-name{
+  font-size: 14px;
+}
+
+.mesa-chip-row .chip-mini-val{
+  font-size: 12px;
+}
+
+.mesa-counter{
+  flex: 0 0 auto;
+}
+
+.mesa-counter .num-btn,
+.mesa-counter .num{
+  min-height: 46px;
+}
+
+.mesa-counter .num{
+  min-width: 60px;
+}
+
+.mesa-totals-block{
+  margin-top: 0;
+  align-items: stretch;
+}
+
+.mesa-totals-block .pillstat{
+  min-height: 78px;
+}
+
+.mesa-totals-block .pillstat .v{
+  line-height: 1.2;
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-screen,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-screen{
+  --screen-maxw: min(940px, calc(var(--app-vw, 100vw) - (var(--pad) * 2)));
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-active-grid,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-active-grid{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-head-active,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-head-active{
+  align-items: stretch;
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-head-actions,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-head-actions{
+  width: 100%;
+  justify-content: flex-start;
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-head-actions .btn,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-head-actions .btn{
+  flex: 1 1 180px;
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-kpi-row,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-kpi-row{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-kpi-row > :last-child,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-kpi-row > :last-child,
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-totals-block > :last-child,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-totals-block > :last-child{
+  grid-column: 1 / -1;
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-player-card,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-player-card{
+  padding: 16px;
+}
+
+html[data-vp-orientation="portrait"][data-vp-width="regular"] .mesa-totals-block,
+html[data-vp-orientation="portrait"][data-vp-width="wide"] .mesa-totals-block{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html[data-vp-orientation="landscape"][data-vp-width="regular"] .mesa-screen,
+html[data-vp-orientation="landscape"][data-vp-width="wide"] .mesa-screen{
+  --screen-maxw: min(1280px, calc(var(--app-vw, 100vw) - (var(--pad) * 2)));
+}
+
+html[data-vp-orientation="landscape"][data-vp-width="regular"] .mesa-player-card,
+html[data-vp-orientation="landscape"][data-vp-width="wide"] .mesa-player-card{
+  padding: 16px 16px 14px;
+}
+
+html[data-vp-width="compact"] .mesa-active-grid{
+  grid-template-columns: 1fr;
+}
+
+html[data-vp-width="compact"] .mesa-head-actions{
+  width: 100%;
+  justify-content: stretch;
+}
+
+html[data-vp-width="compact"] .mesa-head-actions .btn{
+  flex: 1 1 100%;
+}
+
+html[data-vp-width="compact"] .mesa-player-top,
+html[data-vp-width="compact"] .mesa-chip-row{
+  grid-template-columns: 1fr;
+}
+
+html[data-vp-width="compact"] .mesa-rebuy-box{
+  justify-items: stretch;
+  min-width: 0;
+}
+
+html[data-vp-width="compact"] .mesa-counter{
+  width: 100%;
+  justify-content: space-between;
+}
+
+html[data-vp-width="compact"] .mesa-kpi-row,
+html[data-vp-width="compact"] .mesa-totals-block{
+  grid-template-columns: 1fr;
+}
+
+/* ===== Etapa 3/3: pulido final de pantallas, modales y rotación iPad ===== */
+:root{
+  --modal-side-pad: max(18px, calc(env(safe-area-inset-left) + 12px));
+  --modal-maxh: min(calc(var(--app-vh, 100dvh) - 32px), 860px);
+}
+
+.app-main,
+.modal-body{
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-main{
+  overscroll-behavior-y: contain;
+}
+
+.screen--juego,
+.screen--historial,
+.screen--historial-detail,
+.screen--ranking,
+.screen--config,
+.screen--soporte,
+.screen--mesa{
+  min-width: 0;
+}
+
+.panel-actions,
+.game-actions,
+.support-actions,
+.history-detail-actions{
+  width: auto;
+  min-width: 0;
+}
+
+.panel-head > .btn,
+.panel-head > .file-trigger{
+  min-width: 0;
+}
+
+.screen--historial .hist-item,
+.screen--ranking .rank-item,
+.screen--config .rank-mini-row,
+.screen--soporte .segmented,
+.screen--soporte .panel-actions,
+.screen--config .panel-actions,
+.screen--juego .panel-actions,
+.screen--historial .panel-actions,
+.screen--historial-detail .panel-actions,
+.screen--ranking .panel-actions{
+  min-width: 0;
+}
+
+.screen--historial .hist-main,
+.screen--ranking .rank-left,
+.screen--ranking .rank-right,
+.screen--config .rank-mini-name,
+.screen--soporte .seg,
+.screen--historial-detail .table td,
+.screen--historial-detail .table th{
+  min-width: 0;
+}
+
+.screen--historial-detail .table{
+  table-layout: fixed;
+}
+
+.screen--historial-detail .table th,
+.screen--historial-detail .table td{
+  overflow-wrap: anywhere;
+}
+
+.screen--historial-detail .table .who{
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.modal-overlay{
+  align-items: center;
+  overflow: auto;
+  padding:
+    max(18px, calc(env(safe-area-inset-top) + 10px))
+    max(18px, calc(env(safe-area-inset-right) + 10px))
+    max(18px, calc(env(safe-area-inset-bottom) + 10px))
+    max(18px, calc(env(safe-area-inset-left) + 10px));
+}
+
+.modal{
+  width: min(720px, calc(var(--app-vw, 100vw) - 32px));
+  max-width: 100%;
+  max-height: var(--modal-maxh);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-head,
+.modal-foot{
+  flex: 0 0 auto;
+}
+
+.modal-head{
+  align-items: flex-start;
+}
+
+.modal-title-wrap{
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.modal-title,
+.modal-subtitle{
+  min-width: 0;
+}
+
+.modal-subtitle{
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.modal-body{
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.modal-foot{
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+
+.modal-foot .btn{
+  flex: 0 1 auto;
+}
+
+.modal--compact{
+  width: min(560px, calc(var(--app-vw, 100vw) - 32px));
+}
+
+.modal--confirm{
+  width: min(620px, calc(var(--app-vw, 100vw) - 32px));
+}
+
+.modal--selector{
+  width: min(820px, calc(var(--app-vw, 100vw) - 32px));
+}
+
+.screen--soporte .segmented{
+  flex-wrap: wrap;
+}
+
+.screen--soporte .seg{
+  flex: 1 1 160px;
+}
+
+.screen--config .player-actions .btn,
+.screen--config .chip-actions .btn{
+  flex: 1 1 150px;
+}
+
+.screen--soporte .file-trigger,
+.screen--soporte .panel-actions .btn,
+.screen--juego .game-actions .btn,
+.screen--historial .panel-actions .btn,
+.screen--historial-detail .panel-actions .btn,
+.screen--ranking .panel-actions .btn,
+.screen--config .panel-actions .btn{
+  flex: 1 1 180px;
+}
+
+.screen--config .panel-head > .btn,
+.screen--juego .panel-head > .btn,
+.screen--ranking .panel-head > .btn,
+.screen--soporte .panel-head > .btn,
+.screen--soporte .panel-head > .file-trigger{
+  flex: 0 1 auto;
+}
+
+.late-join-grid{
+  grid-template-columns: repeat(var(--grid-player-cols), minmax(0, 1fr));
+}
+
+html[data-vp-orientation="portrait"] .screen--historial .hist-item,
+html[data-vp-width="compact"] .screen--historial .hist-item{
+  align-items: stretch;
+}
+
+html[data-vp-orientation="portrait"] .screen--historial .hist-main,
+html[data-vp-width="compact"] .screen--historial .hist-main,
+html[data-vp-orientation="portrait"] .screen--historial .hist-right,
+html[data-vp-width="compact"] .screen--historial .hist-right{
+  width: 100%;
+}
+
+html[data-vp-orientation="portrait"] .screen--historial .hist-sub,
+html[data-vp-width="compact"] .screen--historial .hist-sub{
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+html[data-vp-orientation="portrait"] .screen--historial .hist-right,
+html[data-vp-width="compact"] .screen--historial .hist-right{
+  justify-content: flex-start;
+}
+
+html[data-vp-orientation="portrait"] .screen--historial .hist-right .btn,
+html[data-vp-width="compact"] .screen--historial .hist-right .btn{
+  flex: 1 1 140px;
+}
+
+html[data-vp-orientation="portrait"] .screen--ranking .rank-item,
+html[data-vp-width="compact"] .screen--ranking .rank-item{
+  flex-direction: column;
+  align-items: stretch;
+}
+
+html[data-vp-orientation="portrait"] .screen--ranking .rank-right,
+html[data-vp-width="compact"] .screen--ranking .rank-right{
+  width: 100%;
+  text-align: left;
+}
+
+html[data-vp-orientation="portrait"] .screen--ranking .rank-mini,
+html[data-vp-width="compact"] .screen--ranking .rank-mini{
+  white-space: normal;
+}
+
+html[data-vp-orientation="portrait"] .screen--config .rank-mini-row,
+html[data-vp-width="compact"] .screen--config .rank-mini-row{
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: start;
+}
+
+html[data-vp-orientation="portrait"] .screen--config .rank-mini-net,
+html[data-vp-width="compact"] .screen--config .rank-mini-net{
+  grid-column: 1 / -1;
+  padding-left: 50px;
+}
+
+html[data-vp-orientation="portrait"] .screen--historial-detail .table th,
+html[data-vp-orientation="portrait"] .screen--historial-detail .table td,
+html[data-vp-width="compact"] .screen--historial-detail .table th,
+html[data-vp-width="compact"] .screen--historial-detail .table td{
+  padding: 10px 8px;
+  font-size: 12px;
+}
+
+html[data-vp-orientation="portrait"] .screen--historial-detail .table .num,
+html[data-vp-width="compact"] .screen--historial-detail .table .num{
+  font-size: 12px;
+}
+
+html[data-vp-orientation="portrait"] .screen--juego .panel-head,
+html[data-vp-orientation="portrait"] .screen--historial .panel-head,
+html[data-vp-orientation="portrait"] .screen--historial-detail .mesa-head,
+html[data-vp-orientation="portrait"] .screen--ranking .panel-head,
+html[data-vp-orientation="portrait"] .screen--config .panel-head,
+html[data-vp-orientation="portrait"] .screen--soporte .panel-head,
+html[data-vp-width="compact"] .screen--juego .panel-head,
+html[data-vp-width="compact"] .screen--historial .panel-head,
+html[data-vp-width="compact"] .screen--historial-detail .mesa-head,
+html[data-vp-width="compact"] .screen--ranking .panel-head,
+html[data-vp-width="compact"] .screen--config .panel-head,
+html[data-vp-width="compact"] .screen--soporte .panel-head{
+  align-items: stretch;
+}
+
+html[data-vp-orientation="portrait"] .screen--juego .panel-actions,
+html[data-vp-orientation="portrait"] .screen--historial .panel-actions,
+html[data-vp-orientation="portrait"] .screen--historial-detail .panel-actions,
+html[data-vp-orientation="portrait"] .screen--ranking .panel-actions,
+html[data-vp-orientation="portrait"] .screen--config .panel-actions,
+html[data-vp-orientation="portrait"] .screen--soporte .panel-actions,
+html[data-vp-width="compact"] .screen--juego .panel-actions,
+html[data-vp-width="compact"] .screen--historial .panel-actions,
+html[data-vp-width="compact"] .screen--historial-detail .panel-actions,
+html[data-vp-width="compact"] .screen--ranking .panel-actions,
+html[data-vp-width="compact"] .screen--config .panel-actions,
+html[data-vp-width="compact"] .screen--soporte .panel-actions{
+  width: 100%;
+  justify-content: flex-start;
+}
+
+html[data-vp-orientation="portrait"] .screen--juego .panel-head > .btn,
+html[data-vp-orientation="portrait"] .screen--ranking .panel-head > .btn,
+html[data-vp-orientation="portrait"] .screen--config .panel-head > .btn,
+html[data-vp-orientation="portrait"] .screen--soporte .panel-head > .btn,
+html[data-vp-orientation="portrait"] .screen--soporte .panel-head > .file-trigger,
+html[data-vp-width="compact"] .screen--juego .panel-head > .btn,
+html[data-vp-width="compact"] .screen--ranking .panel-head > .btn,
+html[data-vp-width="compact"] .screen--config .panel-head > .btn,
+html[data-vp-width="compact"] .screen--soporte .panel-head > .btn,
+html[data-vp-width="compact"] .screen--soporte .panel-head > .file-trigger{
+  flex: 1 1 220px;
+}
+
+html[data-vp-orientation="portrait"] .screen--soporte .support-actions,
+html[data-vp-width="compact"] .screen--soporte .support-actions{
+  width: 100%;
+}
+
+html[data-vp-orientation="portrait"] .screen--soporte .support-actions .btn,
+html[data-vp-orientation="portrait"] .screen--soporte .support-actions .file-trigger,
+html[data-vp-width="compact"] .screen--soporte .support-actions .btn,
+html[data-vp-width="compact"] .screen--soporte .support-actions .file-trigger{
+  flex: 1 1 100%;
+}
+
+html[data-vp-orientation="portrait"] .modal,
+html[data-vp-width="compact"] .modal{
+  width: min(760px, calc(var(--app-vw, 100vw) - 24px));
+  max-height: min(calc(var(--app-vh, 100dvh) - 24px), 840px);
+}
+
+html[data-vp-orientation="portrait"] .modal-foot,
+html[data-vp-width="compact"] .modal-foot{
+  justify-content: stretch;
+}
+
+html[data-vp-orientation="portrait"] .modal-foot .btn,
+html[data-vp-width="compact"] .modal-foot .btn{
+  flex: 1 1 160px;
+}
+
+html[data-vp-orientation="portrait"] .late-join-grid,
+html[data-vp-width="compact"] .late-join-grid{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html[data-vp-width="compact"] .late-join-grid{
+  grid-template-columns: 1fr;
+}
+
+html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--soporte .support-actions .btn,
+html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--soporte .support-actions .file-trigger,
+html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--config .panel-actions .btn,
+html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--juego .game-actions .btn{
+  flex: 0 1 auto;
 }
