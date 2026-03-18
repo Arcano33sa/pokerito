@@ -1,12 +1,15 @@
 Pokerito — HERO images (Inicio)
 
-Este folder contiene los héroes actuales (SVG lineales) usados como fallback.
+Este folder contiene los héroes usados por las tarjetas del Inicio.
+La app intenta cargar primero archivos premium con patrón hero_<modulo> y, si no existen,
+usa los SVG base como fallback sin romper nada.
 
-Para HERO images premium, colocar aquí los archivos con este patrón:
+Módulos actuales:
 
   hero_juego.webp   (o .png / .jpg / .jpeg / .svg)
-  hero_config.webp  (o .png / .jpg / .jpeg / .svg)
-  hero_soporte.webp (o .png / .jpg / .jpeg / .svg)
+  hero_admin.webp   (o .png / .jpg / .jpeg / .svg)
+  hero_archivo.webp (o .png / .jpg / .jpeg / .svg)
 
-La app intentará cargar primero .webp y luego hará fallback automático a otros formatos.
-Si no existe ningún hero_*, se mantiene el SVG actual (no rompe).
+Fallos tolerados:
+- Si no existe hero_<modulo>, se mantiene el SVG base correspondiente.
+- Los SVG base actuales siguen siendo juego.svg, admin.svg y archivo.svg.

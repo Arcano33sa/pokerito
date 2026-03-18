@@ -4959,10 +4959,55 @@ function renderHistorialDetalle(){
 
   
 function renderAdministracion(){
+    const analytics = computeAnalytics();
+    const players = getPlayers();
+    const chips = getChips();
+    const totalPlayers = players.length;
+    const activePlayers = players.filter(player => player && player.active !== false).length;
+    const totalChips = chips.length;
+    const activeChips = chips.filter(chip => chip && chip.active !== false).length;
+    const closedSessionsCount = Array.isArray(analytics && analytics.summaryRows) ? analytics.summaryRows.length : 0;
+
     const root = el(`
       <section class="screen screen--config" aria-label="Administración">
-        <h1 class="screen-title">Administración</h1>
-        <p class="screen-sub">Casa operativa del sistema: gestión clara de jugadores, fichas y mantenimiento local, sin mezclar archivo con mesa.</p>
+        <div class="panel module-hero module-hero--admin" role="region" aria-label="Hero de Administración">
+          <div class="module-hero__layout">
+            <div class="module-hero__copy">
+              <div class="module-hero__eyebrow">Casa operativa</div>
+              <h1 class="screen-title module-hero__title">Administración</h1>
+              <p class="screen-sub module-hero__sub">Casa operativa del sistema: gestión clara de jugadores, fichas y mantenimiento local, sin mezclar archivo con mesa.</p>
+              <div class="module-hero__stats" aria-label="Resumen operativo">
+                <article class="module-hero__stat">
+                  <div class="module-hero__stat-label">Jugadores</div>
+                  <div class="module-hero__stat-value">${escapeHtml(String(totalPlayers))}</div>
+                  <div class="module-hero__stat-note">${escapeHtml(String(activePlayers))} activo${activePlayers === 1 ? '' : 's'} en mesa.</div>
+                </article>
+                <article class="module-hero__stat">
+                  <div class="module-hero__stat-label">Fichas</div>
+                  <div class="module-hero__stat-value">${escapeHtml(String(totalChips))}</div>
+                  <div class="module-hero__stat-note">${escapeHtml(String(activeChips))} activa${activeChips === 1 ? '' : 's'} para juego.</div>
+                </article>
+                <article class="module-hero__stat">
+                  <div class="module-hero__stat-label">Sesiones cerradas</div>
+                  <div class="module-hero__stat-value">${escapeHtml(String(closedSessionsCount))}</div>
+                  <div class="module-hero__stat-note">Base histórica lista para estadísticas y PDF.</div>
+                </article>
+              </div>
+              <div class="row panel-actions module-hero__actions" style="gap:10px; flex-wrap:wrap; margin-top:14px">
+                <button class="btn" type="button" data-admin-jump="adminPlayersSection">Jugadores</button>
+                <button class="btn" type="button" data-admin-jump="adminChipsSection">Fichas</button>
+                <button class="btn" type="button" data-admin-jump="adminBackupSection">Respaldo</button>
+                <button class="btn" type="button" data-admin-jump="adminAppearanceSection">Apariencia</button>
+              </div>
+            </div>
+            <div class="module-hero__media" aria-hidden="true">
+              <div class="module-hero__media-shell">
+                <img class="module-hero__img" src="assets/hero/hero_admin.svg" alt="" decoding="async" loading="lazy" />
+              </div>
+              <div class="module-hero__caption">Administración concentra lo operativo: aquí se ajusta la mesa de hoy sin contaminar la lectura histórica que vive en Archivo.</div>
+            </div>
+          </div>
+        </div>
 
         <div class="panel" role="region" aria-label="Mapa operativo">
           <div class="panel-title">Estructura operativa</div>
@@ -5824,11 +5869,54 @@ function renderAdministracion(){
     const registeredPlayersCount = getArchiveRegisteredPlayersCount(analytics);
     const leaderLabel = getArchiveLeaderLabel(analytics);
     const latestSummary = getArchiveLatestSummary(analytics);
+    const latestClosedSession = getClosedSessions()[0] || null;
+    const latestDetailHref = latestClosedSession ? ('/archivo/historial/detalle?id=' + encodeURIComponent(latestClosedSession.id)) : '';
 
     const root = el(`
       <section class="screen screen--archivo screen--archivo-home" aria-label="Archivo">
-        <h1 class="screen-title">Archivo</h1>
-        <p class="screen-sub">Memoria histórica de la mesa, lectura competitiva y acceso claro a lo que ya pasó. Sobrio, útil y sin mezclar operación con archivo.</p>
+        <div class="panel module-hero module-hero--archivo" role="region" aria-label="Hero de Archivo">
+          <div class="module-hero__layout">
+            <div class="module-hero__copy">
+              <div class="module-hero__eyebrow">Memoria histórica</div>
+              <h1 class="screen-title module-hero__title">Archivo</h1>
+              <p class="screen-sub module-hero__sub">Memoria histórica de la mesa, lectura competitiva y acceso claro a lo que ya pasó. Sobrio, útil y sin mezclar operación con archivo.</p>
+              <div class="module-hero__stats" aria-label="Resumen histórico">
+                <article class="module-hero__stat">
+                  <div class="module-hero__stat-label">Sesiones cerradas</div>
+                  <div class="module-hero__stat-value">${escapeHtml(String(sessionsCount))}</div>
+                  <div class="module-hero__stat-note">Cronología consolidada lista para explorar.</div>
+                </article>
+                <article class="module-hero__stat">
+                  <div class="module-hero__stat-label">Perfiles vivos</div>
+                  <div class="module-hero__stat-value">${escapeHtml(String(registeredPlayersCount))}</div>
+                  <div class="module-hero__stat-note">Lectura individual disponible desde Perfiles.</div>
+                </article>
+                <article class="module-hero__stat">
+                  <div class="module-hero__stat-label">Líder actual</div>
+                  <div class="module-hero__stat-value module-hero__stat-value--text">${escapeHtml(leaderLabel)}</div>
+                  <div class="module-hero__stat-note">Tomado del ranking global vigente.</div>
+                </article>
+                <article class="module-hero__stat">
+                  <div class="module-hero__stat-label">Última sesión</div>
+                  <div class="module-hero__stat-value module-hero__stat-value--text">${escapeHtml(latestSummary.date)}</div>
+                  <div class="module-hero__stat-note">${escapeHtml(latestSummary.winner)}</div>
+                </article>
+              </div>
+              <div class="row panel-actions module-hero__actions" style="gap:10px; flex-wrap:wrap; margin-top:14px">
+                <button class="btn" type="button" data-go-route="/archivo/perfiles">Perfiles</button>
+                <button class="btn" type="button" data-go-route="/archivo/ranking">Ranking</button>
+                <button class="btn" type="button" data-go-route="/archivo/historial">Historial</button>
+                ${latestDetailHref ? `<button class="btn" type="button" data-go-route="${escapeHtml(latestDetailHref)}">Última sesión</button>` : ''}
+              </div>
+            </div>
+            <div class="module-hero__media" aria-hidden="true">
+              <div class="module-hero__media-shell">
+                <img class="module-hero__img" src="assets/hero/hero_archivo.svg" alt="" decoding="async" loading="lazy" />
+              </div>
+              <div class="module-hero__caption">Archivo reúne la historia completa: Perfiles para leer a cada jugador, Ranking para comparar y Historial para regresar a cada cierre con su salida PDF.</div>
+            </div>
+          </div>
+        </div>
 
         <div class="panel archive-overview-panel" role="region" aria-label="Resumen superior de archivo">
           <div class="archive-overview-head">
@@ -5898,6 +5986,14 @@ function renderAdministracion(){
 
     $app.innerHTML = '';
     $app.appendChild(root);
+
+    root.querySelectorAll('[data-go-route]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const href = btn.getAttribute('data-go-route');
+        if (!href) return;
+        navigate(href);
+      });
+    });
 
     const $openPerfilesBtn = document.getElementById('openPerfilesBtn');
     if ($openPerfilesBtn) $openPerfilesBtn.addEventListener('click', () => navigate('/archivo/perfiles'));

@@ -3006,6 +3006,167 @@ html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--juego .game
   flex: 0 1 auto;
 }
 
+/* ===== Etapa final: heroes de módulos ===== */
+.module-hero{
+  position: relative;
+  overflow: hidden;
+  padding: 18px;
+  background:
+    radial-gradient(720px 280px at 0% 0%, color-mix(in oklab, var(--accent) 16%, transparent), transparent 64%),
+    radial-gradient(540px 260px at 100% 100%, color-mix(in oklab, var(--gold) 14%, transparent), transparent 72%),
+    linear-gradient(180deg, color-mix(in oklab, var(--panel-solid) 98%, transparent), color-mix(in oklab, var(--panel) 94%, transparent));
+}
+
+.module-hero::after{
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0));
+}
+
+.module-hero--admin{
+  background:
+    radial-gradient(760px 300px at 0% 0%, color-mix(in oklab, #3498db 18%, transparent), transparent 64%),
+    radial-gradient(560px 280px at 100% 100%, color-mix(in oklab, var(--gold) 12%, transparent), transparent 72%),
+    linear-gradient(180deg, color-mix(in oklab, var(--panel-solid) 98%, transparent), color-mix(in oklab, var(--panel) 94%, transparent));
+}
+
+.module-hero--archivo{
+  background:
+    radial-gradient(760px 300px at 0% 0%, color-mix(in oklab, #9b59b6 18%, transparent), transparent 64%),
+    radial-gradient(560px 280px at 100% 100%, color-mix(in oklab, var(--gold) 12%, transparent), transparent 72%),
+    linear-gradient(180deg, color-mix(in oklab, var(--panel-solid) 98%, transparent), color-mix(in oklab, var(--panel) 94%, transparent));
+}
+
+.module-hero__layout{
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.95fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.module-hero__copy,
+.module-hero__media,
+.module-hero__stat,
+.module-hero__media-shell{
+  min-width: 0;
+}
+
+.module-hero__eyebrow{
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.module-hero__title{
+  margin: 8px 0 0;
+}
+
+.module-hero__sub{
+  margin: 8px 0 0;
+  max-width: 72ch;
+}
+
+.module-hero__stats{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.module-hero__stat{
+  padding: 14px 14px 12px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--panel-solid) 98%, transparent), color-mix(in oklab, var(--panel) 92%, transparent));
+  box-shadow: 0 10px 28px rgba(0,0,0,0.08);
+}
+
+.module-hero__stat-label{
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.module-hero__stat-value{
+  margin-top: 8px;
+  font-size: clamp(22px, 2.6vw, 34px);
+  line-height: 1.04;
+  font-weight: 950;
+  letter-spacing: -0.03em;
+  word-break: break-word;
+}
+
+.module-hero__stat-value--text{
+  font-size: clamp(18px, 2vw, 24px);
+  line-height: 1.12;
+}
+
+.module-hero__stat-note{
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.module-hero__actions{
+  min-width: 0;
+}
+
+.module-hero__actions .btn{
+  min-width: 0;
+}
+
+.module-hero__media{
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: stretch;
+}
+
+.module-hero__media-shell{
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 248px;
+  border-radius: 22px;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  background:
+    radial-gradient(320px 220px at 22% 24%, rgba(255,255,255,0.08), transparent 70%),
+    radial-gradient(280px 210px at 82% 22%, rgba(255,255,255,0.05), transparent 74%),
+    linear-gradient(180deg, color-mix(in oklab, var(--panel-solid) 92%, transparent), color-mix(in oklab, var(--panel) 88%, transparent));
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.module-hero__img{
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0.98;
+  filter: drop-shadow(0 18px 40px rgba(0,0,0,0.22));
+}
+
+.module-hero__caption{
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  background: color-mix(in oklab, var(--panel-solid) 94%, transparent);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.52;
+}
+
 /* ===== Etapa 5/9: Archivo con portada propia ===== */
 .archive-module-hero,
 .archive-lane{
@@ -3580,4 +3741,26 @@ html[data-vp-orientation="portrait"] .archive-lane-top,
 html[data-vp-width="compact"] .archive-lane-top{
   flex-direction: column;
   align-items: flex-start;
+}
+
+
+html[data-vp-orientation="portrait"] .module-hero__layout,
+html[data-vp-width="compact"] .module-hero__layout{
+  grid-template-columns: 1fr;
+}
+
+html[data-vp-orientation="portrait"] .module-hero__stats,
+html[data-vp-width="compact"] .module-hero__stats{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html[data-vp-orientation="portrait"] .module-hero__media-shell,
+html[data-vp-width="compact"] .module-hero__media-shell{
+  min-height: 200px;
+}
+
+@media (max-width: 720px){
+  .module-hero__stats{
+    grid-template-columns: 1fr;
+  }
 }
