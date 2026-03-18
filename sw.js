@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.30 historical-impact-refresh */
-const CACHE_NAME = 'pokerito-v0.1.30-historical-impact-refresh';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.31 navigation-admin-archive-base */
+const CACHE_NAME = 'pokerito-v0.1.31-navigation-admin-archive-base';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -17,10 +17,14 @@ const CORE_ASSETS = [
   './assets/icons/icon-512.png',
   './assets/cards/juego.svg',
   './assets/cards/configuracion.svg',
+  './assets/cards/admin.svg',
   './assets/cards/soporte.svg',
+  './assets/cards/archivo.svg',
   './assets/hero/juego.svg',
   './assets/hero/configuracion.svg',
+  './assets/hero/admin.svg',
   './assets/hero/soporte.svg',
+  './assets/hero/archivo.svg',
   './assets/hero/hero_juego.webp',
   './assets/hero/hero_config.webp',
   './assets/hero/hero_soporte.webp'

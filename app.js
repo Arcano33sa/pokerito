@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.30';
-  const APP_BUILD = 'historical-impact-refresh';
-  const APP_CACHE_NAME = 'pokerito-v0.1.30-historical-impact-refresh';
-  const SW_URL = './sw.js?v=0.1.30-historical-impact-refresh';
+  const APP_VERSION = '0.1.31';
+  const APP_BUILD = 'navigation-admin-archive-base';
+  const APP_CACHE_NAME = 'pokerito-v0.1.31-navigation-admin-archive-base';
+  const SW_URL = './sw.js?v=0.1.31-navigation-admin-archive-base';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -44,12 +44,14 @@
   const HEADER_ROUTE_META = {
     '/inicio': { level: 0, title: 'Inicio', fallbackBack: '/inicio' },
     '/juego': { level: 1, title: 'Juego', fallbackBack: '/inicio' },
-    '/configuracion': { level: 1, title: 'Configuración', fallbackBack: '/inicio' },
-    '/soporte': { level: 1, title: 'Soporte', fallbackBack: '/inicio' },
+    '/administracion': { level: 1, title: 'Administración', fallbackBack: '/inicio' },
+    '/configuracion': { level: 1, title: 'Administración', fallbackBack: '/inicio' },
+    '/archivo': { level: 1, title: 'Archivo', fallbackBack: '/inicio' },
+    '/soporte': { level: 2, title: 'Soporte', fallbackBack: '/administracion' },
     '/juego/mesa': { level: 2, title: 'Mesa', fallbackBack: '/juego' },
     '/juego/sesion': { level: 2, title: 'Mesa', fallbackBack: '/juego' },
-    '/historial': { level: 2, title: 'Historial', fallbackBack: '/juego' },
-    '/ranking': { level: 2, title: 'Ranking', fallbackBack: '/configuracion' },
+    '/historial': { level: 2, title: 'Historial', fallbackBack: '/archivo' },
+    '/ranking': { level: 2, title: 'Ranking', fallbackBack: '/administracion' },
     '/historial/detalle': { level: 3, title: 'Historial detalle', fallbackBack: '/historial' },
     '/pdf': { level: 3, title: 'PDF', fallbackBack: '/historial' },
   };
@@ -2552,16 +2554,24 @@ function setPlayerActive(id, active){
     '/historial': renderHistorial,
     '/historial/detalle': renderHistorialDetalle,
     '/ranking': renderRanking,
-    '/configuracion': renderConfiguracion,
+    '/administracion': renderAdministracion,
+    '/configuracion': renderAdministracion,
+    '/archivo': renderArchivo,
     '/soporte': renderSoporte,
     '/pdf': renderPdf,
   };
 
+  function canonicalizeRoutePath(path){
+    const raw = safeTrim(path) || '/inicio';
+    const clean = raw.split('?')[0] || '/inicio';
+    if (clean === '/configuracion') return '/administracion';
+    return clean || '/inicio';
+  }
+
   function getRoute(){
     const hash = window.location.hash || '#/inicio';
     const path = hash.startsWith('#') ? hash.slice(1) : hash;
-    const clean = (path || '/inicio').split('?')[0];
-    return clean || '/inicio';
+    return canonicalizeRoutePath(path || '/inicio');
   }
 
   function getHashQuery(){
@@ -2572,7 +2582,9 @@ function setPlayerActive(id, active){
 
   function normalizeNavigationHref(path){
     const raw = safeTrim(path) || '/inicio';
-    return raw.startsWith('/') ? raw : ('/' + raw);
+    const href = raw.startsWith('/') ? raw : ('/' + raw);
+    if (href === '/configuracion') return '/administracion';
+    return href;
   }
 
   function navigate(path, options){
@@ -2784,30 +2796,30 @@ function setPlayerActive(id, active){
             </div>
           </button>
 
-          <button class="card home-card home-card--config" data-go="/configuracion" type="button">
+          <button class="card home-card home-card--admin" data-go="/administracion" type="button">
             <div class="card-hero" aria-hidden="true">
               <div class="card-hero-slot">
-                <img class="card-hero-img" data-hero="config" alt="" decoding="async" loading="lazy" />
-                <img class="card-hero-fallback" src="assets/hero/configuracion.svg" alt="" decoding="async" loading="lazy" />
+                <img class="card-hero-img" data-hero="admin" alt="" decoding="async" loading="lazy" />
+                <img class="card-hero-fallback" src="assets/hero/admin.svg" alt="" decoding="async" loading="lazy" />
               </div>
             </div>
             <div class="home-body">
-              <div class="home-title">Configuración</div>
-              <p class="home-desc">Fichas, jugadores, estadísticas, ranking global y exportación a Excel.</p>
+              <div class="home-title">Administración</div>
+              <p class="home-desc">Jugadores, fichas, ranking global y control base de la mesa.</p>
             </div>
           </button>
 
 
-          <button class="card home-card home-card--soporte" data-go="/soporte" type="button">
+          <button class="card home-card home-card--archivo" data-go="/archivo" type="button">
             <div class="card-hero" aria-hidden="true">
               <div class="card-hero-slot">
-                <img class="card-hero-img" data-hero="soporte" alt="" decoding="async" loading="lazy" />
-                <img class="card-hero-fallback" src="assets/hero/soporte.svg" alt="" decoding="async" loading="lazy" />
+                <img class="card-hero-img" data-hero="archivo" alt="" decoding="async" loading="lazy" />
+                <img class="card-hero-fallback" src="assets/hero/archivo.svg" alt="" decoding="async" loading="lazy" />
               </div>
             </div>
             <div class="home-body">
-              <div class="home-title">Soporte</div>
-              <p class="home-desc">Modo oscuro, exportar/importar y mantenimiento general.</p>
+              <div class="home-title">Archivo</div>
+              <p class="home-desc">Historial, memoria de partidas y base preparada para crecer sin romper nada.</p>
             </div>
           </button>
         </div>
@@ -2907,14 +2919,14 @@ function setPlayerActive(id, active){
               <div class="draft-pill"><span class="k">Jugadores</span><span class="v">${escapeHtml(String((draft.playersSnapshot||[]).length))}</span></div>
               <div class="draft-pill"><span class="k">Fichas (snapshot)</span><span class="v">${escapeHtml(String((draft.chipsSnapshot||[]).length))}</span></div>
             </div>
-            <div class="small-note">Tip: aunque cambies fichas en Configuración, esta sesión ya tiene su snapshot blindado.</div>
+            <div class="small-note">Tip: aunque cambies fichas en Administración, esta sesión ya tiene su snapshot blindado.</div>
           </div>
         ` : ''}
 
         <div class="panel" role="region" aria-label="Crear partida" style="margin-top:${draft ? '14px' : '0'}">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Crear partida</div>
-            <button class="btn" type="button" id="toConfigBtn">Ir a Configuración</button>
+            <button class="btn" type="button" id="toAdminBtn">Ir a Administración</button>
           </div>
 
           <div class="form" style="margin-top:12px">
@@ -2979,7 +2991,7 @@ function setPlayerActive(id, active){
     $app.innerHTML = '';
     $app.appendChild(root);
 
-    document.getElementById('toConfigBtn').addEventListener('click', () => navigate('/configuracion'));
+    document.getElementById('toAdminBtn').addEventListener('click', () => navigate('/administracion'));
     const $toHist = document.getElementById('toHistorialBtn');
     if ($toHist) $toHist.addEventListener('click', () => navigate('/historial'));
 
@@ -2991,7 +3003,7 @@ function setPlayerActive(id, active){
 
     function renderPickGrid(){
       if (!activePlayers.length){
-        $grid.innerHTML = `<div class="empty">No hay jugadores activos. Activa o crea jugadores en Configuración.</div>`;
+        $grid.innerHTML = `<div class="empty">No hay jugadores activos. Activa o crea jugadores en Administración.</div>`;
         return;
       }
 
@@ -4927,11 +4939,11 @@ function renderHistorialDetalle(){
   }
 
   
-function renderConfiguracion(){
+function renderAdministracion(){
     const root = el(`
-      <section class="screen screen--config" aria-label="Configuración">
-        <h1 class="screen-title">Configuración</h1>
-        <p class="screen-sub">Configuras una vez y luego solo juegas. (Ok, también discutes. Pero con estilo.)</p>
+      <section class="screen screen--config" aria-label="Administración">
+        <h1 class="screen-title">Administración</h1>
+        <p class="screen-sub">La base operativa vive aquí: jugadores, fichas, ranking y control fino sin ensuciar la mesa.</p>
 
         <div class="panel" role="region" aria-label="Ranking global">
           <div class="panel-head">
@@ -4951,6 +4963,17 @@ function renderConfiguracion(){
             <button class="btn primary" type="button" id="exportExcelBtn">Exportar Excel</button>
           </div>
           <div class="small-note" style="margin-top:0">Genera un archivo con 4 hojas: Jugadores, RecordsGlobales, HistorialDetallado y ResumenPartidas.</div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Herramientas" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Herramientas</div>
+            <div class="row panel-actions">
+              <button class="btn" type="button" id="toArchivoBtn">Abrir archivo</button>
+              <button class="btn" type="button" id="toSupportBtn">Soporte</button>
+            </div>
+          </div>
+          <div class="small-note" style="margin-top:0">La navegación principal ya separa <b>Juego</b>, <b>Administración</b> y <b>Archivo</b>. Soporte queda accesible desde aquí mientras terminan las próximas etapas.</div>
         </div>
 
         <div class="panel" role="region" aria-label="Jugadores">
@@ -4986,6 +5009,8 @@ function renderConfiguracion(){
     document.getElementById('toRankingBtn').addEventListener('click', () => navigate('/ranking'));
     document.getElementById('toHistorialBtn').addEventListener('click', () => navigate('/historial'));
     document.getElementById('exportExcelBtn').addEventListener('click', () => exportExcel());
+    document.getElementById('toArchivoBtn').addEventListener('click', () => navigate('/archivo'));
+    document.getElementById('toSupportBtn').addEventListener('click', () => navigate('/soporte'));
 
     renderRankingMini();
 
@@ -5179,6 +5204,57 @@ function renderConfiguracion(){
 
     renderPlayers();
     renderChips();
+  }
+
+  function renderArchivo(){
+    const analytics = computeAnalytics();
+    const summaryRows = Array.isArray(analytics && analytics.summaryRows) ? analytics.summaryRows.slice() : [];
+    summaryRows.sort((a, b) => {
+      const delta = numOrZero(b && b.ts) - numOrZero(a && a.ts);
+      if (delta) return delta;
+      return String(b && b.date || '').localeCompare(String(a && a.date || ''), 'es', { sensitivity: 'base' });
+    });
+    const latest = summaryRows[0] || null;
+    const sessionsCount = summaryRows.length;
+    const playersCount = analytics && analytics.byPlayer instanceof Map ? analytics.byPlayer.size : (Array.isArray(analytics && analytics.ranking) ? analytics.ranking.length : 0);
+    const latestWinner = safeTrim(latest && latest.winner) || '—';
+    const latestDate = safeTrim(latest && latest.date) || '—';
+    const latestDelta = latest ? formatMoney(latest.delta) : '—';
+    const latestDeltaClass = !latest ? 'ok' : (Math.abs(numOrZero(latest.delta)) < 0.0001 ? 'ok' : (numOrZero(latest.delta) > 0 ? 'pos' : 'neg'));
+
+    const root = el(`
+      <section class="screen screen--archivo" aria-label="Archivo">
+        <h1 class="screen-title">Archivo</h1>
+        <p class="screen-sub">Esta es la entrada base del archivo: historial vivo hoy, espacio listo para crecer mañana y cero rutas colgando.</p>
+
+        <div class="panel" role="region" aria-label="Resumen de archivo">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Resumen</div>
+            <div class="row panel-actions archive-actions">
+              <button class="btn primary" type="button" id="openHistorialBtn">Abrir historial</button>
+            </div>
+          </div>
+          <div class="stats-mini-grid stats-extended" style="margin-top:12px">
+            <div class="stat-mini"><span class="k">Sesiones cerradas</span><span class="v">${escapeHtml(String(sessionsCount))}</span></div>
+            <div class="stat-mini"><span class="k">Jugadores con historial</span><span class="v">${escapeHtml(String(playersCount))}</span></div>
+            <div class="stat-mini stack"><span class="k">Última sesión</span><span class="v">${escapeHtml(latestDate)}</span><span class="sub">Ganador: ${escapeHtml(latestWinner)}</span></div>
+            <div class="stat-mini stack"><span class="k">Último balance</span><span class="v net ${latestDeltaClass}">${escapeHtml(latestDelta)}</span><span class="sub">Cuadre global de la sesión más reciente</span></div>
+          </div>
+          <div class="small-note" style="margin-top:12px">Aquí seguirá creciendo el mapa de archivo en etapas futuras. Por ahora, el historial real ya entra por su puerta correcta.</div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Estado de la base" style="margin-top:14px">
+          <div class="panel-title">Entrada inicial estable</div>
+          <div class="small-note" style="margin-top:10px">Se introdujo <b>Archivo</b> como sección principal sin tocar la lógica de PDF, JSON, ranking ni cierre de sesión. La app sigue usando el historial actual como núcleo archivístico mientras se expanden las próximas etapas.</div>
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = '';
+    $app.appendChild(root);
+
+    const $openHistorialBtn = document.getElementById('openHistorialBtn');
+    if ($openHistorialBtn) $openHistorialBtn.addEventListener('click', () => navigate('/historial'));
   }
 
   function openChipModal({ mode, chip, onSave }){
@@ -6463,7 +6539,7 @@ function formatMoney(n){
       okText: 'OK',
       cancelText: 'Cerrar'
     });
-    navigate('/soporte');
+    navigate('/administracion');
   }
 
   function resetAllData(){
@@ -7416,7 +7492,10 @@ function formatMoney(n){
   function getRouteHref(){
     const hash = window.location.hash || '#/inicio';
     const clean = hash.startsWith('#') ? hash.slice(1) : hash;
-    return clean || '/inicio';
+    const href = safeTrim(clean) || '/inicio';
+    if (href === '/configuracion') return '/administracion';
+    if (href.startsWith('/configuracion?')) return '/administracion' + href.slice('/configuracion'.length);
+    return href || '/inicio';
   }
 
   function resolveHeaderRoute(path){

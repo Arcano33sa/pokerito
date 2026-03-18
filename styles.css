@@ -367,8 +367,10 @@ body{
 .card.home-card > *{ position: relative; z-index: 1; }
 
 .home-card--juego{ --tint: 46, 204, 113; }
-.home-card--config{ --tint: 52, 152, 219; }
-.home-card--soporte{ --tint: 155, 89, 182; }
+.home-card--config,
+.home-card--admin{ --tint: 52, 152, 219; }
+.home-card--soporte,
+.home-card--archivo{ --tint: 155, 89, 182; }
 
 .card.home-card:hover{
   transform: translateY(-2px);
@@ -2658,6 +2660,7 @@ html[data-vp-width="compact"] .mesa-totals-block{
 .screen--historial-detail,
 .screen--ranking,
 .screen--config,
+.screen--archivo,
 .screen--soporte,
 .screen--mesa{
   min-width: 0;
@@ -2682,6 +2685,7 @@ html[data-vp-width="compact"] .mesa-totals-block{
 .screen--soporte .segmented,
 .screen--soporte .panel-actions,
 .screen--config .panel-actions,
+.screen--archivo .panel-actions,
 .screen--juego .panel-actions,
 .screen--historial .panel-actions,
 .screen--historial-detail .panel-actions,
@@ -2694,6 +2698,7 @@ html[data-vp-width="compact"] .mesa-totals-block{
 .screen--ranking .rank-right,
 .screen--config .rank-mini-name,
 .screen--soporte .seg,
+.screen--archivo .stat-mini,
 .screen--historial-detail .table td,
 .screen--historial-detail .table th{
   min-width: 0;
@@ -2819,11 +2824,13 @@ body.has-modal-open .modal-overlay{
 .screen--historial .panel-actions .btn,
 .screen--historial-detail .panel-actions .btn,
 .screen--ranking .panel-actions .btn,
-.screen--config .panel-actions .btn{
+.screen--config .panel-actions .btn,
+.screen--archivo .panel-actions .btn{
   flex: 1 1 180px;
 }
 
 .screen--config .panel-head > .btn,
+.screen--archivo .panel-head > .btn,
 .screen--juego .panel-head > .btn,
 .screen--ranking .panel-head > .btn,
 .screen--soporte .panel-head > .btn,
@@ -2911,12 +2918,14 @@ html[data-vp-orientation="portrait"] .screen--historial .panel-head,
 html[data-vp-orientation="portrait"] .screen--historial-detail .mesa-head,
 html[data-vp-orientation="portrait"] .screen--ranking .panel-head,
 html[data-vp-orientation="portrait"] .screen--config .panel-head,
+html[data-vp-orientation="portrait"] .screen--archivo .panel-head,
 html[data-vp-orientation="portrait"] .screen--soporte .panel-head,
 html[data-vp-width="compact"] .screen--juego .panel-head,
 html[data-vp-width="compact"] .screen--historial .panel-head,
 html[data-vp-width="compact"] .screen--historial-detail .mesa-head,
 html[data-vp-width="compact"] .screen--ranking .panel-head,
 html[data-vp-width="compact"] .screen--config .panel-head,
+html[data-vp-width="compact"] .screen--archivo .panel-head,
 html[data-vp-width="compact"] .screen--soporte .panel-head{
   align-items: stretch;
 }
@@ -2926,12 +2935,14 @@ html[data-vp-orientation="portrait"] .screen--historial .panel-actions,
 html[data-vp-orientation="portrait"] .screen--historial-detail .panel-actions,
 html[data-vp-orientation="portrait"] .screen--ranking .panel-actions,
 html[data-vp-orientation="portrait"] .screen--config .panel-actions,
+html[data-vp-orientation="portrait"] .screen--archivo .panel-actions,
 html[data-vp-orientation="portrait"] .screen--soporte .panel-actions,
 html[data-vp-width="compact"] .screen--juego .panel-actions,
 html[data-vp-width="compact"] .screen--historial .panel-actions,
 html[data-vp-width="compact"] .screen--historial-detail .panel-actions,
 html[data-vp-width="compact"] .screen--ranking .panel-actions,
 html[data-vp-width="compact"] .screen--config .panel-actions,
+html[data-vp-width="compact"] .screen--archivo .panel-actions,
 html[data-vp-width="compact"] .screen--soporte .panel-actions{
   width: 100%;
   justify-content: flex-start;
@@ -2940,11 +2951,13 @@ html[data-vp-width="compact"] .screen--soporte .panel-actions{
 html[data-vp-orientation="portrait"] .screen--juego .panel-head > .btn,
 html[data-vp-orientation="portrait"] .screen--ranking .panel-head > .btn,
 html[data-vp-orientation="portrait"] .screen--config .panel-head > .btn,
+html[data-vp-orientation="portrait"] .screen--archivo .panel-head > .btn,
 html[data-vp-orientation="portrait"] .screen--soporte .panel-head > .btn,
 html[data-vp-orientation="portrait"] .screen--soporte .panel-head > .file-trigger,
 html[data-vp-width="compact"] .screen--juego .panel-head > .btn,
 html[data-vp-width="compact"] .screen--ranking .panel-head > .btn,
 html[data-vp-width="compact"] .screen--config .panel-head > .btn,
+html[data-vp-width="compact"] .screen--archivo .panel-head > .btn,
 html[data-vp-width="compact"] .screen--soporte .panel-head > .btn,
 html[data-vp-width="compact"] .screen--soporte .panel-head > .file-trigger{
   flex: 1 1 220px;
@@ -2990,6 +3003,7 @@ html[data-vp-width="compact"] .late-join-grid{
 html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--soporte .support-actions .btn,
 html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--soporte .support-actions .file-trigger,
 html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--config .panel-actions .btn,
+html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--archivo .panel-actions .btn,
 html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--juego .game-actions .btn{
   flex: 0 1 auto;
 }
