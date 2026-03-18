@@ -59,26 +59,24 @@ function commitRoute(){
 
 context.window.location.hash = '#/inicio';
 commitRoute();
-hooks.navigate('/juego');
+hooks.navigate('/archivo');
 commitRoute();
-hooks.navigate('/juego/mesa');
+hooks.navigate('/archivo/perfiles');
 commitRoute();
-hooks.navigate('/archivo/historial');
-commitRoute();
-let back = hooks.findHeaderBackTarget(hooks.resolveHeaderRoute('/archivo/historial'));
-if (back !== '/juego/mesa') throw new Error('archivo/historial back should return to mesa');
+let back = hooks.findHeaderBackTarget(hooks.resolveHeaderRoute('/archivo/perfiles'));
+if (back !== '/archivo') throw new Error(`archivo/perfiles should go back to /archivo, got ${back}`);
 
-hooks.navigate(back, { stackMode: 'back' });
+context.window.location.hash = '#/perfiles';
 commitRoute();
-back = hooks.findHeaderBackTarget(hooks.resolveHeaderRoute('/juego/mesa'));
-if (back !== '/juego') throw new Error(`mesa back should now return to juego, got ${back}`);
+const legacyProfilesCtx = hooks.resolveHeaderRoute('/perfiles');
+if (legacyProfilesCtx.key !== '/archivo/perfiles') throw new Error(`legacy /perfiles should resolve to /archivo/perfiles, got ${legacyProfilesCtx.key}`);
 
-hooks.navigate('/inicio', { stackMode: 'home' });
+context.window.location.hash = '#/perfiles/detalle?id=abc';
 commitRoute();
-hooks.navigate('/configuracion');
-commitRoute();
-back = hooks.findHeaderBackTarget(hooks.resolveHeaderRoute('/configuracion'));
-if (back !== '/inicio') throw new Error(`after home reset, config back should return to inicio, got ${back}`);
+const legacyProfileDetailCtx = hooks.resolveHeaderRoute('/perfiles/detalle?id=abc');
+if (legacyProfileDetailCtx.key !== '/archivo/perfiles/detalle') throw new Error(`legacy /perfiles/detalle should resolve to /archivo/perfiles/detalle, got ${legacyProfileDetailCtx.key}`);
+if (legacyProfileDetailCtx.fallbackBack !== '/archivo/perfiles') throw new Error(`profile detail fallback should return to /archivo/perfiles, got ${legacyProfileDetailCtx.fallbackBack}`);
 
-console.log('test-header-back-stack-no-ping-pong=ok');
-console.log('test-header-home-resets-stack=ok');
+console.log('test-archivo-perfiles-subroute-returns-to-archivo=ok');
+console.log('test-legacy-perfiles-route-canonicalizes-to-archivo=ok');
+console.log('test-profile-detail-route-canonicalizes-and-falls-back=ok');

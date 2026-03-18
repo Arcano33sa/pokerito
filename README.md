@@ -7,6 +7,7 @@ Proyecto estático (sin build) para PWA iPad landscape.
 - Sesión en borrador (draft) con fecha editable
 - Selector multi de jugadores activos
 - Snapshot de fichas activas guardado dentro de la sesión
+- Archivo como módulo real, separado de Administración
 - Historial, ranking y exportación PDF
 - Caché offline saneada para evitar residuos viejos
 

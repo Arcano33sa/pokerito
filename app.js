@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.31';
-  const APP_BUILD = 'navigation-admin-archive-base';
-  const APP_CACHE_NAME = 'pokerito-v0.1.31-navigation-admin-archive-base';
-  const SW_URL = './sw.js?v=0.1.31-navigation-admin-archive-base';
+  const APP_VERSION = '0.1.39';
+  const APP_BUILD = 'perfil-vivo-final';
+  const APP_CACHE_NAME = 'pokerito-v0.1.39-perfil-vivo-final';
+  const SW_URL = './sw.js?v=0.1.39-perfil-vivo-final';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -47,13 +47,14 @@
     '/administracion': { level: 1, title: 'Administración', fallbackBack: '/inicio' },
     '/configuracion': { level: 1, title: 'Administración', fallbackBack: '/inicio' },
     '/archivo': { level: 1, title: 'Archivo', fallbackBack: '/inicio' },
-    '/soporte': { level: 2, title: 'Soporte', fallbackBack: '/administracion' },
     '/juego/mesa': { level: 2, title: 'Mesa', fallbackBack: '/juego' },
     '/juego/sesion': { level: 2, title: 'Mesa', fallbackBack: '/juego' },
-    '/historial': { level: 2, title: 'Historial', fallbackBack: '/archivo' },
-    '/ranking': { level: 2, title: 'Ranking', fallbackBack: '/administracion' },
-    '/historial/detalle': { level: 3, title: 'Historial detalle', fallbackBack: '/historial' },
-    '/pdf': { level: 3, title: 'PDF', fallbackBack: '/historial' },
+    '/archivo/historial': { level: 2, title: 'Archivo · Historial', fallbackBack: '/archivo' },
+    '/archivo/ranking': { level: 2, title: 'Archivo · Ranking', fallbackBack: '/archivo' },
+    '/archivo/perfiles': { level: 2, title: 'Archivo · Perfiles', fallbackBack: '/archivo' },
+    '/archivo/perfiles/detalle': { level: 3, title: 'Archivo · Perfil', fallbackBack: '/archivo/perfiles' },
+    '/archivo/historial/detalle': { level: 3, title: 'Archivo · Historial detalle', fallbackBack: '/archivo/historial' },
+    '/pdf': { level: 3, title: 'PDF', fallbackBack: '/archivo/historial' },
   };
   const headerNavTrail = [];
   let currentHeaderRouteHref = '/inicio';
@@ -2551,20 +2552,26 @@ function setPlayerActive(id, active){
     '/juego': renderJuego,
     '/juego/mesa': renderJuegoMesa,
     '/juego/sesion': renderJuegoSesion,
-    '/historial': renderHistorial,
-    '/historial/detalle': renderHistorialDetalle,
-    '/ranking': renderRanking,
+    '/archivo/historial': renderHistorial,
+    '/archivo/historial/detalle': renderHistorialDetalle,
+    '/archivo/ranking': renderRanking,
+    '/archivo/perfiles': renderPerfiles,
+    '/archivo/perfiles/detalle': renderPerfilDetalle,
     '/administracion': renderAdministracion,
     '/configuracion': renderAdministracion,
     '/archivo': renderArchivo,
-    '/soporte': renderSoporte,
     '/pdf': renderPdf,
   };
 
   function canonicalizeRoutePath(path){
     const raw = safeTrim(path) || '/inicio';
     const clean = raw.split('?')[0] || '/inicio';
-    if (clean === '/configuracion') return '/administracion';
+    if (clean === '/configuracion' || clean === '/soporte') return '/administracion';
+    if (clean === '/ranking') return '/archivo/ranking';
+    if (clean === '/historial') return '/archivo/historial';
+    if (clean === '/historial/detalle') return '/archivo/historial/detalle';
+    if (clean === '/perfiles') return '/archivo/perfiles';
+    if (clean === '/perfiles/detalle') return '/archivo/perfiles/detalle';
     return clean || '/inicio';
   }
 
@@ -2583,7 +2590,19 @@ function setPlayerActive(id, active){
   function normalizeNavigationHref(path){
     const raw = safeTrim(path) || '/inicio';
     const href = raw.startsWith('/') ? raw : ('/' + raw);
-    if (href === '/configuracion') return '/administracion';
+    if (href === '/configuracion' || href === '/soporte') return '/administracion';
+    if (href === '/ranking') return '/archivo/ranking';
+    if (href === '/historial') return '/archivo/historial';
+    if (href === '/historial/detalle') return '/archivo/historial/detalle';
+    if (href === '/perfiles') return '/archivo/perfiles';
+    if (href === '/perfiles/detalle') return '/archivo/perfiles/detalle';
+    if (href.startsWith('/configuracion?')) return '/administracion' + href.slice('/configuracion'.length);
+    if (href.startsWith('/soporte?')) return '/administracion' + href.slice('/soporte'.length);
+    if (href.startsWith('/ranking?')) return '/archivo/ranking' + href.slice('/ranking'.length);
+    if (href.startsWith('/historial?')) return '/archivo/historial' + href.slice('/historial'.length);
+    if (href.startsWith('/historial/detalle?')) return '/archivo/historial/detalle' + href.slice('/historial/detalle'.length);
+    if (href.startsWith('/perfiles?')) return '/archivo/perfiles' + href.slice('/perfiles'.length);
+    if (href.startsWith('/perfiles/detalle?')) return '/archivo/perfiles/detalle' + href.slice('/perfiles/detalle'.length);
     return href;
   }
 
@@ -2805,7 +2824,7 @@ function setPlayerActive(id, active){
             </div>
             <div class="home-body">
               <div class="home-title">Administración</div>
-              <p class="home-desc">Jugadores, fichas, ranking global y control base de la mesa.</p>
+              <p class="home-desc">Jugadores, fichas y control operativo del sistema sin mezclar archivo con la mesa.</p>
             </div>
           </button>
 
@@ -2956,7 +2975,7 @@ function setPlayerActive(id, active){
             <div class="panel-title" style="margin:0">Historial</div>
             <div class="row panel-actions" style="gap:10px">
               <div class="small-note" style="margin:0">Sesiones cerradas (solo lectura).</div>
-              <button class="btn" type="button" id="toHistorialBtn">Histórico</button>
+              <button class="btn" type="button" id="toHistorialBtn">Historial</button>
             </div>
           </div>
 
@@ -2981,7 +3000,7 @@ function setPlayerActive(id, active){
                 `;
               }).join('')}
             </div>
-            ${closedSessions.length > 1 ? `<div class="small-note">Hay ${escapeHtml(String(closedSessions.length))} sesiones cerradas. Mira <b>Histórico</b> para ver todas.</div>` : ''}
+            ${closedSessions.length > 1 ? `<div class="small-note">Hay ${escapeHtml(String(closedSessions.length))} sesiones cerradas. Mira <b>Historial</b> para ver todas.</div>` : ''}
             <div class="small-note">Tip: el detalle rápido abre una tabla por jugador (invertido, fichas, neto, posición).</div>
           ` : `<div class="empty">Aún no hay sesiones cerradas. Tu historial está más limpio que tu conciencia (por ahora).</div>`}
         </div>
@@ -2993,7 +3012,7 @@ function setPlayerActive(id, active){
 
     document.getElementById('toAdminBtn').addEventListener('click', () => navigate('/administracion'));
     const $toHist = document.getElementById('toHistorialBtn');
-    if ($toHist) $toHist.addEventListener('click', () => navigate('/historial'));
+    if ($toHist) $toHist.addEventListener('click', () => navigate('/archivo/historial'));
 
     const $grid = document.getElementById('playerPickGrid');
     const $start = document.getElementById('startSessionBtn');
@@ -3098,7 +3117,7 @@ function setPlayerActive(id, active){
         const id = row.getAttribute('data-id');
         if (!id) return;
         if (act === 'view'){
-          navigate('/historial/detalle?id=' + encodeURIComponent(id));
+          navigate('/archivo/historial/detalle?id=' + encodeURIComponent(id));
         } else if (act === 'pdf'){
           exportSessionPDF(id);
         }
@@ -3195,9 +3214,9 @@ function setPlayerActive(id, active){
       });
 
       const root = el(`
-        <section class="screen screen--historial" aria-label="Histórico">
-          <h1 class="screen-title">Histórico</h1>
-          <p class="screen-sub">Sesiones cerradas. Más reciente arriba.</p>
+        <section class="screen screen--historial" aria-label="Historial">
+          <h1 class="screen-title">Historial</h1>
+          <p class="screen-sub">Archivo · sesiones cerradas en orden cronológico descendente. La más reciente manda y va arriba.</p>
 
           <div class="panel" role="region" aria-label="Listado">
             <div class="panel-head">
@@ -3222,7 +3241,7 @@ function setPlayerActive(id, active){
       $app.innerHTML = '';
       $app.appendChild(root);
 
-      document.getElementById('toRankingBtn').addEventListener('click', () => navigate('/ranking'));
+      document.getElementById('toRankingBtn').addEventListener('click', () => navigate('/archivo/ranking'));
 
       const $list = document.getElementById('histList');
       const $search = document.getElementById('histSearch');
@@ -3269,7 +3288,7 @@ function setPlayerActive(id, active){
           const id = row.getAttribute('data-id');
           if (!id) return;
           if (act === 'view'){
-            navigate('/historial/detalle?id=' + encodeURIComponent(id));
+            navigate('/archivo/historial/detalle?id=' + encodeURIComponent(id));
           } else if (act === 'pdf'){
             exportSessionPDF(id);
           }
@@ -3316,7 +3335,7 @@ function renderHistorialDetalle(){
     const id = (q.get('id') || '').trim();
     const s = id ? getSessionById(id) : null;
     if (!s || s.status !== 'closed'){
-      navigate('/historial');
+      navigate('/archivo/historial');
       return;
     }
     ensureSessionGame(s);
@@ -3331,7 +3350,7 @@ function renderHistorialDetalle(){
       <section class="screen screen--historial-detail" aria-label="Detalle de sesión">
         <div class="mesa-head">
           <div class="mesa-title">
-            <div class="mesa-h1">Historial <span class="badge">${escapeHtml(String(s.date || ''))}</span></div>
+            <div class="mesa-h1">Archivo · Historial <span class="badge">${escapeHtml(String(s.date || ''))}</span></div>
             <div class="mesa-sub">${escapeHtml(String(analysis.rows.length))} jugadores · sesión cerrada</div>
           </div>
           <div class="row panel-actions history-detail-actions">
@@ -4548,14 +4567,14 @@ function renderHistorialDetalle(){
     const a = computeAnalytics();
     const root = el(`
       <section class="screen screen--ranking" aria-label="Ranking">
-        <h1 class="screen-title">Ranking global</h1>
-        <p class="screen-sub">Orden oficial: neto acumulado, ROI, victorias y sesiones jugadas.</p>
+        <h1 class="screen-title">Ranking</h1>
+        <p class="screen-sub">Archivo · comparativo histórico entre jugadores. Orden oficial: neto acumulado, ROI, victorias y sesiones jugadas.</p>
 
         <div class="panel" role="region" aria-label="Ranking">
           <div class="panel-head">
-            <div class="panel-title" style="margin:0">Jugadores</div>
+            <div class="panel-title" style="margin:0">Comparativo entre jugadores</div>
             <div class="row panel-actions">
-              <button class="btn" type="button" id="toHistBtn">Histórico</button>
+              <button class="btn" type="button" id="toHistBtn">Historial</button>
             </div>
           </div>
 
@@ -4615,7 +4634,7 @@ function renderHistorialDetalle(){
     $app.innerHTML = '';
     $app.appendChild(root);
 
-    document.getElementById('toHistBtn').addEventListener('click', () => navigate('/historial'));
+    document.getElementById('toHistBtn').addEventListener('click', () => navigate('/archivo/historial'));
   }
 
   function renderMesaSession(session, { readOnly, backPath, badge }){
@@ -4943,61 +4962,87 @@ function renderAdministracion(){
     const root = el(`
       <section class="screen screen--config" aria-label="Administración">
         <h1 class="screen-title">Administración</h1>
-        <p class="screen-sub">La base operativa vive aquí: jugadores, fichas, ranking y control fino sin ensuciar la mesa.</p>
+        <p class="screen-sub">Casa operativa del sistema: gestión clara de jugadores, fichas y mantenimiento local, sin mezclar archivo con mesa.</p>
 
-        <div class="panel" role="region" aria-label="Ranking global">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Ranking global</div>
-            <div class="row panel-actions">
-              <button class="btn" type="button" id="toRankingBtn">Ver ranking</button>
-              <button class="btn" type="button" id="toHistorialBtn">Historial</button>
-            </div>
+        <div class="panel" role="region" aria-label="Mapa operativo">
+          <div class="panel-title">Estructura operativa</div>
+          <div class="small-note" style="margin-top:10px">Administración queda cerrada como casa interna del sistema. <b>Archivo</b> conserva historial, detalle de sesiones cerradas, ranking y PDF.</div>
+          <div class="row panel-actions" style="gap:10px; flex-wrap:wrap; margin-top:12px">
+            <button class="btn" type="button" data-admin-jump="adminPlayersSection">Jugadores</button>
+            <button class="btn" type="button" data-admin-jump="adminChipsSection">Fichas</button>
+            <button class="btn" type="button" data-admin-jump="adminAppearanceSection">Apariencia</button>
+            <button class="btn" type="button" data-admin-jump="adminBackupSection">Respaldo / Importación</button>
+            <button class="btn" type="button" data-admin-jump="adminRecalcSection">Recalcular</button>
+            <button class="btn danger" type="button" data-admin-jump="adminClearSection">Borrar</button>
           </div>
-          <div class="rank-mini-list" id="rankMini"></div>
-          <div class="small-note">Ordenado por neto acumulado, ROI, victorias y sesiones jugadas (solo sesiones cerradas).</div>
         </div>
 
-        <div class="panel" role="region" aria-label="Exportación" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Exportación</div>
-            <button class="btn primary" type="button" id="exportExcelBtn">Exportar Excel</button>
-          </div>
-          <div class="small-note" style="margin-top:0">Genera un archivo con 4 hojas: Jugadores, RecordsGlobales, HistorialDetallado y ResumenPartidas.</div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Herramientas" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Herramientas</div>
-            <div class="row panel-actions">
-              <button class="btn" type="button" id="toArchivoBtn">Abrir archivo</button>
-              <button class="btn" type="button" id="toSupportBtn">Soporte</button>
-            </div>
-          </div>
-          <div class="small-note" style="margin-top:0">La navegación principal ya separa <b>Juego</b>, <b>Administración</b> y <b>Archivo</b>. Soporte queda accesible desde aquí mientras terminan las próximas etapas.</div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Jugadores">
+        <div class="panel" id="adminPlayersSection" role="region" aria-label="Jugadores" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Jugadores</div>
             <button class="btn primary" type="button" id="addPlayerBtn">Agregar jugador</button>
           </div>
+          <div class="small-note" style="margin-top:10px">Alta, edición y estado de jugadores. La mini ficha actual de estadísticas se mantiene como vista rápida de gestión.</div>
 
           <div class="player-grid" id="playerGrid" aria-live="polite"></div>
 
           <div class="small-note">En <b>Juego</b> se mostrará el <b>Apodo</b>. Si está vacío, se usa el nombre. Estadísticas calculadas desde sesiones cerradas.</div>
         </div>
 
-        <div class="panel" role="region" aria-label="Fichas" style="margin-top:14px">
+        <div class="panel" id="adminChipsSection" role="region" aria-label="Fichas" style="margin-top:14px">
           <div class="panel-head">
             <div class="panel-title" style="margin:0">Fichas</div>
             <button class="btn primary" type="button" id="addChipBtn">Agregar ficha</button>
           </div>
+          <div class="small-note" style="margin-top:10px">Catálogo operativo de fichas para la mesa. Puedes editar, activar o desactivar sin romper el historial futuro.</div>
 
           <div class="chip-grid" id="chipGrid" aria-live="polite"></div>
 
-          <div class="small-note">“Desactivar” no borra: solo la saca del uso (historial futuro intacto).</div>
+          <div class="small-note">“Desactivar” no borra: solo la saca del uso operativo.</div>
         </div>
 
+        <div class="panel admin-utility-panel" id="adminAppearanceSection" role="region" aria-label="Apariencia" style="margin-top:14px">
+          <div class="panel-title">Apariencia</div>
+          <div class="small-note" style="margin-top:10px">Preferencia visual local para trabajar cómodo dentro de la app.</div>
+          <div class="segmented" role="radiogroup" aria-label="Tema">
+            <button class="seg" type="button" data-theme="auto" aria-checked="false" role="radio">Automático</button>
+            <button class="seg" type="button" data-theme="light" aria-checked="false" role="radio">Claro</button>
+            <button class="seg" type="button" data-theme="dark" aria-checked="false" role="radio">Oscuro</button>
+          </div>
+          <div class="small-note" style="margin-top:10px">Automático sigue el tema del sistema. Claro/Oscuro lo fuerzan.</div>
+        </div>
+
+        <div class="panel admin-utility-panel" id="adminBackupSection" role="region" aria-label="Respaldo e importación" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Respaldo / Importación</div>
+            <div class="row panel-actions admin-utility-actions" style="gap:10px; flex-wrap:wrap">
+              <button class="btn" type="button" id="exportExcelBtn">Exportar Excel</button>
+              <button class="btn" type="button" id="exportJsonBtn">Exportar JSON</button>
+              <label class="btn primary file-trigger" id="importJsonBtn" for="importFile">
+                <span id="importJsonBtnText">Importar JSON</span>
+                <input id="importFile" class="file-native" type="file" accept=".json,application/json" />
+              </label>
+            </div>
+          </div>
+          <div class="small-note" style="margin-top:10px">Exporta respaldo local, comparte base en JSON o saca un Excel para revisión externa. La importación valida primero, muestra vista previa útil y protege la base antes de aplicar cambios.</div>
+          <div class="small-note" id="importStatusNote" style="margin-top:10px"></div>
+        </div>
+
+        <div class="panel admin-utility-panel" id="adminRecalcSection" role="region" aria-label="Recalcular estadísticas" style="margin-top:14px">
+          <div class="panel-title">Recalcular estadísticas</div>
+          <div class="small-note" style="margin-top:10px">Reconstruye ranking, récords y estadísticas usando las sesiones cerradas como fuente.</div>
+          <div class="row panel-actions admin-utility-actions" style="gap:10px; flex-wrap:wrap; margin-top:12px">
+            <button class="btn" type="button" id="recalcBtn">Recalcular estadísticas</button>
+          </div>
+        </div>
+
+        <div class="panel admin-utility-panel" id="adminClearSection" role="region" aria-label="Borrar datos locales" style="margin-top:14px">
+          <div class="panel-title">Borrar datos locales</div>
+          <div class="small-note" style="margin-top:10px">Limpieza total de esta instalación local. No toca otros dispositivos, pero aquí sí borra jugadores, fichas y sesiones.</div>
+          <div class="row panel-actions admin-utility-actions" style="gap:10px; flex-wrap:wrap; margin-top:12px">
+            <button class="btn danger" type="button" id="clearBtn">Borrar datos locales</button>
+          </div>
+        </div>
 
       </section>
     `);
@@ -5005,38 +5050,24 @@ function renderAdministracion(){
     $app.innerHTML = '';
     $app.appendChild(root);
 
-    // Ranking mini + export
-    document.getElementById('toRankingBtn').addEventListener('click', () => navigate('/ranking'));
-    document.getElementById('toHistorialBtn').addEventListener('click', () => navigate('/historial'));
-    document.getElementById('exportExcelBtn').addEventListener('click', () => exportExcel());
-    document.getElementById('toArchivoBtn').addEventListener('click', () => navigate('/archivo'));
-    document.getElementById('toSupportBtn').addEventListener('click', () => navigate('/soporte'));
+    root.querySelectorAll('[data-admin-jump]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-admin-jump');
+        const target = targetId ? document.getElementById(targetId) : null;
+        if (!target) return;
+        try{
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (e) {
+          try{ target.scrollIntoView(); }catch(_e){}
+        }
+      });
+    });
 
-    renderRankingMini();
+    document.getElementById('exportExcelBtn').addEventListener('click', () => exportExcel());
+    wireAdminUtilities();
 
     // Players
     const $pgrid = document.getElementById('playerGrid');
-
-    function renderRankingMini(){
-      const $mini = document.getElementById('rankMini');
-      if (!$mini) return;
-      const a = computeAnalytics();
-      if (!a.ranking.length){
-        $mini.innerHTML = `<div class="empty" style="padding:12px">Aún no hay ranking. Cierra una sesión y lo armamos.</div>`;
-        return;
-      }
-      const top = a.ranking.slice(0, 5);
-      $mini.innerHTML = top.map((r, idx) => {
-        const netClass = Math.abs(r.netTotal) < 0.0001 ? 'ok' : (r.netTotal > 0 ? 'pos' : 'neg');
-        return `
-          <div class="rank-mini-row">
-            <div class="rank-mini-pos">#${escapeHtml(String(r.rankPos || (idx + 1)))}</div>
-            <div class="rank-mini-name">${escapeHtml(r.display)}</div>
-            <div class="rank-mini-net net ${netClass}">${escapeHtml(formatMoney(r.netTotal))}</div>
-          </div>
-        `;
-      }).join('');
-    }
 
     function renderPlayers(){
       const a = computeAnalytics();
@@ -5124,7 +5155,7 @@ function renderAdministracion(){
       openPlayerModal({ mode: 'add', onSave: renderPlayers });
     });
 
-    // Chips (Etapa 3)
+    // Chips
     const $cgrid = document.getElementById('chipGrid');
 
     function renderChips(){
@@ -5201,51 +5232,397 @@ function renderAdministracion(){
       openChipModal({ mode: 'add', onSave: renderChips });
     });
 
-
     renderPlayers();
     renderChips();
   }
 
-  function renderArchivo(){
-    const analytics = computeAnalytics();
+
+  function formatArchiveJoin(names){
+    const list = (Array.isArray(names) ? names : []).map(v => safeTrim(v)).filter(Boolean);
+    if (!list.length) return '';
+    if (list.length === 1) return list[0];
+    if (list.length === 2) return `${list[0]} y ${list[1]}`;
+    return `${list.slice(0, -1).join(', ')} y ${list[list.length - 1]}`;
+  }
+
+  function getArchiveRegisteredPlayersCount(analytics){
+    const ids = new Set();
+    getPlayers().forEach(player => {
+      const id = stableEntityId(player);
+      if (id) ids.add(id);
+    });
+    if (analytics && analytics.byPlayer instanceof Map){
+      analytics.byPlayer.forEach((_, id) => {
+        const key = safeTrim(id);
+        if (key) ids.add(key);
+      });
+    }
+    return ids.size;
+  }
+
+  function getArchiveLeaderLabel(analytics){
+    const ranking = Array.isArray(analytics && analytics.ranking) ? analytics.ranking : [];
+    if (!ranking.length) return '—';
+    const leaders = ranking
+      .filter(row => Math.floor(numOrZero(row && row.rankPos)) === 1)
+      .map(row => safeTrim(row && row.display))
+      .filter(Boolean);
+    if (!leaders.length) return '—';
+    if (leaders.length === 1) return leaders[0];
+    return `Empate: ${formatArchiveJoin(leaders)}`;
+  }
+
+  function getArchiveLatestSummary(analytics){
     const summaryRows = Array.isArray(analytics && analytics.summaryRows) ? analytics.summaryRows.slice() : [];
     summaryRows.sort((a, b) => {
       const delta = numOrZero(b && b.ts) - numOrZero(a && a.ts);
-      if (delta) return delta;
+      if (Math.abs(delta) > 0.0001) return delta;
       return String(b && b.date || '').localeCompare(String(a && a.date || ''), 'es', { sensitivity: 'base' });
     });
     const latest = summaryRows[0] || null;
-    const sessionsCount = summaryRows.length;
-    const playersCount = analytics && analytics.byPlayer instanceof Map ? analytics.byPlayer.size : (Array.isArray(analytics && analytics.ranking) ? analytics.ranking.length : 0);
-    const latestWinner = safeTrim(latest && latest.winner) || '—';
-    const latestDate = safeTrim(latest && latest.date) || '—';
-    const latestDelta = latest ? formatMoney(latest.delta) : '—';
-    const latestDeltaClass = !latest ? 'ok' : (Math.abs(numOrZero(latest.delta)) < 0.0001 ? 'ok' : (numOrZero(latest.delta) > 0 ? 'pos' : 'neg'));
+    if (!latest) return { date: '—', winner: '—', caption: 'Sin sesiones cerradas todavía.' };
+
+    const date = safeTrim(latest && latest.date) || '—';
+    const winnerIds = Array.isArray(latest && latest.winnerIds) ? latest.winnerIds.filter(Boolean) : [];
+    const winnerLabel = safeTrim(latest && latest.winner);
+    let winner = 'Ganador no determinable';
+    let caption = 'Dato leído desde la sesión cerrada más reciente.';
+
+    if (winnerIds.length > 1 && winnerLabel){
+      winner = `Empate: ${winnerLabel}`;
+      caption = 'Empate detectado en la sesión cerrada más reciente.';
+    }else if (winnerIds.length === 1 && winnerLabel){
+      winner = winnerLabel;
+    }else if (!winnerIds.length && winnerLabel && winnerLabel !== '—'){
+      winner = winnerLabel;
+      caption = 'Resultado importado/legacy con salida prudente.';
+    }else if (numOrZero(latest && latest.playersCount) <= 0.0001){
+      winner = 'Sin jugadores válidos';
+      caption = 'La sesión más reciente no expone un ganador seguro.';
+    }
+
+    return { date, winner, caption };
+  }
+
+  function getArchiveProfileRows(analytics){
+    const byPlayer = analytics && analytics.byPlayer instanceof Map ? analytics.byPlayer : new Map();
+    const ranking = Array.isArray(analytics && analytics.ranking) ? analytics.ranking : [];
+    const rankingMap = new Map(ranking.map(row => [safeTrim(row && row.id), row]));
+    const masterMap = new Map(getPlayers().filter(p => stableEntityId(p)).map(p => [stableEntityId(p), p]));
+    const ids = uniqStrings([
+      ...getPlayers().map(stableEntityId),
+      ...Array.from(byPlayer.keys()).map(id => safeTrim(id)),
+    ]);
+
+    return ids.map(id => {
+      const master = masterMap.get(id) || null;
+      const hist = byPlayer.get(id) || null;
+      const rankingRow = rankingMap.get(id) || null;
+      const display = safeTrim((master && playerDisplayName(master)) || (hist && hist.display) || id || 'Jugador');
+      const legalName = safeTrim(master && master.name);
+      const nick = safeTrim(master && master.nick);
+      const identity = legalName && nick && legalName.localeCompare(nick, 'es', { sensitivity: 'base' }) !== 0
+        ? `${legalName} · ${nick}`
+        : (legalName || nick || (master ? 'Sin detalle adicional' : 'Detectado desde historial'));
+      const games = Math.floor(numOrZero(hist && hist.games));
+      const wins = Math.floor(numOrZero(hist && hist.wins1));
+      const net = numOrZero(hist && hist.netTotal);
+      const managed = !!master;
+      const active = !!(master && master.active);
+      const primaryName = legalName || display;
+      const nickLabel = nick && primaryName && nick.localeCompare(primaryName, 'es', { sensitivity: 'base' }) === 0 ? '—' : (nick || '—');
+      return {
+        id,
+        display,
+        legalName,
+        nick,
+        primaryName,
+        nickLabel,
+        identity,
+        managed,
+        active,
+        statusLabel: managed ? (active ? 'Activo' : 'Inactivo') : 'Solo historial',
+        games,
+        wins,
+        podiums: Math.floor(numOrZero(hist && hist.podiums)),
+        net,
+        avgNet: numOrZero(hist && hist.avgNet),
+        roiGlobal: numOrZero(hist && hist.roiGlobal),
+        rankPos: Math.floor(numOrZero(rankingRow && rankingRow.rankPos)),
+        lastSessionDate: safeTrim(hist && hist.lastSession && hist.lastSession.date) || 'Sin sesiones cerradas',
+        lastSessionRef: safeTrim(hist && hist.lastSession && hist.lastSession.sessionRef) || '',
+        bestNet: numOrZero(hist && hist.best && hist.best.net),
+        bestDate: safeTrim(hist && hist.best && hist.best.date) || '—',
+        bestSessionRef: safeTrim(hist && hist.best && hist.best.sessionRef) || '',
+        worstNet: numOrZero(hist && hist.worst && hist.worst.net),
+        worstDate: safeTrim(hist && hist.worst && hist.worst.date) || '—',
+        worstSessionRef: safeTrim(hist && hist.worst && hist.worst.sessionRef) || '',
+      };
+    }).sort((a, b) => {
+      const bucketA = a.managed ? (a.active ? 0 : 1) : 2;
+      const bucketB = b.managed ? (b.active ? 0 : 1) : 2;
+      if (bucketA !== bucketB) return bucketA - bucketB;
+      const nameCmp = a.display.localeCompare(b.display, 'es', { sensitivity: 'base' });
+      if (nameCmp) return nameCmp;
+      return String(a.id).localeCompare(String(b.id), 'es', { sensitivity: 'base' });
+    });
+  }
+
+  function getArchiveProfileHistoricalSnapshots(profileId){
+    const id = safeTrim(profileId);
+    if (!id) return [];
+    const closed = sortSessionsForAnalytics(getClosedSessions());
+    const snapshots = [];
+
+    closed.forEach((session, idx) => {
+      const slice = closed.slice(0, idx + 1);
+      const partial = computeAnalyticsFromSessions(slice);
+      const ranking = Array.isArray(partial && partial.ranking) ? partial.ranking : [];
+      const rankRow = ranking.find(item => sameStableEntity(item && item.id, id)) || null;
+      const histRow = partial && partial.byPlayer instanceof Map ? (partial.byPlayer.get(id) || null) : null;
+      if (!rankRow && !histRow) return;
+      snapshots.push({
+        sessionId: safeTrim(session && session.id),
+        sessionRef: pdfSessionReferenceLabel(session),
+        date: safeTrim(session && session.date),
+        ts: getSessionSortTs(session),
+        rankPos: Math.floor(numOrZero(rankRow && rankRow.rankPos)),
+        games: Math.floor(numOrZero((rankRow && rankRow.games) || (histRow && histRow.games))),
+        netTotal: numOrZero((rankRow && rankRow.netTotal) || (histRow && histRow.netTotal)),
+        roiGlobal: numOrZero((rankRow && rankRow.roiGlobal) || (histRow && histRow.roiGlobal)),
+      });
+    });
+
+    return snapshots;
+  }
+
+  function buildArchiveProfileCurrentStreak(timeline){
+    const list = (Array.isArray(timeline) ? timeline : []).slice().sort((a, b) => {
+      const dt = numOrZero(a && a.ts) - numOrZero(b && b.ts);
+      if (Math.abs(dt) > 0.0001) return dt;
+      return String(a && a.sessionId || '').localeCompare(String(b && b.sessionId || ''), 'es', { sensitivity: 'base' });
+    });
+    if (!list.length){
+      return { tone: 'flat', length: 0, label: 'Sin racha todavía', note: 'Todavía no hay sesiones cerradas para este jugador.' };
+    }
+
+    const eps = 0.0001;
+    const last = list[list.length - 1];
+    const lastNet = numOrZero(last && last.net);
+    let tone = 'flat';
+    let type = 'flat';
+    let predicate = item => Math.abs(numOrZero(item && item.net)) <= eps;
+
+    if (last && last.isWin){
+      tone = 'up';
+      type = 'win';
+      predicate = item => !!(item && item.isWin);
+    }else if (last && last.isItm){
+      tone = 'up';
+      type = 'itm';
+      predicate = item => !!(item && item.isItm);
+    }else if (lastNet < -eps){
+      tone = 'down';
+      type = 'loss';
+      predicate = item => numOrZero(item && item.net) < -eps;
+    }
+
+    let length = 0;
+    for (let idx = list.length - 1; idx >= 0; idx -= 1){
+      if (!predicate(list[idx])) break;
+      length += 1;
+    }
+
+    const context = formatRecordSessionContext(last);
+    if (type === 'win') return { tone, length, label: `${length} ${length === 1 ? 'victoria seguida' : 'victorias seguidas'}`, note: `La racha llega hasta ${context}.` };
+    if (type === 'itm') return { tone, length, label: `${length} ${length === 1 ? 'cobro seguido' : 'cobros seguidos'}`, note: `Viene cobrando desde ${formatRecordSessionContext(list[list.length - length])}.` };
+    if (type === 'loss') return { tone, length, label: `${length} ${length === 1 ? 'sesión en rojo' : 'sesiones en rojo'}`, note: `El tramo reciente viene bajo presión hasta ${context}.` };
+    return { tone, length, label: `${length} ${length === 1 ? 'sesión pareja' : 'sesiones parejas'}`, note: `El cierre más reciente quedó prácticamente en equilibrio (${context}).` };
+  }
+
+  function buildArchiveProfileTrend(row, timeline, snapshots){
+    const list = (Array.isArray(timeline) ? timeline : []).slice().sort((a, b) => {
+      const dt = numOrZero(a && a.ts) - numOrZero(b && b.ts);
+      if (Math.abs(dt) > 0.0001) return dt;
+      return String(a && a.sessionId || '').localeCompare(String(b && b.sessionId || ''), 'es', { sensitivity: 'base' });
+    });
+    const recent = list.slice(-3);
+    const recentAvg = recent.length ? (recent.reduce((acc, item) => acc + numOrZero(item && item.net), 0) / recent.length) : 0;
+    const positives = recent.filter(item => numOrZero(item && item.net) > 0.0001).length;
+    const negatives = recent.filter(item => numOrZero(item && item.net) < -0.0001).length;
+    const currentRank = Math.floor(numOrZero(row && row.rankPos));
+    const previousRank = snapshots.length >= 2 ? Math.floor(numOrZero(snapshots[snapshots.length - 2] && snapshots[snapshots.length - 2].rankPos)) : 0;
+    const lastRef = recent.length ? formatRecordSessionContext(recent[recent.length - 1]) : 'la última sesión';
+
+    if (currentRank && previousRank && currentRank < previousRank){
+      return { tone: 'up', label: 'Subiendo', note: `Ganó terreno en ranking: pasó de #${previousRank} a #${currentRank} en ${lastRef}.` };
+    }
+    if (currentRank && previousRank && currentRank > previousRank){
+      return { tone: 'down', label: 'Cediendo', note: `Perdió terreno en ranking: pasó de #${previousRank} a #${currentRank} en ${lastRef}.` };
+    }
+    if (currentRank && !previousRank && snapshots.length){
+      return { tone: 'up', label: 'Debutando', note: `Entró al ranking histórico en ${lastRef}.` };
+    }
+    if (recent.length >= 2 && positives >= 2 && recentAvg > 0.0001){
+      return { tone: 'up', label: 'En alza', note: `${positives} de sus últimas ${recent.length} sesiones cerraron en verde.` };
+    }
+    if (recent.length >= 2 && negatives >= 2 && recentAvg < -0.0001){
+      return { tone: 'down', label: 'Bajo presión', note: `${negatives} de sus últimas ${recent.length} sesiones cerraron en rojo.` };
+    }
+    if (!recent.length){
+      return { tone: 'flat', label: 'Sin lectura', note: 'Todavía no hay tramo reciente para comparar.' };
+    }
+    return { tone: 'flat', label: 'Estable', note: 'Su momento reciente no muestra una ruptura clara respecto al promedio histórico.' };
+  }
+
+  function buildArchiveProfileRecentForm(timeline){
+    const list = (Array.isArray(timeline) ? timeline : []).slice().sort((a, b) => {
+      const dt = numOrZero(a && a.ts) - numOrZero(b && b.ts);
+      if (Math.abs(dt) > 0.0001) return dt;
+      return String(a && a.sessionId || '').localeCompare(String(b && b.sessionId || ''), 'es', { sensitivity: 'base' });
+    }).slice(-5).reverse();
+
+    return list.map(item => {
+      const net = numOrZero(item && item.net);
+      if (item && item.isWin){
+        return { tone: 'up', shortLabel: 'W', title: `Victoria · ${formatRecordSessionContext(item)}`, note: formatMoney(net) };
+      }
+      if (item && item.isItm){
+        return { tone: 'up', shortLabel: '+', title: `Cobró · ${formatRecordSessionContext(item)}`, note: formatMoney(net) };
+      }
+      if (Math.abs(net) <= 0.0001){
+        return { tone: 'flat', shortLabel: '0', title: `Empate técnico · ${formatRecordSessionContext(item)}`, note: formatMoney(net) };
+      }
+      return { tone: 'down', shortLabel: '−', title: `Sesión en rojo · ${formatRecordSessionContext(item)}`, note: formatMoney(net) };
+    });
+  }
+
+  function getArchiveProfileLiveModel(analytics, profileId){
+    const row = getArchiveProfileById(analytics, profileId);
+    if (!row) return null;
+    const byPlayer = analytics && analytics.byPlayer instanceof Map ? analytics.byPlayer : new Map();
+    const hist = byPlayer.get(row.id) || null;
+    const timeline = Array.isArray(hist && hist.timeline) ? hist.timeline.slice() : [];
+    const snapshots = getArchiveProfileHistoricalSnapshots(row.id);
+    const bestRankSnap = snapshots
+      .filter(item => Math.floor(numOrZero(item && item.rankPos)) > 0)
+      .sort((a, b) => {
+        const rankDelta = Math.floor(numOrZero(a && a.rankPos)) - Math.floor(numOrZero(b && b.rankPos));
+        if (rankDelta) return rankDelta;
+        const tsDelta = numOrZero(a && a.ts) - numOrZero(b && b.ts);
+        if (Math.abs(tsDelta) > 0.0001) return tsDelta;
+        return String(a && a.sessionId || '').localeCompare(String(b && b.sessionId || ''), 'es', { sensitivity: 'base' });
+      })[0] || null;
+
+    const streak = buildArchiveProfileCurrentStreak(timeline);
+    const trend = buildArchiveProfileTrend(row, timeline, snapshots);
+    const recentForm = buildArchiveProfileRecentForm(timeline);
+    const bestHistoricalRank = Math.floor(numOrZero(bestRankSnap && bestRankSnap.rankPos));
+    const bestHistoricalRankNote = bestHistoricalRank
+      ? `Pico detectado en ${formatSessionDateLabel(bestRankSnap.date, bestRankSnap.ts)}${bestRankSnap.sessionRef ? ` · ${bestRankSnap.sessionRef}` : ''}.`
+      : 'Todavía no tiene ranking histórico registrado.';
+    const latest = timeline.slice().sort((a, b) => {
+      const dt = numOrZero(b && b.ts) - numOrZero(a && a.ts);
+      if (Math.abs(dt) > 0.0001) return dt;
+      return String(b && b.sessionId || '').localeCompare(String(a && a.sessionId || ''), 'es', { sensitivity: 'base' });
+    })[0] || null;
+    const recentAvg = timeline.length ? timeline.slice().sort((a, b) => {
+      const dt = numOrZero(a && a.ts) - numOrZero(b && b.ts);
+      if (Math.abs(dt) > 0.0001) return dt;
+      return String(a && a.sessionId || '').localeCompare(String(b && b.sessionId || ''), 'es', { sensitivity: 'base' });
+    }).slice(-3).reduce((acc, item) => acc + numOrZero(item && item.net), 0) / Math.min(3, timeline.length) : 0;
+
+    return {
+      ...row,
+      bestHistoricalRank,
+      bestHistoricalRankNote,
+      currentStreak: streak,
+      trend,
+      recentForm,
+      timelineCount: timeline.length,
+      recentAvg,
+      lastNet: numOrZero(latest && latest.net),
+      latestContext: latest ? formatRecordSessionContext(latest) : 'Sin sesiones cerradas',
+      latestSessionId: safeTrim(latest && latest.sessionId),
+      latestSessionRef: safeTrim(latest && latest.sessionRef),
+      bestWinStreak: hist && hist.bestWinStreak ? hist.bestWinStreak : { length: 0, start: null, end: null },
+      bestItmStreak: hist && hist.bestItmStreak ? hist.bestItmStreak : { length: 0, start: null, end: null },
+      snapshots,
+    };
+  }
+
+  function getArchiveProfileById(analytics, profileId){
+    const id = safeTrim(profileId);
+    if (!id) return null;
+    return getArchiveProfileRows(analytics).find(row => sameStableEntity(row && row.id, id)) || null;
+  }
+
+  function renderPerfiles(){
+    const analytics = computeAnalytics();
+    const rows = getArchiveProfileRows(analytics);
+    const historyCount = analytics && analytics.byPlayer instanceof Map ? analytics.byPlayer.size : 0;
 
     const root = el(`
-      <section class="screen screen--archivo" aria-label="Archivo">
-        <h1 class="screen-title">Archivo</h1>
-        <p class="screen-sub">Esta es la entrada base del archivo: historial vivo hoy, espacio listo para crecer mañana y cero rutas colgando.</p>
+      <section class="screen screen--archivo screen--archivo-perfiles" aria-label="Perfiles">
+        <h1 class="screen-title">Perfiles</h1>
+        <p class="screen-sub">Archivo · lectura individual e histórica de jugadores. Administración gestiona; Perfiles cuenta la historia viva sin mezclar operación con archivo.</p>
 
-        <div class="panel" role="region" aria-label="Resumen de archivo">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Resumen</div>
-            <div class="row panel-actions archive-actions">
-              <button class="btn primary" type="button" id="openHistorialBtn">Abrir historial</button>
-            </div>
+        <div class="panel archive-profiles-hero" role="region" aria-label="Resumen de perfiles">
+          <div>
+            <div class="archive-kicker">Perfil vivo</div>
+            <div class="panel-title archive-module-title">Lectura individual cerrada</div>
+            <div class="small-note archive-module-note">Los datos vienen de jugadores reales y del histórico consolidado. Aquí se lee la trayectoria; en Administración se sigue creando, editando y activando.</div>
           </div>
-          <div class="stats-mini-grid stats-extended" style="margin-top:12px">
-            <div class="stat-mini"><span class="k">Sesiones cerradas</span><span class="v">${escapeHtml(String(sessionsCount))}</span></div>
-            <div class="stat-mini"><span class="k">Jugadores con historial</span><span class="v">${escapeHtml(String(playersCount))}</span></div>
-            <div class="stat-mini stack"><span class="k">Última sesión</span><span class="v">${escapeHtml(latestDate)}</span><span class="sub">Ganador: ${escapeHtml(latestWinner)}</span></div>
-            <div class="stat-mini stack"><span class="k">Último balance</span><span class="v net ${latestDeltaClass}">${escapeHtml(latestDelta)}</span><span class="sub">Cuadre global de la sesión más reciente</span></div>
+          <div class="stats-mini-grid stats-extended archive-profiles-stats">
+            <div class="stat-mini"><span class="k">Registrados</span><span class="v">${escapeHtml(String(getArchiveRegisteredPlayersCount(analytics)))}</span></div>
+            <div class="stat-mini"><span class="k">Con historial</span><span class="v">${escapeHtml(String(historyCount))}</span></div>
+            <div class="stat-mini"><span class="k">Perfiles vivos</span><span class="v">${escapeHtml(String(rows.length))}</span></div>
           </div>
-          <div class="small-note" style="margin-top:12px">Aquí seguirá creciendo el mapa de archivo en etapas futuras. Por ahora, el historial real ya entra por su puerta correcta.</div>
         </div>
 
-        <div class="panel" role="region" aria-label="Estado de la base" style="margin-top:14px">
-          <div class="panel-title">Entrada inicial estable</div>
-          <div class="small-note" style="margin-top:10px">Se introdujo <b>Archivo</b> como sección principal sin tocar la lógica de PDF, JSON, ranking ni cierre de sesión. La app sigue usando el historial actual como núcleo archivístico mientras se expanden las próximas etapas.</div>
+        <div class="archive-split-grid" aria-label="Separación entre gestión y lectura">
+          <article class="panel archive-split-card">
+            <div class="archive-kicker">Administración &gt; Jugadores</div>
+            <div class="panel-title archive-module-title">Gestión operativa</div>
+            <div class="small-note archive-module-note">Altas, edición, activación e inactivación siguen viviendo en la casa operativa. La mini ficha actual se conserva allí.</div>
+          </article>
+          <article class="panel archive-split-card archive-split-card--focus">
+            <div class="archive-kicker">Archivo &gt; Perfiles</div>
+            <div class="panel-title archive-module-title">Lectura individual</div>
+            <div class="small-note archive-module-note">Listado táctil para abrir la ficha viva de cada jugador y leer rendimiento, ranking, rachas y momento reciente sin meter mano donde no toca.</div>
+          </article>
+        </div>
+
+        <div class="archive-profile-preview-grid" aria-label="Listado de perfiles vivos">
+          ${rows.length ? rows.map(row => {
+            const netClass = Math.abs(numOrZero(row.net)) < 0.0001 ? 'ok' : (numOrZero(row.net) > 0 ? 'pos' : 'neg');
+            return `
+              <article class="panel archive-profile-preview-card" data-profile-id="${escapeAttr(row.id)}">
+                <div class="archive-profile-preview-top">
+                  <div>
+                    <div class="panel-title archive-profile-preview-title">${escapeHtml(row.display)}</div>
+                    <div class="small-note archive-profile-meta-line">${escapeHtml(row.identity)}</div>
+                  </div>
+                  <div class="archive-profile-badges">
+                    ${row.managed ? `<span class="pill ${row.active ? 'on' : 'off'}">${escapeHtml(row.statusLabel)}</span>` : `<span class="badge">${escapeHtml(row.statusLabel)}</span>`}
+                    <span class="badge">${row.rankPos ? ('#' + escapeHtml(String(row.rankPos))) : 'Sin ranking'}</span>
+                  </div>
+                </div>
+                <div class="stats-mini-grid stats-extended" style="margin-top:12px">
+                  <div class="stat-mini"><span class="k">Sesiones</span><span class="v">${escapeHtml(String(row.games))}</span></div>
+                  <div class="stat-mini"><span class="k">Victorias</span><span class="v">${escapeHtml(String(row.wins))}</span></div>
+                  <div class="stat-mini"><span class="k">Neto</span><span class="v net ${netClass}">${escapeHtml(formatMoney(row.net))}</span></div>
+                  <div class="stat-mini stack"><span class="k">Última sesión</span><span class="v">${escapeHtml(row.lastSessionDate)}</span><span class="sub">${escapeHtml(row.lastSessionRef || (row.rankPos ? ('Ranking #' + row.rankPos) : 'Sin ref.'))}</span></div>
+                </div>
+                <div class="small-note archive-profile-preview-foot">${escapeHtml(row.managed ? 'La ficha individual ya vive aquí. Para editar datos operativos, la puerta correcta sigue siendo Administración > Jugadores.' : 'Perfil detectado desde historial/importaciones. Puede leerse completo aunque todavía no exista ficha operativa en Gestión.')}</div>
+                <div class="archive-profile-actions">
+                  <button class="btn" type="button" data-profile-open="${escapeAttr(row.id)}">Abrir perfil</button>
+                </div>
+              </article>
+            `;
+          }).join('') : `
+            <div class="empty">Todavía no hay jugadores para mostrar aquí.</div>
+          `}
         </div>
       </section>
     `);
@@ -5253,8 +5630,283 @@ function renderAdministracion(){
     $app.innerHTML = '';
     $app.appendChild(root);
 
+    root.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-profile-open]');
+      if (btn){
+        const id = safeTrim(btn.getAttribute('data-profile-open'));
+        if (id) navigate('/archivo/perfiles/detalle?id=' + encodeURIComponent(id));
+        return;
+      }
+    });
+  }
+
+  function renderPerfilDetalle(){
+    const analytics = computeAnalytics();
+    const q = getHashQuery();
+    const id = safeTrim(q.get('id'));
+    const row = getArchiveProfileLiveModel(analytics, id);
+    if (!row){
+      navigate('/archivo/perfiles', { stackMode: 'back' });
+      return;
+    }
+
+    const netClass = Math.abs(numOrZero(row.net)) < 0.0001 ? 'ok' : (numOrZero(row.net) > 0 ? 'pos' : 'neg');
+    const avgClass = Math.abs(numOrZero(row.avgNet)) < 0.0001 ? 'ok' : (numOrZero(row.avgNet) > 0 ? 'pos' : 'neg');
+    const roiClass = Math.abs(numOrZero(row.roiGlobal)) < 0.0001 ? 'ok' : (numOrZero(row.roiGlobal) > 0 ? 'pos' : 'neg');
+    const recentAvgClass = Math.abs(numOrZero(row.recentAvg)) < 0.0001 ? 'ok' : (numOrZero(row.recentAvg) > 0 ? 'pos' : 'neg');
+    const streakToneClass = row.currentStreak && row.currentStreak.tone === 'up' ? 'archive-tone-pill--up' : (row.currentStreak && row.currentStreak.tone === 'down' ? 'archive-tone-pill--down' : 'archive-tone-pill--flat');
+    const trendToneClass = row.trend && row.trend.tone === 'up' ? 'archive-tone-pill--up' : (row.trend && row.trend.tone === 'down' ? 'archive-tone-pill--down' : 'archive-tone-pill--flat');
+    const detailNote = row.managed
+      ? 'Separación cerrada: esta ficha lee la historia individual sin tocar la gestión. Cualquier cambio operativo sigue en Administración > Jugadores.'
+      : 'Esta ficha nace desde histórico/importaciones. Hay lectura individual aunque el jugador no tenga hoy una ficha operativa activa en Gestión.';
+
+    const root = el(`
+      <section class="screen screen--archivo screen--archivo-perfil" aria-label="Perfil individual">
+        <h1 class="screen-title">${escapeHtml(row.display)}</h1>
+        <p class="screen-sub">Archivo · Perfil vivo individual. Aquí vive la lectura histórica del jugador: nombre, apodo, ranking, rachas, tendencia y sus mejores y peores noches.</p>
+
+        <div class="panel archive-profile-detail-hero" role="region" aria-label="Cabecera del perfil">
+          <div class="archive-profile-detail-head">
+            <div>
+              <div class="archive-kicker">Perfil vivo</div>
+              <div class="panel-title archive-module-title">${escapeHtml(row.identity)}</div>
+              <div class="small-note archive-module-note">${escapeHtml(detailNote)}</div>
+            </div>
+            <div class="archive-profile-badges">
+              ${row.managed ? `<span class="pill ${row.active ? 'on' : 'off'}">${escapeHtml(row.statusLabel)}</span>` : `<span class="badge">${escapeHtml(row.statusLabel)}</span>`}
+              <span class="badge">${row.rankPos ? ('Ranking #' + escapeHtml(String(row.rankPos))) : 'Sin ranking vigente'}</span>
+              <span class="archive-tone-pill ${trendToneClass}">${escapeHtml((row.trend && row.trend.label) || 'Estable')}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="archive-summary-grid archive-profile-detail-grid" aria-label="Identidad y base del jugador">
+          <article class="archive-summary-card">
+            <div class="archive-summary-label">Nombre</div>
+            <div class="archive-summary-value archive-summary-value--text">${escapeHtml(row.primaryName || row.display)}</div>
+            <div class="archive-summary-note">Ficha principal leída desde jugadores o histórico consolidado.</div>
+          </article>
+          <article class="archive-summary-card">
+            <div class="archive-summary-label">Apodo</div>
+            <div class="archive-summary-value archive-summary-value--text">${escapeHtml(row.nickLabel || '—')}</div>
+            <div class="archive-summary-note">Si no hay alias distinto, se muestra prudencia y no se inventa uno.</div>
+          </article>
+          <article class="archive-summary-card">
+            <div class="archive-summary-label">Sesiones jugadas</div>
+            <div class="archive-summary-value">${escapeHtml(String(row.games))}</div>
+            <div class="archive-summary-note">Sesiones cerradas reconocidas para este jugador.</div>
+          </article>
+          <article class="archive-summary-card archive-summary-card--latest">
+            <div class="archive-summary-label">Balance acumulado</div>
+            <div class="archive-summary-value archive-summary-value--text net ${netClass}">${escapeHtml(formatMoney(row.net))}</div>
+            <div class="archive-summary-note">Última lectura: ${escapeHtml(row.latestContext)}</div>
+          </article>
+        </div>
+
+        <div class="archive-summary-grid archive-profile-vitals-grid" aria-label="Métricas principales del perfil vivo">
+          <article class="archive-summary-card">
+            <div class="archive-summary-label">Promedio por sesión</div>
+            <div class="archive-summary-value archive-summary-value--text net ${avgClass}">${escapeHtml(formatMoney(row.avgNet))}</div>
+            <div class="archive-summary-note">Promedio global del balance por cierre.</div>
+          </article>
+          <article class="archive-summary-card">
+            <div class="archive-summary-label">Mejor sesión</div>
+            <div class="archive-summary-value archive-summary-value--text net ${Math.abs(numOrZero(row.bestNet)) < 0.0001 ? 'ok' : (numOrZero(row.bestNet) > 0 ? 'pos' : 'neg')}">${escapeHtml(formatMoney(row.bestNet))}</div>
+            <div class="archive-summary-note">${escapeHtml(row.bestDate)}${row.bestSessionRef ? ` · ${escapeHtml(row.bestSessionRef)}` : ''}</div>
+          </article>
+          <article class="archive-summary-card">
+            <div class="archive-summary-label">Peor sesión</div>
+            <div class="archive-summary-value archive-summary-value--text net ${Math.abs(numOrZero(row.worstNet)) < 0.0001 ? 'ok' : (numOrZero(row.worstNet) > 0 ? 'pos' : 'neg')}">${escapeHtml(formatMoney(row.worstNet))}</div>
+            <div class="archive-summary-note">${escapeHtml(row.worstDate)}${row.worstSessionRef ? ` · ${escapeHtml(row.worstSessionRef)}` : ''}</div>
+          </article>
+          <article class="archive-summary-card">
+            <div class="archive-summary-label">Ranking actual</div>
+            <div class="archive-summary-value">${row.rankPos ? ('#' + escapeHtml(String(row.rankPos))) : 'Sin ranking'}</div>
+            <div class="archive-summary-note">Mejor ranking histórico: ${row.bestHistoricalRank ? ('#' + escapeHtml(String(row.bestHistoricalRank))) : 'Sin dato'}.</div>
+          </article>
+        </div>
+
+        <div class="archive-map-grid archive-profile-detail-panels" aria-label="Lectura viva del jugador">
+          <article class="panel archive-lane archive-lane--profile-momentum">
+            <div class="archive-lane-top">
+              <div>
+                <div class="archive-lane-eyebrow">Momento reciente</div>
+                <div class="panel-title archive-lane-title">Racha y tendencia</div>
+              </div>
+              <span class="archive-tone-pill ${streakToneClass}">${escapeHtml((row.currentStreak && row.currentStreak.label) || 'Sin racha')}</span>
+            </div>
+            <div class="archive-profile-detail-stack">
+              <div class="archive-profile-highlight-row">
+                <div class="archive-profile-highlight">
+                  <span class="k">Tendencia actual</span>
+                  <span class="v">${escapeHtml((row.trend && row.trend.label) || 'Estable')}</span>
+                  <span class="sub">${escapeHtml((row.trend && row.trend.note) || 'Sin lectura reciente.')}</span>
+                </div>
+                <div class="archive-profile-highlight">
+                  <span class="k">Promedio últimas 3</span>
+                  <span class="v net ${recentAvgClass}">${escapeHtml(formatMoney(row.recentAvg))}</span>
+                  <span class="sub">${escapeHtml((row.currentStreak && row.currentStreak.note) || 'Sin tramo reciente.')}</span>
+                </div>
+              </div>
+              <div class="archive-profile-form-block">
+                <div class="archive-profile-form-head">
+                  <span class="k">Racha reciente</span>
+                  <span class="sub">Últimas ${escapeHtml(String(row.recentForm.length || 0))} sesiones</span>
+                </div>
+                <div class="archive-form-strip">${row.recentForm.length ? row.recentForm.map(item => `<span class="archive-form-pill archive-form-pill--${escapeAttr(item.tone)}" title="${escapeAttr(item.title)}">${escapeHtml(item.shortLabel)}<small>${escapeHtml(item.note)}</small></span>`).join('') : '<span class="small-note">Sin cierres recientes.</span>'}</div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel archive-lane">
+            <div class="archive-lane-top">
+              <div>
+                <div class="archive-lane-eyebrow">Lectura histórica</div>
+                <div class="panel-title archive-lane-title">Ranking y consistencia</div>
+              </div>
+              <span class="badge">${row.bestHistoricalRank ? ('Mejor #' + escapeHtml(String(row.bestHistoricalRank))) : 'Sin pico'}</span>
+            </div>
+            <div class="stats-mini-grid stats-extended">
+              <div class="stat-mini stack"><span class="k">Mejor ranking histórico</span><span class="v">${row.bestHistoricalRank ? ('#' + escapeHtml(String(row.bestHistoricalRank))) : 'Sin ranking'}</span><span class="sub">${escapeHtml(row.bestHistoricalRankNote)}</span></div>
+              <div class="stat-mini"><span class="k">Victorias</span><span class="v">${escapeHtml(String(row.wins))}</span></div>
+              <div class="stat-mini"><span class="k">Podios</span><span class="v">${escapeHtml(String(row.podiums))}</span></div>
+              <div class="stat-mini"><span class="k">ROI global</span><span class="v net ${roiClass}">${escapeHtml(formatPercent(row.roiGlobal))}</span></div>
+              <div class="stat-mini stack"><span class="k">Mejor racha de victorias</span><span class="v">${escapeHtml(formatRecordCount(row.bestWinStreak && row.bestWinStreak.length, 'victoria seguida', 'victorias seguidas'))}</span><span class="sub">${escapeHtml(formatStreakContextLabel(row.bestWinStreak))}</span></div>
+              <div class="stat-mini stack"><span class="k">Mejor racha de cobros</span><span class="v">${escapeHtml(formatRecordCount(row.bestItmStreak && row.bestItmStreak.length, 'cobro seguido', 'cobros seguidos'))}</span><span class="sub">${escapeHtml(formatStreakContextLabel(row.bestItmStreak))}</span></div>
+            </div>
+          </article>
+
+          <article class="panel archive-lane archive-lane--future">
+            <div class="archive-lane-top">
+              <div>
+                <div class="archive-lane-eyebrow">Puentes</div>
+                <div class="panel-title archive-lane-title">Navegación coherente</div>
+              </div>
+            </div>
+            <div class="small-note archive-lane-copy">Perfiles lee la historia individual. Ranking sigue siendo el comparativo global. Historial conserva las sesiones cerradas y el PDF. Cada cosa en su altar; nada de mezclar santos con diablos.</div>
+            <div class="archive-lane-actions archive-lane-actions--stack">
+              ${row.latestSessionId ? `<button class="btn" type="button" id="goLatestSessionFromProfileBtn">Ver última sesión</button>` : ''}
+              <button class="btn secondary" type="button" id="goRankingFromProfileBtn">Abrir Ranking</button>
+              <button class="btn secondary" type="button" id="goHistorialFromProfileBtn">Abrir Historial</button>
+              <button class="btn secondary" type="button" id="goAdminPlayersFromProfileBtn">Ir a Jugadores</button>
+            </div>
+          </article>
+        </div>
+
+        <div class="row archive-actions" style="margin-top:16px">
+          <button class="btn secondary" type="button" id="backToArchivoBtn">Volver a Archivo</button>
+          <button class="btn" type="button" id="backToPerfilesBtn">Volver a Perfiles</button>
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = '';
+    $app.appendChild(root);
+
+    const $back = document.getElementById('backToPerfilesBtn');
+    if ($back) $back.addEventListener('click', () => navigate('/archivo/perfiles', { stackMode: 'back' }));
+    const $backArchivo = document.getElementById('backToArchivoBtn');
+    if ($backArchivo) $backArchivo.addEventListener('click', () => navigate('/archivo', { stackMode: 'back' }));
+    const $admin = document.getElementById('goAdminPlayersFromProfileBtn');
+    if ($admin) $admin.addEventListener('click', () => navigate('/administracion'));
+    const $ranking = document.getElementById('goRankingFromProfileBtn');
+    if ($ranking) $ranking.addEventListener('click', () => navigate('/archivo/ranking'));
+    const $historial = document.getElementById('goHistorialFromProfileBtn');
+    if ($historial) $historial.addEventListener('click', () => navigate('/archivo/historial'));
+    const $latest = document.getElementById('goLatestSessionFromProfileBtn');
+    if ($latest) $latest.addEventListener('click', () => navigate('/archivo/historial/detalle?id=' + encodeURIComponent(row.latestSessionId)));
+  }
+
+
+  function renderArchivo(){
+    const analytics = computeAnalytics();
+    const sessionsCount = Array.isArray(analytics && analytics.summaryRows) ? analytics.summaryRows.length : 0;
+    const registeredPlayersCount = getArchiveRegisteredPlayersCount(analytics);
+    const leaderLabel = getArchiveLeaderLabel(analytics);
+    const latestSummary = getArchiveLatestSummary(analytics);
+
+    const root = el(`
+      <section class="screen screen--archivo screen--archivo-home" aria-label="Archivo">
+        <h1 class="screen-title">Archivo</h1>
+        <p class="screen-sub">Memoria histórica de la mesa, lectura competitiva y acceso claro a lo que ya pasó. Sobrio, útil y sin mezclar operación con archivo.</p>
+
+        <div class="panel archive-overview-panel" role="region" aria-label="Resumen superior de archivo">
+          <div class="archive-overview-head">
+            <div>
+              <div class="archive-kicker">Portada propia</div>
+              <div class="panel-title archive-overview-title">Resumen actual de la mesa</div>
+            </div>
+            <span class="badge">Archivo activo</span>
+          </div>
+
+          <div class="archive-summary-grid" aria-label="Datos principales del archivo">
+            <article class="archive-summary-card">
+              <div class="archive-summary-label">Sesiones cerradas</div>
+              <div class="archive-summary-value">${escapeHtml(String(sessionsCount))}</div>
+              <div class="archive-summary-note">Cierre histórico disponible en el sistema.</div>
+            </article>
+
+            <article class="archive-summary-card">
+              <div class="archive-summary-label">Jugadores registrados</div>
+              <div class="archive-summary-value">${escapeHtml(String(registeredPlayersCount))}</div>
+              <div class="archive-summary-note">Maestro de jugadores con fallback al histórico importado.</div>
+            </article>
+
+            <article class="archive-summary-card">
+              <div class="archive-summary-label">Líder actual</div>
+              <div class="archive-summary-value archive-summary-value--text">${escapeHtml(leaderLabel)}</div>
+              <div class="archive-summary-note">Tomado del ranking global vigente.</div>
+            </article>
+
+            <article class="archive-summary-card archive-summary-card--latest">
+              <div class="archive-summary-label">Última sesión</div>
+              <div class="archive-summary-value archive-summary-value--text">${escapeHtml(latestSummary.date)}</div>
+              <div class="archive-summary-note">Ganador: ${escapeHtml(latestSummary.winner)}</div>
+            </article>
+          </div>
+
+          <div class="small-note archive-overview-foot">${escapeHtml(latestSummary.caption)}</div>
+        </div>
+
+        <div class="archive-portal-grid" aria-label="Accesos principales de archivo">
+          <button class="card archive-portal-card archive-portal-card--perfiles" type="button" id="openPerfilesBtn">
+            <div class="archive-lane-eyebrow">Perfiles</div>
+            <div class="archive-portal-title">Lectura individual</div>
+            <p class="archive-portal-copy">Entrada a la ficha viva de cada jugador para revisar su huella histórica, su momento reciente y su lectura individual completa.</p>
+            <div class="archive-portal-meta">${escapeHtml(String(registeredPlayersCount))} jugador${registeredPlayersCount === 1 ? '' : 'es'} listo${registeredPlayersCount === 1 ? '' : 's'} para lectura</div>
+            <span class="archive-portal-cta">Abrir perfiles</span>
+          </button>
+
+          <button class="card archive-portal-card archive-portal-card--ranking" type="button" id="openRankingBtn">
+            <div class="archive-lane-eyebrow">Ranking</div>
+            <div class="archive-portal-title">Comparativo histórico</div>
+            <p class="archive-portal-copy">Consulta la tabla global vigente, movimientos y posiciones entre jugadores desde la nueva casa competitiva de Archivo.</p>
+            <div class="archive-portal-meta">Líder actual: ${escapeHtml(leaderLabel)}</div>
+            <span class="archive-portal-cta">Abrir ranking</span>
+          </button>
+
+          <button class="card archive-portal-card archive-portal-card--historial" type="button" id="openHistorialBtn">
+            <div class="archive-lane-eyebrow">Historial</div>
+            <div class="archive-portal-title">Memoria de sesiones</div>
+            <p class="archive-portal-copy">Recorre cierres anteriores, entra al detalle y conserva la salida PDF sin romper la cronología.</p>
+            <div class="archive-portal-meta">${escapeHtml(latestSummary.date)} · ${escapeHtml(latestSummary.winner)}</div>
+            <span class="archive-portal-cta">Abrir historial</span>
+          </button>
+        </div>
+      </section>
+    `);
+
+    $app.innerHTML = '';
+    $app.appendChild(root);
+
+    const $openPerfilesBtn = document.getElementById('openPerfilesBtn');
+    if ($openPerfilesBtn) $openPerfilesBtn.addEventListener('click', () => navigate('/archivo/perfiles'));
+
+    const $openRankingBtn = document.getElementById('openRankingBtn');
+    if ($openRankingBtn) $openRankingBtn.addEventListener('click', () => navigate('/archivo/ranking'));
+
     const $openHistorialBtn = document.getElementById('openHistorialBtn');
-    if ($openHistorialBtn) $openHistorialBtn.addEventListener('click', () => navigate('/historial'));
+    if ($openHistorialBtn) $openHistorialBtn.addEventListener('click', () => navigate('/archivo/historial'));
   }
 
   function openChipModal({ mode, chip, onSave }){
@@ -7101,60 +7753,12 @@ function formatMoney(n){
   }
 
 
-  function renderSoporte(){
-    const root = el(`
-      <section class="screen screen--soporte" aria-label="Soporte">
-        <h1 class="screen-title">Soporte</h1>
-        <p class="screen-sub">Herramientas y ajustes generales. (Sí, aquí vive el “modo oscuro”.)</p>
-
-        <div class="panel" role="region" aria-label="Apariencia">
-          <div class="panel-title">Apariencia</div>
-          <div class="segmented" role="radiogroup" aria-label="Tema">
-            <button class="seg" type="button" data-theme="auto" aria-checked="false" role="radio">Automático</button>
-            <button class="seg" type="button" data-theme="light" aria-checked="false" role="radio">Claro</button>
-            <button class="seg" type="button" data-theme="dark" aria-checked="false" role="radio">Oscuro</button>
-          </div>
-          <div class="small-note" style="margin-top:10px">
-            Automático sigue el tema del sistema. Claro/Oscuro lo fuerzan.
-          </div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Respaldo" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Respaldo</div>
-            <div class="row panel-actions support-actions" style="gap:10px; flex-wrap:wrap">
-              <button class="btn" type="button" id="exportJsonBtn">Exportar JSON</button>
-              <label class="btn primary file-trigger" id="importJsonBtn" for="importFile">
-                <span id="importJsonBtnText">Importar JSON</span>
-                <input id="importFile" class="file-native" type="file" accept=".json,application/json" />
-              </label>
-            </div>
-          </div>
-          <div class="small-note" style="margin-top:10px">Importar valida primero, muestra vista previa útil, crea un respaldo local de seguridad antes de aplicar y solo guarda si merge + recálculo terminan bien.</div>
-          <div class="small-note" id="importStatusNote" style="margin-top:10px"></div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Mantenimiento" style="margin-top:14px">
-          <div class="panel-title">Mantenimiento</div>
-          <div class="row panel-actions support-actions" style="gap:10px; flex-wrap:wrap">
-            <button class="btn" type="button" id="recalcBtn">Recalcular estadísticas</button>
-            <button class="btn danger" type="button" id="clearBtn">Borrar datos locales</button>
-          </div>
-          <div class="small-note" style="margin-top:10px">“Borrar” elimina jugadores, fichas y sesiones guardadas en este dispositivo.</div>
-        </div>
-
-
-      </section>
-    `);
-    $app.innerHTML = '';
-    $app.appendChild(root);
-
+  function wireAdminUtilities(){
     // wire theme selector
     $app.querySelectorAll('.seg[data-theme]').forEach(b => {
       b.addEventListener('click', () => setThemePref(b.getAttribute('data-theme')));
     });
     syncSupportThemeUI();
-
 
     // Backup
     const $file = document.getElementById('importFile');
@@ -7235,7 +7839,11 @@ function formatMoney(n){
           renderImportStatusNote();
         } catch (e) {
           const reason = safeTrim(e && e.message) || 'Error desconocido.';
-          await confirmDialog({ title: 'Importación cancelada', body: `El flujo de importación se interrumpió antes de terminar.\n\nDetalle: ${reason}\n\nLa base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true });
+          await confirmDialog({ title: 'Importación cancelada', body: `El flujo de importación se interrumpió antes de terminar.
+
+Detalle: ${reason}
+
+La base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true });
         } finally {
           setImportUiBusy(false);
           resetImportSelection();
@@ -7244,7 +7852,8 @@ function formatMoney(n){
     }
 
     // Maintenance
-    document.getElementById('recalcBtn').addEventListener('click', async () => {
+    const $recalcBtn = document.getElementById('recalcBtn');
+    if ($recalcBtn) $recalcBtn.addEventListener('click', async () => {
       const ok = await confirmDialog({
         title: 'Recalcular estadísticas',
         body: 'Reconstruye ranking, récords y estadísticas desde todas las sesiones cerradas.',
@@ -7256,7 +7865,8 @@ function formatMoney(n){
       await confirmDialog({ title: 'Listo', body: 'Ranking, récords y estadísticas recalculados desde datos fuente.', okText: 'OK', cancelText: 'Cerrar' });
     });
 
-    document.getElementById('clearBtn').addEventListener('click', async () => {
+    const $clearBtn = document.getElementById('clearBtn');
+    if ($clearBtn) $clearBtn.addEventListener('click', async () => {
       const ok = await confirmDialog({
         title: 'Borrar datos locales',
         body: 'Esto elimina TODO en este dispositivo (jugadores, fichas, sesiones). No hay undo.',
@@ -7493,20 +8103,38 @@ function formatMoney(n){
     const hash = window.location.hash || '#/inicio';
     const clean = hash.startsWith('#') ? hash.slice(1) : hash;
     const href = safeTrim(clean) || '/inicio';
-    if (href === '/configuracion') return '/administracion';
+    if (href === '/configuracion' || href === '/soporte') return '/administracion';
+    if (href === '/ranking') return '/archivo/ranking';
+    if (href === '/historial') return '/archivo/historial';
+    if (href === '/historial/detalle') return '/archivo/historial/detalle';
+    if (href === '/perfiles') return '/archivo/perfiles';
+    if (href === '/perfiles/detalle') return '/archivo/perfiles/detalle';
     if (href.startsWith('/configuracion?')) return '/administracion' + href.slice('/configuracion'.length);
+    if (href.startsWith('/soporte?')) return '/administracion' + href.slice('/soporte'.length);
+    if (href.startsWith('/ranking?')) return '/archivo/ranking' + href.slice('/ranking'.length);
+    if (href.startsWith('/historial?')) return '/archivo/historial' + href.slice('/historial'.length);
+    if (href.startsWith('/historial/detalle?')) return '/archivo/historial/detalle' + href.slice('/historial/detalle'.length);
+    if (href.startsWith('/perfiles?')) return '/archivo/perfiles' + href.slice('/perfiles'.length);
+    if (href.startsWith('/perfiles/detalle?')) return '/archivo/perfiles/detalle' + href.slice('/perfiles/detalle'.length);
     return href || '/inicio';
   }
 
   function resolveHeaderRoute(path){
-    const key = HEADER_ROUTE_META[path] ? path : '/inicio';
+    const cleanPath = normalizeNavigationHref(path);
+    const routeKey = canonicalizeRoutePath((cleanPath || '').split('?')[0] || cleanPath || '/inicio');
+    const key = HEADER_ROUTE_META[routeKey] ? routeKey : '/inicio';
     const meta = HEADER_ROUTE_META[key] || HEADER_ROUTE_META['/inicio'];
     const q = getHashQuery();
     let title = meta.title;
-    if (key === '/historial/detalle'){
+    if (key === '/archivo/historial/detalle'){
       const id = safeTrim(q.get('id'));
       const session = id ? getSessionById(id) : null;
-      if (session && safeTrim(session.date)) title = `Historial · ${safeTrim(session.date)}`;
+      if (session && safeTrim(session.date)) title = `Archivo · Historial · ${safeTrim(session.date)}`;
+    }
+    if (key === '/archivo/perfiles/detalle'){
+      const id = safeTrim(q.get('id'));
+      const row = id ? getArchiveProfileById(computeAnalytics(), id) : null;
+      if (row && safeTrim(row.display)) title = `Archivo · Perfil · ${safeTrim(row.display)}`;
     }
     if (key === '/pdf'){
       const id = safeTrim(q.get('id'));
@@ -7518,12 +8146,12 @@ function formatMoney(n){
       const id = safeTrim(q.get('id'));
       const session = id ? getSessionById(id) : null;
       if (session && safeTrim(session.status) === 'closed'){
-        fallbackBack = `/historial/detalle?id=${encodeURIComponent(id)}`;
+        fallbackBack = `/archivo/historial/detalle?id=${encodeURIComponent(id)}`;
       }
     }
     if (key === '/pdf'){
       const id = safeTrim(q.get('id'));
-      fallbackBack = id ? `/historial/detalle?id=${encodeURIComponent(id)}` : '/historial';
+      fallbackBack = id ? `/archivo/historial/detalle?id=${encodeURIComponent(id)}` : '/archivo/historial';
     }
     return {
       key,

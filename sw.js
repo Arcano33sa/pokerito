@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.31 navigation-admin-archive-base */
-const CACHE_NAME = 'pokerito-v0.1.31-navigation-admin-archive-base';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.39 perfil-vivo-final */
+const CACHE_NAME = 'pokerito-v0.1.39-perfil-vivo-final';
 const CORE_ASSETS = [
   './',
   './index.html',

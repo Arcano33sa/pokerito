@@ -59,26 +59,40 @@ function commitRoute(){
 
 context.window.location.hash = '#/inicio';
 commitRoute();
-hooks.navigate('/juego');
+hooks.navigate('/archivo');
 commitRoute();
-hooks.navigate('/juego/mesa');
-commitRoute();
+let trail = hooks.getHeaderTrail();
+if (trail[trail.length - 1] !== '/archivo') throw new Error('archivo should be current route in header trail');
+
 hooks.navigate('/archivo/historial');
 commitRoute();
 let back = hooks.findHeaderBackTarget(hooks.resolveHeaderRoute('/archivo/historial'));
-if (back !== '/juego/mesa') throw new Error('archivo/historial back should return to mesa');
+if (back !== '/archivo') throw new Error(`archivo/historial entered from archivo should go back to /archivo, got ${back}`);
 
 hooks.navigate(back, { stackMode: 'back' });
 commitRoute();
-back = hooks.findHeaderBackTarget(hooks.resolveHeaderRoute('/juego/mesa'));
-if (back !== '/juego') throw new Error(`mesa back should now return to juego, got ${back}`);
-
-hooks.navigate('/inicio', { stackMode: 'home' });
+hooks.navigate('/archivo/ranking');
 commitRoute();
-hooks.navigate('/configuracion');
-commitRoute();
-back = hooks.findHeaderBackTarget(hooks.resolveHeaderRoute('/configuracion'));
-if (back !== '/inicio') throw new Error(`after home reset, config back should return to inicio, got ${back}`);
+back = hooks.findHeaderBackTarget(hooks.resolveHeaderRoute('/archivo/ranking'));
+if (back !== '/archivo') throw new Error(`ranking entered from archivo should go back to /archivo, got ${back}`);
 
-console.log('test-header-back-stack-no-ping-pong=ok');
-console.log('test-header-home-resets-stack=ok');
+context.window.location.hash = '#/ranking';
+commitRoute();
+const legacyCtx = hooks.resolveHeaderRoute('/ranking');
+if (legacyCtx.key !== '/archivo/ranking') throw new Error(`legacy /ranking should resolve to /archivo/ranking, got ${legacyCtx.key}`);
+
+context.window.location.hash = '#/historial';
+commitRoute();
+const legacyHistCtx = hooks.resolveHeaderRoute('/historial');
+if (legacyHistCtx.key !== '/archivo/historial') throw new Error(`legacy /historial should resolve to /archivo/historial, got ${legacyHistCtx.key}`);
+
+context.window.location.hash = '#/configuracion';
+commitRoute();
+const ctxAdmin = hooks.resolveHeaderRoute('/configuracion');
+if (ctxAdmin.title !== 'Administración') throw new Error('configuracion must stay canonically mapped to Administración');
+
+console.log('test-archivo-is-real-header-module=ok');
+console.log('test-archivo-subroutes-return-to-archivo=ok');
+console.log('test-admin-route-canonicalization-stays-stable=ok');
+console.log('test-legacy-ranking-route-canonicalizes-to-archivo=ok');
+console.log('test-legacy-historial-route-canonicalizes-to-archivo=ok');
