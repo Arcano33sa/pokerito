@@ -1,7 +1,8 @@
 
 const fs = require('fs');
+const path = require('path');
 const vm = require('vm');
-let code = fs.readFileSync('/mnt/data/pokerito_work/app.js', 'utf8');
+let code = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
 
 code = code.replace(/function confirmDialog\(\{ title, body, okText, cancelText, danger \}\)\{[\s\S]*?\n  \}\n\n  function numberInputDialog/, `function confirmDialog({ title, body, okText, cancelText, danger }){\n    const entry = { title: String(title || ''), body: String(body || ''), okText: String(okText || ''), cancelText: String(cancelText || ''), danger: !!danger };\n    window.__dialogs.push(entry);\n    const next = window.__confirmQueue.length ? window.__confirmQueue.shift() : true;\n    return Promise.resolve(!!next);\n  }\n\n  function numberInputDialog`);
 code = code.replace('      recalcAndPersistStats();\n', '      recalcAndPersistStats();\n      if (window.__forceImportApplyError) throw new Error(\'FORCED_IMPORT_FAILURE\');\n');

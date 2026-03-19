@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.39 perfil-vivo-final */
-const CACHE_NAME = 'pokerito-v0.1.39-perfil-vivo-final';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.40 heroes-admin-archivo-final */
+const CACHE_NAME = 'pokerito-v0.1.40-heroes-admin-archivo-final';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -27,7 +27,9 @@ const CORE_ASSETS = [
   './assets/hero/archivo.svg',
   './assets/hero/hero_juego.webp',
   './assets/hero/hero_config.webp',
-  './assets/hero/hero_soporte.webp'
+  './assets/hero/hero_soporte.webp',
+  './assets/hero/hero_admin.png',
+  './assets/hero/hero_archivo.png'
 ];
 const RUNTIME_ASSET_RE = /\.(?:js|css|svg|png|webp|jpg|jpeg)$/i;
 

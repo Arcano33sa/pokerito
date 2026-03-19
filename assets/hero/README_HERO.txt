@@ -13,3 +13,9 @@ Módulos actuales:
 Fallos tolerados:
 - Si no existe hero_<modulo>, se mantiene el SVG base correspondiente.
 - Los SVG base actuales siguen siendo juego.svg, admin.svg y archivo.svg.
+
+
+Actualización final Pokerito:
+- hero_admin.png = hero aprobado de Administración.
+- hero_archivo.png = hero aprobado de Archivo.
+- Se retiraron los placeholders hero_admin.svg y hero_archivo.svg; los SVG base admin.svg y archivo.svg quedan solo como fallback.

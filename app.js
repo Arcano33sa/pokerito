@@ -5002,7 +5002,7 @@ function renderAdministracion(){
             </div>
             <div class="module-hero__media" aria-hidden="true">
               <div class="module-hero__media-shell">
-                <img class="module-hero__img" src="assets/hero/hero_admin.svg" alt="" decoding="async" loading="lazy" />
+                <img class="module-hero__img module-hero__img--cover module-hero__img--admin" src="assets/hero/hero_admin.png" alt="" decoding="async" loading="lazy" />
               </div>
               <div class="module-hero__caption">Administración concentra lo operativo: aquí se ajusta la mesa de hoy sin contaminar la lectura histórica que vive en Archivo.</div>
             </div>
@@ -5911,7 +5911,7 @@ function renderAdministracion(){
             </div>
             <div class="module-hero__media" aria-hidden="true">
               <div class="module-hero__media-shell">
-                <img class="module-hero__img" src="assets/hero/hero_archivo.svg" alt="" decoding="async" loading="lazy" />
+                <img class="module-hero__img module-hero__img--cover module-hero__img--archivo" src="assets/hero/hero_archivo.png" alt="" decoding="async" loading="lazy" />
               </div>
               <div class="module-hero__caption">Archivo reúne la historia completa: Perfiles para leer a cada jugador, Ranking para comparar y Historial para regresar a cada cierre con su salida PDF.</div>
             </div>

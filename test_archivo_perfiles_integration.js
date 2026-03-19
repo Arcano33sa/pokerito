@@ -1,6 +1,7 @@
 const fs = require('fs');
+const path = require('path');
 const vm = require('vm');
-let code = fs.readFileSync('/mnt/data/pokerito_work/app.js', 'utf8');
+let code = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
 
 code = code.replace(/\}\)\(\);\s*$/, `window.__TEST_HOOKS = {
   navigate, getRouteHref, resolveHeaderRoute, applyHeaderNavigationState, findHeaderBackTarget,
