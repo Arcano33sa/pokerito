@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.39';
-  const APP_BUILD = 'perfil-vivo-final';
-  const APP_CACHE_NAME = 'pokerito-v0.1.39-perfil-vivo-final';
-  const SW_URL = './sw.js?v=0.1.39-perfil-vivo-final';
+  const APP_VERSION = '0.1.42';
+  const APP_BUILD = 'pdf-premium-final-stage6';
+  const APP_CACHE_NAME = 'pokerito-v0.1.42-pdf-premium-final-stage6';
+  const SW_URL = './sw.js?v=0.1.42-pdf-premium-final-stage6';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -3466,9 +3466,11 @@ function renderHistorialDetalle(){
     const title = escapeHtml(String(opts && opts.title != null ? opts.title : ''));
     const subtitle = safeTrim(opts && opts.subtitle);
     const body = String(opts && opts.body != null ? opts.body : '');
+    const extraClass = safeTrim(opts && opts.className);
     const classes = ['print-section'];
     if (opts && opts.tight) classes.push('print-section--tight');
     if (opts && opts.subtle) classes.push('print-section--subtle');
+    if (extraClass) classes.push(extraClass);
     if (opts && opts.breakBefore) classes.push('pdf-break-before');
     if ((opts && opts.avoidBreak) !== false) classes.push('pdf-avoid-break');
     return `
@@ -3517,6 +3519,7 @@ function renderHistorialDetalle(){
       body: table,
       tight: true,
       subtle: !!(opts && opts.subtle),
+      className: safeTrim(opts && opts.className),
       breakBefore: !!(opts && opts.breakBefore),
       avoidBreak: !!rows.length && rows.length <= 12,
     });
@@ -3524,7 +3527,37 @@ function renderHistorialDetalle(){
 
   const PDF_GLOBAL_RANKING_CRITERION = 'Orden oficial: ganancia neta global, ROI global, victorias y sesiones jugadas.';
   const ROI_RECORD_MIN_GAMES = 3;
-  const HISTORICAL_IMPACT_VERSION = 4;
+  const HISTORICAL_IMPACT_VERSION = 5;
+
+  const PDF_EDITORIAL_GROUPS = Object.freeze({
+    OPENING: Object.freeze({ key: 'opening-premium', label: 'Apertura premium', showHeader: false }),
+    SESSION: Object.freeze({
+      key: 'session',
+      label: 'Sesión',
+      kicker: 'Bloque de sesión',
+      lead: 'La sesión se presenta en orden editorial: resumen ejecutivo, podio y detalle completo.',
+      copy: 'Así el documento abre fuerte, baja a los hechos y conserva todas las tripas útiles del cierre sin perder claridad.',
+      showHeader: true,
+    }),
+    IMPACT: Object.freeze({
+      key: 'historical-impact',
+      label: 'Impacto histórico',
+      kicker: 'Lectura histórica',
+      lead: 'Aquí se mide qué cambió realmente en el archivo global gracias a esta noche.',
+      copy: 'El previo y el después se comparan sin mezclar sesiones locales, importadas o legacy, para que el giro histórico quede limpio.',
+      showHeader: true,
+      breakBefore: true,
+    }),
+    ARCHIVE: Object.freeze({
+      key: 'global-archive',
+      label: 'Archivo global',
+      kicker: 'Cierre del documento',
+      lead: 'El documento remata con la fotografía histórica completa: base global, ranking y récords.',
+      copy: 'Ese cierre deja una salida más oficial, más estable y más coherente con el archivo real de la mesa.',
+      showHeader: true,
+      breakBefore: true,
+    }),
+  });
 
   function calcGlobalRoi(net, invested){
     const base = numOrZero(invested);
@@ -3554,6 +3587,20 @@ function renderHistorialDetalle(){
     const d = new Date(n);
     if (Number.isNaN(d.getTime())) return '—';
     return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()}`;
+  }
+
+
+  function joinNamesWithY(values){
+    const list = uniqStrings(values);
+    if (!list.length) return '—';
+    if (list.length === 1) return list[0];
+    if (list.length === 2) return `${list[0]} y ${list[1]}`;
+    return `${list.slice(0, -1).join(', ')} y ${list[list.length - 1]}`;
+  }
+
+  function buildPdfSessionDisplayTitle(session){
+    const seqNum = (Number.isFinite(session && session.pdfSeq) && Math.floor(session.pdfSeq) >= 1) ? Math.floor(session.pdfSeq) : 0;
+    return seqNum ? `Sesión ${pad3(seqNum)}` : 'Sesión sin consecutivo';
   }
 
   function compareGlobalRanking(a, b){
@@ -3865,6 +3912,110 @@ function renderHistorialDetalle(){
     };
   }
 
+  function buildPdfRecordRows(items){
+    const list = Array.isArray(items) ? items : [];
+    return list.map(item => {
+      const contextBits = [`<div class="print-record-context">${escapeHtml(item.contextLabel || '—')}</div>`];
+      if (item.eligibleLabel) contextBits.push(`<div class="print-record-note">${escapeHtml(item.eligibleLabel)}</div>`);
+      return [
+        `<div class="print-record-title">${escapeHtml(item.label || '—')}</div>`,
+        `<div class="print-record-player${item.isEmpty ? ' is-empty' : ''}">${escapeHtml(item.playerLabel || '—')}</div>`,
+        `<div class="print-record-value${item.isEmpty ? ' is-empty' : ''}">${escapeHtml(item.valueLabel || '—')}</div>`,
+        contextBits.join(''),
+      ];
+    });
+  }
+
+  function buildPdfRankingOverview(list){
+    const rows = Array.isArray(list) ? list : [];
+    const leaders = rows.filter(item => Math.floor(numOrZero(item && item.rankPos)) === 1);
+    const positive = rows.filter(item => numOrZero(item && item.netTotal) > 0.0001);
+    const neutral = rows.filter(item => Math.abs(numOrZero(item && item.netTotal)) <= 0.0001);
+    const negative = rows.filter(item => numOrZero(item && item.netTotal) < -0.0001);
+    const roiEligible = rows.filter(item => numOrZero(item && item.games) >= ROI_RECORD_MIN_GAMES && numOrZero(item && item.investedTotal) > 0.0001);
+    const leadLabel = leaders.length ? compactRecordLabels(leaders.map(item => item.display), 3) : '—';
+    const leadNet = leaders.length ? formatMoney(numOrZero(leaders[0] && leaders[0].netTotal)) : '—';
+    const podium = rows.slice(0, 3);
+
+    const summaryCards = [
+      { label: 'Jugadores rankeados', value: String(rows.length), note: rows.length === 1 ? 'Solo un perfil con histórico válido.' : 'Con historial válido al cierre.' },
+      { label: leaders.length > 1 ? 'Liderato compartido' : 'Líder actual', value: leadLabel, note: leaders.length > 1 ? `${leaders.length} jugadores comparten el puesto #1.` : `Neto global líder: ${leadNet}.` },
+      { label: 'Jugadores en verde', value: String(positive.length), note: `${neutral.length} neutros · ${negative.length} en rojo.` },
+      { label: 'Elegibles para ROI', value: String(roiEligible.length), note: `Mínimo ${ROI_RECORD_MIN_GAMES} sesiones e inversión acumulada mayor a 0.` },
+    ];
+
+    const podiumHtml = podium.length ? `
+      <div class="print-rank-podium">
+        <div class="print-rank-podium-title">Podio histórico actual</div>
+        <div class="print-rank-podium-grid">
+          ${podium.map(item => `
+            <article class="print-rank-podium-card pdf-avoid-break">
+              <div class="print-rank-podium-pos">#${escapeHtml(String(item.rankPos || '—'))}</div>
+              <div class="print-rank-podium-name">${escapeHtml(String(item.display || 'Sin nombre'))}</div>
+              <div class="print-rank-podium-net ${getPdfNetTone(numOrZero(item.netTotal))}">${escapeHtml(formatMoney(numOrZero(item.netTotal)))}</div>
+              <div class="print-rank-podium-sub">ROI ${escapeHtml(formatPercent(numOrZero(item.roiGlobal)))} · Victorias ${escapeHtml(String(numOrZero(item.wins1)))} · Sesiones ${escapeHtml(String(numOrZero(item.games)))}</div>
+            </article>
+          `).join('')}
+        </div>
+      </div>
+    ` : '';
+
+    return `
+      <div class="print-archive-banner print-archive-banner--ranking">
+        <div class="print-archive-banner-kicker">Archivo global</div>
+        <div class="print-archive-banner-lead">El ranking global cierra el documento como fotografía oficial del estado histórico de la mesa.</div>
+        <div class="print-archive-banner-copy">Lidera ${escapeHtml(leadLabel)}. ${escapeHtml(PDF_GLOBAL_RANKING_CRITERION)} Si dos jugadores empatan exactamente en esos cuatro criterios, comparten puesto global.</div>
+        <div class="print-archive-banner-grid">
+          ${summaryCards.map(card => `
+            <div class="print-archive-banner-card">
+              <div class="k">${escapeHtml(card.label)}</div>
+              <div class="v">${escapeHtml(card.value)}</div>
+              <div class="s">${escapeHtml(card.note)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      ${podiumHtml}
+    `;
+  }
+
+  function buildPdfRecordsOverview(records){
+    const rec = records || {};
+    const items = Array.isArray(rec.items) ? rec.items : [];
+    const findItem = (key) => items.find(item => item && item.key === key) || null;
+    const highlights = [
+      { label: 'Mayor ganancia', item: findItem('maxGainSession'), fallback: 'Todavía sin ganancia positiva registrada.' },
+      { label: 'Mayor pérdida', item: findItem('maxLossSession'), fallback: 'Todavía sin pérdida registrada.' },
+      { label: 'Más victorias', item: findItem('mostWins'), fallback: 'Aún no hay victorias registradas.' },
+      { label: 'Mejor ROI global', item: findItem('bestRoi'), fallback: `Requiere mínimo ${rec.roiMinGames || ROI_RECORD_MIN_GAMES} sesiones.` },
+    ];
+
+    return `
+      <div class="print-archive-banner print-archive-banner--records">
+        <div class="print-archive-banner-kicker">Récords globales</div>
+        <div class="print-archive-banner-lead">Las marcas históricas quedan presentadas como cierre oficial del archivo, sin recortar contexto ni elegibilidad.</div>
+        <div class="print-archive-banner-copy">Empates exactos comparten récord. Para ROI global se exige mínimo ${escapeHtml(String(rec.roiMinGames || ROI_RECORD_MIN_GAMES))} sesiones e inversión acumulada mayor a 0.</div>
+        <div class="print-record-summary-grid">
+          ${highlights.map(entry => {
+            const item = entry.item;
+            const valueLabel = item ? (item.valueLabel || '—') : '—';
+            const holderLabel = item ? (item.playerLabel || '—') : '—';
+            const contextLabel = item ? (item.contextLabel || entry.fallback || '—') : (entry.fallback || '—');
+            const emptyClass = !item || item.isEmpty ? ' is-empty' : '';
+            return `
+              <div class="print-record-summary-card${emptyClass}">
+                <div class="k">${escapeHtml(entry.label)}</div>
+                <div class="v">${escapeHtml(valueLabel)}</div>
+                <div class="p">${escapeHtml(holderLabel)}</div>
+                <div class="s">${escapeHtml(contextLabel)}</div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
   function buildPdfRecordsSections(records){
     const rec = records || {};
     const items = Array.isArray(rec.items) ? rec.items : [];
@@ -3877,6 +4028,7 @@ function renderHistorialDetalle(){
       });
     }
 
+    const byKey = new Map(items.map(item => [safeTrim(item && item.key), item]));
     const columns = [
       { label: 'Récord' },
       { label: 'Jugador / jugadores' },
@@ -3884,27 +4036,55 @@ function renderHistorialDetalle(){
       { label: 'Fecha / sesión / contexto' },
     ];
 
-    const rows = items.map(item => {
-      const contextBits = [`<div class="print-record-context">${escapeHtml(item.contextLabel || '—')}</div>`];
-      if (item.eligibleLabel) contextBits.push(`<div class="print-record-note">${escapeHtml(item.eligibleLabel)}</div>`);
-      return [
-        `<div class="print-record-title">${escapeHtml(item.label || '—')}</div>`,
-        `<div class="print-record-player${item.isEmpty ? ' is-empty' : ''}">${escapeHtml(item.playerLabel || '—')}</div>`,
-        `<div class="print-record-value${item.isEmpty ? ' is-empty' : ''}">${escapeHtml(item.valueLabel || '—')}</div>`,
-        contextBits.join(''),
-      ];
-    });
-
-    const chunks = chunkList(rows, 7);
-    return chunks.map((chunk, idx) => {
-      const noteHtml = idx === 0 ? `<div class="print-note">Empates exactos comparten récord. Para ROI global se exige mínimo ${escapeHtml(String(rec.roiMinGames || ROI_RECORD_MIN_GAMES))} sesiones e inversión acumulada mayor a 0.</div>` : '';
-      return buildPdfTableSection({
+    const groups = [
+      {
         title: 'Récords globales',
-        subtitle: idx === 0 ? 'Récords históricos calculados al momento del cierre.' : `Continuación ${idx + 1} de ${chunks.length}`,
+        subtitle: 'Golpes de una sola noche',
+        intro: 'Picos individuales registrados en una sesión cerrada válida.',
+        keys: ['maxGainSession', 'maxLossSession'],
+      },
+      {
+        title: 'Récords globales',
+        subtitle: 'Palmarés competitivo',
+        intro: 'Resultados sostenidos que describen constancia y presencia en mesa.',
+        keys: ['mostWins', 'mostGames', 'mostItm'],
+      },
+      {
+        title: 'Récords globales',
+        subtitle: 'Movimiento e inversión histórica',
+        intro: 'Volumen acumulado de entradas, rebuys, cobros e inversión.',
+        keys: ['mostRebuys', 'mostBuyIns', 'maxPayouts', 'maxInvested'],
+      },
+      {
+        title: 'Récords globales',
+        subtitle: 'Rentabilidad global',
+        intro: 'Comparativo de eficiencia histórica bajo la regla oficial de elegibilidad para ROI.',
+        keys: ['bestRoi', 'worstRoi'],
+      },
+      {
+        title: 'Récords globales',
+        subtitle: 'Rachas registradas',
+        intro: 'Tramos consecutivos que dejaron huella dentro del archivo.',
+        keys: ['bestWinStreak', 'bestItmStreak'],
+      },
+    ];
+
+    return groups.map((group, idx) => {
+      const groupItems = group.keys.map(key => byKey.get(key)).filter(Boolean);
+      const noteParts = [];
+      if (idx === 0) noteParts.push(buildPdfRecordsOverview(rec));
+      noteParts.push(`<div class="print-note print-record-group-intro">${escapeHtml(group.intro)}</div>`);
+      if (idx === groups.length - 1){
+        noteParts.push(`<div class="print-record-seal">Cierre histórico del documento: ranking global y récords globales quedan congelados con el contexto vigente de esta exportación.</div>`);
+      }
+      return buildPdfTableSection({
+        title: group.title,
+        subtitle: group.subtitle,
         columns,
-        rows: chunk,
-        ariaLabel: 'Tabla de récords globales',
-        noteHtml,
+        rows: buildPdfRecordRows(groupItems),
+        ariaLabel: `Tabla de ${group.subtitle.toLowerCase()}`,
+        noteHtml: noteParts.join(''),
+        className: idx === 0 ? 'print-section--records-major' : 'print-section--records-cont',
         breakBefore: idx > 0,
       });
     }).join('');
@@ -3921,18 +4101,38 @@ function renderHistorialDetalle(){
       });
     }
 
-    const chunks = chunkList(list, 5);
+    const rankCounts = new Map();
+    list.forEach(row => {
+      const key = Math.floor(numOrZero(row && row.rankPos));
+      rankCounts.set(key, (rankCounts.get(key) || 0) + 1);
+    });
+
+    const chunks = chunkList(list, 4);
     return chunks.map((chunk, idx) => {
       const cards = chunk.map(r => {
         const net = numOrZero(r && r.netTotal);
         const netClass = Math.abs(net) < 0.0001 ? 'ok' : (net > 0 ? 'pos' : 'neg');
-        const bestLabel = (r && r.best) ? `${formatMoney(r.best.net)} · ${formatSessionDateLabel(r.best.date, r.best.ts)}` : '—';
-        const worstLabel = (r && r.worst) ? `${formatMoney(r.worst.net)} · ${formatSessionDateLabel(r.worst.date, r.worst.ts)}` : '—';
         const lastNet = (r && r.lastSession) ? numOrZero(r.lastSession.net) : 0;
         const lastNetClass = Math.abs(lastNet) < 0.0001 ? 'ok' : (lastNet > 0 ? 'pos' : 'neg');
+        const sharedRank = (rankCounts.get(Math.floor(numOrZero(r && r.rankPos))) || 0) > 1;
+        const bestLabel = (r && r.best) ? `${formatMoney(r.best.net)} · ${formatSessionDateLabel(r.best.date, r.best.ts)}` : '—';
+        const worstLabel = (r && r.worst) ? `${formatMoney(r.worst.net)} · ${formatSessionDateLabel(r.worst.date, r.worst.ts)}` : '—';
         const lastLabel = (r && r.lastSession)
           ? `${escapeHtml(formatSessionDateLabel(r.lastSession.date, r.lastSession.ts))} · <span class="net ${lastNetClass}">${escapeHtml(formatMoney(lastNet))}</span>`
           : '—';
+        const criteriaStats = [
+          { label: 'ROI global', value: formatPercent(numOrZero(r.roiGlobal)) },
+          { label: 'Victorias', value: String(numOrZero(r.wins1)) },
+          { label: 'Sesiones', value: String(numOrZero(r.games)) },
+          { label: 'Podios', value: String(numOrZero(r.podiums)) },
+        ];
+        const supportStats = [
+          { label: 'Buy-ins / Rebuys', value: `${numOrZero(r.buyInsCount)} · ${numOrZero(r.rebuysCount)}` },
+          { label: 'Inversión total', value: formatMoney(numOrZero(r.investedTotal)) },
+          { label: 'Cobros acumulados', value: formatMoney(numOrZero(r.payoutsTotal)) },
+          { label: 'Promedio neto / sesión', value: formatMoney(numOrZero(r.avgNet)) },
+        ];
+
         return `
           <article class="print-rank-card pdf-avoid-break" data-rank="${escapeAttr(String(r.rankPos || ''))}">
             <div class="print-rank-top">
@@ -3940,37 +4140,57 @@ function renderHistorialDetalle(){
                 <div class="print-rank-pos">#${escapeHtml(String(r.rankPos || '—'))}</div>
                 <div>
                   <div class="print-rank-name">${escapeHtml(String(r.display || 'Sin nombre'))}</div>
-                  <div class="print-rank-sub">Sesiones ${escapeHtml(String(numOrZero(r.games)))} · Victorias ${escapeHtml(String(numOrZero(r.wins1)))} · Podios ${escapeHtml(String(numOrZero(r.podiums)))} </div>
+                  <div class="print-rank-sub">${sharedRank ? 'Puesto compartido por empate exacto en el criterio oficial.' : 'Puesto individual consolidado en el criterio oficial.'}</div>
                 </div>
               </div>
               <div class="print-rank-balance ${netClass}">
                 <div class="print-rank-balance-k">Neto global</div>
                 <div class="print-rank-balance-v">${escapeHtml(formatMoney(net))}</div>
-                <div class="print-rank-balance-s">ROI ${escapeHtml(formatPercent(numOrZero(r.roiGlobal)))}</div>
+                <div class="print-rank-balance-s">Archivo acumulado al cierre</div>
               </div>
             </div>
-            <div class="print-rank-grid">
-              <div class="print-rank-stat"><span class="k">Buy-ins totales</span><span class="v">${escapeHtml(formatMoney(numOrZero(r.buyInsTotal)))}</span></div>
-              <div class="print-rank-stat"><span class="k">Rebuys totales</span><span class="v">${escapeHtml(String(numOrZero(r.rebuysCount)))} · ${escapeHtml(formatMoney(numOrZero(r.rebuysTotal)))}</span></div>
-              <div class="print-rank-stat"><span class="k">Inversión total</span><span class="v">${escapeHtml(formatMoney(numOrZero(r.investedTotal)))}</span></div>
-              <div class="print-rank-stat"><span class="k">Cobros acumulados</span><span class="v">${escapeHtml(formatMoney(numOrZero(r.payoutsTotal)))}</span></div>
-              <div class="print-rank-stat"><span class="k">Promedio neto / sesión</span><span class="v">${escapeHtml(formatMoney(numOrZero(r.avgNet)))}</span></div>
-              <div class="print-rank-stat"><span class="k">Mejor sesión histórica</span><span class="v">${escapeHtml(bestLabel)}</span></div>
-              <div class="print-rank-stat"><span class="k">Peor sesión histórica</span><span class="v">${escapeHtml(worstLabel)}</span></div>
-              <div class="print-rank-stat"><span class="k">Última sesión jugada</span><span class="v">${lastLabel}</span></div>
+
+            <div class="print-rank-grid print-rank-grid--criteria">
+              ${criteriaStats.map(stat => `
+                <div class="print-rank-stat print-rank-stat--criterion">
+                  <span class="k">${escapeHtml(stat.label)}</span>
+                  <span class="v">${escapeHtml(stat.value)}</span>
+                </div>
+              `).join('')}
+            </div>
+
+            <div class="print-rank-grid print-rank-grid--support">
+              ${supportStats.map(stat => `
+                <div class="print-rank-stat">
+                  <span class="k">${escapeHtml(stat.label)}</span>
+                  <span class="v">${escapeHtml(stat.value)}</span>
+                </div>
+              `).join('')}
+            </div>
+
+            <div class="print-rank-trail">
+              <div class="print-rank-event">
+                <span class="k">Mejor sesión histórica</span>
+                <span class="v">${escapeHtml(bestLabel)}</span>
+              </div>
+              <div class="print-rank-event">
+                <span class="k">Peor sesión histórica</span>
+                <span class="v">${escapeHtml(worstLabel)}</span>
+              </div>
+              <div class="print-rank-event">
+                <span class="k">Última sesión jugada</span>
+                <span class="v">${lastLabel}</span>
+              </div>
             </div>
           </article>
         `;
       }).join('');
 
-      const note = idx === 0 ? `
-        <div class="print-note">${escapeHtml(PDF_GLOBAL_RANKING_CRITERION)} Si dos jugadores empatan exactamente en esos cuatro criterios, comparten puesto global.</div>
-      ` : '';
-
       return buildPdfSection({
         title: 'Ranking global',
         subtitle: idx === 0 ? 'Fotografía histórica completa al momento del cierre.' : `Continuación ${idx + 1} de ${chunks.length}`,
-        body: `${note}<div class="print-rank-list">${cards}</div>`,
+        body: `${idx === 0 ? buildPdfRankingOverview(list) : ''}<div class="print-rank-list">${cards}</div>`,
+        className: idx === 0 ? 'print-section--ranking-major' : 'print-section--ranking-cont',
         breakBefore: idx > 0,
         avoidBreak: false,
       });
@@ -3996,9 +4216,14 @@ function renderHistorialDetalle(){
     return ranking.find(row => sameStableEntity(row, playerId)) || null;
   }
 
-  function getImpactRankLabel(rankPos){
+  function getImpactBeforeRankLabel(rankPos){
     const n = Math.floor(numOrZero(rankPos));
     return n >= 1 ? `#${n}` : 'Sin ranking previo';
+  }
+
+  function getImpactAfterRankLabel(rankPos){
+    const n = Math.floor(numOrZero(rankPos));
+    return n >= 1 ? `#${n}` : 'Fuera del ranking';
   }
 
   function getImpactMoveMeta(beforeRank, afterRank){
@@ -4007,9 +4232,9 @@ function renderHistorialDetalle(){
     if (!prev && next) return { tone: 'up', label: 'Debut histórico', detail: 'Entró al ranking histórico.' };
     if (!next) return { tone: 'flat', label: 'Sin ranking', detail: 'No quedó con posición global.' };
     if (!prev && !next) return { tone: 'flat', label: 'Sin ranking', detail: 'Sin cambio visible en ranking.' };
-    if (next < prev) return { tone: 'up', label: `Sube ${prev - next} puesto${(prev - next) === 1 ? '' : 's'}`, detail: `${getImpactRankLabel(prev)} → ${getImpactRankLabel(next)}` };
-    if (next > prev) return { tone: 'down', label: `Baja ${next - prev} puesto${(next - prev) === 1 ? '' : 's'}`, detail: `${getImpactRankLabel(prev)} → ${getImpactRankLabel(next)}` };
-    return { tone: 'flat', label: 'Se mantiene', detail: `${getImpactRankLabel(prev)} → ${getImpactRankLabel(next)}` };
+    if (next < prev) return { tone: 'up', label: `Sube ${prev - next} puesto${(prev - next) === 1 ? '' : 's'}`, detail: `${getImpactBeforeRankLabel(prev)} → ${getImpactAfterRankLabel(next)}` };
+    if (next > prev) return { tone: 'down', label: `Baja ${next - prev} puesto${(next - prev) === 1 ? '' : 's'}`, detail: `${getImpactBeforeRankLabel(prev)} → ${getImpactAfterRankLabel(next)}` };
+    return { tone: 'flat', label: 'Se mantiene', detail: `${getImpactBeforeRankLabel(prev)} → ${getImpactAfterRankLabel(next)}` };
   }
 
 
@@ -4175,8 +4400,8 @@ function renderHistorialDetalle(){
         sessionNet: row.net,
         beforeRank,
         afterRank,
-        beforeRankLabel: getImpactRankLabel(beforeRank),
-        afterRankLabel: getImpactRankLabel(afterRank),
+        beforeRankLabel: getImpactBeforeRankLabel(beforeRank),
+        afterRankLabel: getImpactAfterRankLabel(afterRank),
         moveMeta,
         netBefore,
         netAfter,
@@ -4228,6 +4453,21 @@ function renderHistorialDetalle(){
     return rebuilt;
   }
 
+  function buildPdfImpactSummaryLead(summary, players){
+    const movedUp = numOrZero(summary && summary.movedUp);
+    const movedDown = numOrZero(summary && summary.movedDown);
+    const debuts = numOrZero(summary && summary.debuts);
+    const recordBreakers = numOrZero(summary && summary.recordBreakers);
+    const topEntries = (Array.isArray(players) ? players : []).filter(item => (Array.isArray(item && item.milestoneLabels) ? item.milestoneLabels : []).some(label => /Top\s*[35]/i.test(String(label || '')))).length;
+    const bits = [];
+    if (movedUp || movedDown) bits.push(`${movedUp} subidas y ${movedDown} bajadas reales en el ranking.`);
+    if (debuts) bits.push(`${debuts} debut${debuts === 1 ? '' : 's'} en la historia registrada.`);
+    if (recordBreakers) bits.push(`${recordBreakers} jugador${recordBreakers === 1 ? '' : 'es'} abrió récord o rompió marca.`);
+    if (topEntries) bits.push(`${topEntries} entrada${topEntries === 1 ? '' : 's'} nueva${topEntries === 1 ? '' : 's'} al Top 3 o Top 5.`);
+    if (!bits.length) bits.push('La sesión ajustó acumulados sin provocar un giro histórico fuerte.');
+    return bits.join(' ');
+  }
+
   function buildPdfImpactSections(impact){
     const data = impact || {};
     const players = Array.isArray(data.players) ? data.players : [];
@@ -4237,24 +4477,46 @@ function renderHistorialDetalle(){
         subtitle: 'Comparación del histórico inmediatamente antes y después del cierre.',
         body: `<div class="empty">Todavía no hay suficiente histórico para mostrar impacto comparativo de esta sesión.</div>`,
         subtle: true,
+        className: 'print-section--impact-major',
       });
     }
 
     const summary = data.summary || {};
+    const topEntries = players.filter(item => (Array.isArray(item && item.milestoneLabels) ? item.milestoneLabels : []).some(label => /Top\s*[35]/i.test(String(label || '')))).length;
+    const noExtraMilestone = players.filter(item => !(Array.isArray(item && item.recordLabels) && item.recordLabels.length) && !(Array.isArray(item && item.milestoneLabels) && item.milestoneLabels.length)).length;
+    const summaryLead = buildPdfImpactSummaryLead(summary, players);
     const chunks = chunkList(players, 3);
     return chunks.map((chunk, idx) => {
       const summaryHtml = idx === 0 ? `
-        <div class="print-meta print-meta--compact">
-          ${buildPdfMetaLines([
-            { label: 'Participantes analizados', value: String(numOrZero(summary.participants)) },
-            { label: 'Subieron puestos', value: String(numOrZero(summary.movedUp)) },
-            { label: 'Bajaron puestos', value: String(numOrZero(summary.movedDown)) },
-            { label: 'Debuts históricos', value: String(numOrZero(summary.debuts)) },
-            { label: 'Jugadores con récord nuevo', value: String(numOrZero(summary.recordBreakers)) },
-            { label: 'Récords globales abiertos en esta sesión', value: String(numOrZero(summary.recordLabelsTotal)) },
-          ])}
+        <div class="print-impact-summary">
+          <div class="print-impact-summary-top">
+            <div class="print-impact-summary-kicker">Puente entre la noche y la historia</div>
+            <div class="print-impact-summary-lead">${escapeHtml(summaryLead)}</div>
+            <div class="print-impact-summary-copy">Se compara el tablero histórico justo antes del cierre contra el tablero que quedó inmediatamente después. Así el previo → nuevo se mantiene limpio, incluso con sesiones locales, importadas o legacy.</div>
+          </div>
+          <div class="print-impact-summary-grid">
+            <article class="print-impact-summary-card">
+              <div class="k">Participantes analizados</div>
+              <div class="v">${escapeHtml(String(numOrZero(summary.participants)))}</div>
+              <div class="s">Lectura histórica individual de toda la mesa cerrada.</div>
+            </article>
+            <article class="print-impact-summary-card">
+              <div class="k">Balance de movimiento</div>
+              <div class="v">${escapeHtml(String(numOrZero(summary.movedUp)))} ↑ · ${escapeHtml(String(numOrZero(summary.movedDown)))} ↓</div>
+              <div class="s">${escapeHtml(String(numOrZero(summary.debuts)))} debuts · ${escapeHtml(String(numOrZero(summary.unchanged)))} sin giro fuerte.</div>
+            </article>
+            <article class="print-impact-summary-card">
+              <div class="k">Récords y aperturas</div>
+              <div class="v">${escapeHtml(String(numOrZero(summary.recordLabelsTotal)))}</div>
+              <div class="s">${escapeHtml(String(numOrZero(summary.recordBreakers)))} jugadores activaron récord nuevo.</div>
+            </article>
+            <article class="print-impact-summary-card">
+              <div class="k">Otros giros relevantes</div>
+              <div class="v">${escapeHtml(String(topEntries))} entrada${topEntries === 1 ? '' : 's'}</div>
+              <div class="s">Top 3 / Top 5 tocados · ${escapeHtml(String(noExtraMilestone))} sin hito extra.</div>
+            </article>
+          </div>
         </div>
-        <div class="print-note">Se compara el histórico justo antes de cerrar esta sesión contra el histórico que quedó inmediatamente después del cierre. Así se evita mezclar sesiones posteriores.</div>
       ` : '';
 
       const cards = chunk.map(item => {
@@ -4272,23 +4534,32 @@ function renderHistorialDetalle(){
             <div class="print-impact-top">
               <div class="print-impact-who">
                 <div class="print-impact-name">${escapeHtml(String(item.display || 'Sin nombre'))}</div>
-                <div class="print-impact-sub">Sesión ${escapeHtml(String(numOrZero(item.sessionPos) || '—'))} · Resultado <span class="net ${sessionNetClass}">${escapeHtml(formatMoney(sessionNet))}</span></div>
+                <div class="print-impact-sub">Terminó ${escapeHtml(String(numOrZero(item.sessionPos) || '—'))}° en la sesión · Resultado <span class="net ${sessionNetClass}">${escapeHtml(formatMoney(sessionNet))}</span></div>
               </div>
               <div class="print-impact-move ${escapeAttr(item.moveMeta && item.moveMeta.tone || 'flat')}">
-                <div class="print-impact-move-k">Ranking global</div>
+                <div class="print-impact-move-k">Movimiento histórico</div>
                 <div class="print-impact-move-v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</div>
                 <div class="print-impact-move-s">${escapeHtml(item.moveMeta && item.moveMeta.label || 'Sin cambio')}</div>
               </div>
             </div>
             <div class="print-impact-grid">
-              <div class="print-impact-stat"><span class="k">Puesto antes</span><span class="v">${escapeHtml(item.beforeRankLabel || '—')}</span></div>
-              <div class="print-impact-stat"><span class="k">Puesto después</span><span class="v">${escapeHtml(item.afterRankLabel || '—')}</span></div>
-              <div class="print-impact-stat"><span class="k">Neto global</span><span class="v">${escapeHtml(formatMoney(numOrZero(item.netBefore)))} → ${escapeHtml(formatMoney(numOrZero(item.netAfter)))}</span></div>
-              <div class="print-impact-stat"><span class="k">Cambio neto global</span><span class="v"><span class="delta ${deltaNetClass}">${escapeHtml(formatSignedMoney(numOrZero(item.netDelta)))}</span></span></div>
-              <div class="print-impact-stat"><span class="k">ROI global</span><span class="v">${escapeHtml(formatPercent(numOrZero(item.roiBefore)))} → ${escapeHtml(formatPercent(numOrZero(item.roiAfter)))}</span></div>
-              <div class="print-impact-stat"><span class="k">Cambio ROI global</span><span class="v"><span class="delta ${deltaRoiClass}">${escapeHtml(formatSignedPercent(numOrZero(item.roiDelta)))}</span></span></div>
+              <div class="print-impact-stat">
+                <span class="k">Puesto global</span>
+                <span class="v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</span>
+                <span class="sub">${escapeHtml(item.moveMeta && item.moveMeta.detail || 'Sin variación visible.')}</span>
+              </div>
+              <div class="print-impact-stat">
+                <span class="k">Neto global</span>
+                <span class="v">${escapeHtml(formatMoney(numOrZero(item.netBefore)))} → ${escapeHtml(formatMoney(numOrZero(item.netAfter)))}</span>
+                <span class="sub delta ${deltaNetClass}">${escapeHtml(formatSignedMoney(numOrZero(item.netDelta)))}</span>
+              </div>
+              <div class="print-impact-stat">
+                <span class="k">ROI global</span>
+                <span class="v">${escapeHtml(formatPercent(numOrZero(item.roiBefore)))} → ${escapeHtml(formatPercent(numOrZero(item.roiAfter)))}</span>
+                <span class="sub delta ${deltaRoiClass}">${escapeHtml(formatSignedPercent(numOrZero(item.roiDelta)))}</span>
+              </div>
             </div>
-            <div class="print-impact-narrative">${escapeHtml(item.narrative || 'La sesión actualizó sus acumulados.')}</div>
+            <div class="print-impact-narrative"><span class="label">Lectura histórica:</span> ${escapeHtml(item.narrative || 'La sesión actualizó sus acumulados.')}</div>
             <div class="print-impact-tags">${tagsHtml}</div>
           </article>
         `;
@@ -4296,8 +4567,9 @@ function renderHistorialDetalle(){
 
       return buildPdfSection({
         title: 'Impacto de esta Sesión',
-        subtitle: idx === 0 ? 'Cómo cambió el histórico global al cerrar esta partida.' : `Continuación ${idx + 1} de ${chunks.length}`,
+        subtitle: idx === 0 ? 'Qué cambió en la historia general de la mesa gracias a este cierre.' : `Continuación ${idx + 1} de ${chunks.length}`,
         body: `${summaryHtml}<div class="print-impact-list">${cards}</div>`,
+        className: idx === 0 ? 'print-section--impact-major' : 'print-section--impact-cont',
         breakBefore: idx > 0,
         avoidBreak: false,
       });
@@ -4324,21 +4596,651 @@ function renderHistorialDetalle(){
     };
   }
 
+
+  function buildPdfEditorialGroup(opts){
+    const key = safeTrim(opts && opts.key) || 'group';
+    const label = safeTrim(opts && opts.label) || key;
+    const kicker = safeTrim(opts && opts.kicker);
+    const lead = safeTrim(opts && opts.lead);
+    const copy = safeTrim(opts && opts.copy);
+    const showHeader = !!(opts && opts.showHeader) && (!!kicker || !!lead || !!copy);
+    const sections = Array.isArray(opts && opts.sections) ? opts.sections.filter(Boolean) : [];
+    const classes = ['print-editorial-group'];
+    if (opts && opts.breakBefore) classes.push('pdf-break-before');
+    if (showHeader) classes.push('print-editorial-group--with-head');
+    const headHtml = showHeader ? `
+      <div class="print-editorial-head pdf-avoid-break">
+        ${kicker ? `<div class="print-editorial-kicker">${escapeHtml(kicker)}</div>` : ''}
+        <div class="print-editorial-title">${escapeHtml(label)}</div>
+        ${lead ? `<div class="print-editorial-lead">${escapeHtml(lead)}</div>` : ''}
+        ${copy ? `<div class="print-editorial-copy">${escapeHtml(copy)}</div>` : ''}
+      </div>
+    ` : '';
+    return `
+      <div class="${classes.join(' ')}" data-pdf-group="${escapeAttr(key)}" data-pdf-group-label="${escapeAttr(label)}">
+        ${headHtml}
+        ${sections.join('')}
+      </div>
+    `;
+  }
+
+  function resolvePdfSessionSummary(session, analysis, reportName){
+    const s = session || {};
+    const an = analysis || {};
+    const sum = an.summary || {};
+    const rows = Array.isArray(an.rows) ? an.rows.slice() : [];
+    const eps = 0.0001;
+    const resolveName = typeof reportName === 'function'
+      ? reportName
+      : ((id, display) => safeTrim(display) || safeTrim(id) || '—');
+
+    const winners = rows.filter(r => numOrZero(r && r.pos) === 1).map(r => ({
+      id: r.id,
+      display: resolveName(r.id, r.display),
+      net: numOrZero(r && r.net),
+      chips: numOrZero(r && r.chips),
+      invested: numOrZero(r && r.invested),
+      pos: Math.floor(numOrZero(r && r.pos)),
+    }));
+    const winnersLabel = winners.length ? joinNamesWithY(winners.map(r => r.display)) : '—';
+
+    const zeroChips = rows.filter(r => Math.abs(numOrZero(r && r.chips)) <= eps);
+    let losers = [];
+    if (zeroChips.length){
+      losers = zeroChips;
+    } else if (rows.length){
+      const minNet = rows.reduce((minValue, row) => Math.min(minValue, numOrZero(row && row.net)), Infinity);
+      losers = rows.filter(r => Math.abs(numOrZero(r && r.net) - minNet) <= eps);
+    }
+    const losersLabel = losers.length ? joinNamesWithY(losers.map(r => resolveName(r.id, r.display))) : '—';
+    const lowestNet = losers.length ? numOrZero(losers[0] && losers[0].net) : 0;
+
+    const playerOfDayPool = rows.length ? rows.filter(r => Math.abs(numOrZero(r && r.net) - numOrZero(rows[0] && rows[0].net)) <= eps) : [];
+    const playerOfDayCandidates = playerOfDayPool.map(r => ({
+      id: r.id,
+      display: resolveName(r.id, r.display),
+      net: numOrZero(r && r.net),
+      chips: numOrZero(r && r.chips),
+      invested: numOrZero(r && r.invested),
+      pos: Math.floor(numOrZero(r && r.pos)),
+    }));
+    const playerOfDayLabel = playerOfDayCandidates.length ? joinNamesWithY(playerOfDayCandidates.map(r => r.display)) : '—';
+    const playerOfDayPrimary = playerOfDayCandidates[0] || winners[0] || null;
+    const playerOfDay = {
+      id: stableEntityId(playerOfDayPrimary),
+      display: safeTrim(playerOfDayPrimary && playerOfDayPrimary.display) || '—',
+      net: numOrZero(playerOfDayPrimary && playerOfDayPrimary.net),
+      chips: numOrZero(playerOfDayPrimary && playerOfDayPrimary.chips),
+      invested: numOrZero(playerOfDayPrimary && playerOfDayPrimary.invested),
+      candidates: playerOfDayCandidates,
+      label: playerOfDayLabel,
+      isTie: playerOfDayCandidates.length > 1,
+      tieNote: playerOfDayCandidates.length > 1 ? 'Empate técnico en la mayor ganancia; el reconocimiento se comparte sin romper el cierre.' : '',
+      source: playerOfDayCandidates.length ? 'max-gain' : (winners.length ? 'winner-fallback' : 'safe-fallback'),
+    };
+
+    const rebuysCount = rows.reduce((acc, row) => acc + Math.max(0, Math.floor(numOrZero(row && row.rebuysCount))), 0);
+    const rebuysTotal = rows.reduce((acc, row) => acc + numOrZero(row && row.rebuysTotal), 0);
+    const closedTs = numOrZero(s.closedAt || s.updatedAt || s.createdAt) || Date.now();
+    const closedDate = new Date(closedTs);
+    const closeTime = `${pad2(closedDate.getHours())}:${pad2(closedDate.getMinutes())}`;
+    const sessionDateLabel = formatSessionDateLabel(s.date, closedTs);
+    const sessionTitle = buildPdfSessionDisplayTitle(s);
+
+    return {
+      session: s,
+      summary: sum,
+      rows,
+      winners,
+      losers,
+      lowestNet,
+      playerOfDay,
+      sessionTitle,
+      sessionDateLabel,
+      sessionRef: pdfSessionReferenceLabel(s),
+      winnersLabel,
+      losersLabel,
+      rebuysCount,
+      rebuysTotal,
+      closedTs,
+      closeTime,
+      closeDateTime: formatDateTimeForPdf(closedTs),
+    };
+  }
+
+  function getPdfNetTone(value){
+    const net = numOrZero(value);
+    return Math.abs(net) < 0.0001 ? 'ok' : (net > 0 ? 'pos' : 'neg');
+  }
+
+  function buildPdfNetValue(value, signed){
+    const tone = getPdfNetTone(value);
+    return `<span class="net ${tone}">${escapeHtml(signed ? formatSignedMoney(numOrZero(value)) : formatMoney(numOrZero(value)))}</span>`;
+  }
+
+  function formatPdfRebuyCell(row){
+    const count = Math.max(0, Math.floor(numOrZero(row && row.rebuysCount)));
+    const total = numOrZero(row && row.rebuysTotal);
+    if (!count) return '0';
+    return `${count} · ${formatMoney(total)}`;
+  }
+
+  function buildPdfOpeningChronicle(summaryData){
+    const data = summaryData || {};
+    const sum = data.summary || {};
+    const pod = data.playerOfDay || {};
+    const maxGainLabel = formatMoney(numOrZero(pod.net));
+    const playersLabel = formatRecordCount(sum.playersCount, 'jugador');
+    const rebuysText = numOrZero(data.rebuysCount) > 0
+      ? ` Hubo ${formatRecordCount(data.rebuysCount, 'rebuy')} por ${formatMoney(data.rebuysTotal)}.`
+      : '';
+    const closeText = safeTrim(data.closeTime) && safeTrim(data.closeTime) !== '—'
+      ? ` El cierre quedó registrado a las ${data.closeTime}.`
+      : '';
+    const leadText = pod.isTie
+      ? `${pod.label || 'La mesa'} compartieron la mayor ganancia del cierre con ${maxGainLabel} cada uno.`
+      : `${pod.display || 'La mesa'} firmó la mayor ganancia del cierre con ${maxGainLabel}.`;
+    return `La ${String(data.sessionTitle || 'sesión').toLowerCase()} del ${data.sessionDateLabel || 'día registrado'} quedó encabezada por ${leadText} La mesa movió ${formatMoney(sum.totalInvested)} entre ${playersLabel}.${rebuysText}${closeText}`;
+  }
+
+  function buildPdfPremiumOpeningSection(summaryData){
+    const data = summaryData || {};
+    const s = data.session || {};
+    const sum = data.summary || {};
+    const winners = Array.isArray(data.winners) ? data.winners : [];
+    const winnerNet = winners.length ? numOrZero(winners[0].net) : 0;
+    const pod = data.playerOfDay || {};
+    const chronicle = buildPdfOpeningChronicle(data);
+    const winnerNetClass = getPdfNetTone(winnerNet);
+    const podNetClass = getPdfNetTone(numOrZero(pod.net));
+    const stats = [
+      { label: 'Fecha de la sesión', value: data.sessionDateLabel || '—' },
+      { label: 'Cierre registrado', value: data.closeDateTime || '—' },
+      { label: 'Jugadores', value: String(sum.playersCount != null ? sum.playersCount : '—') },
+      { label: 'Mesa movida', value: formatMoney(sum.totalInvested) },
+      { label: 'Rebuys', value: `${numOrZero(data.rebuysCount)} · ${formatMoney(data.rebuysTotal)}` },
+      { label: 'Total en fichas', value: formatMoney(sum.totalChipsValue) },
+    ];
+
+    return `
+      <section class="print-opening pdf-avoid-break" aria-label="Apertura premium del PDF">
+        <div class="print-opening-shell">
+          <div class="print-opening-top">
+            <div class="print-opening-headcopy">
+              <div class="print-opening-kicker">Cierre oficial de sesión</div>
+              <div class="print-opening-title">${escapeHtml(data.sessionTitle || 'Sesión')}</div>
+              <div class="print-opening-sub">${escapeHtml(data.sessionRef || pdfSessionReferenceLabel(s))}</div>
+            </div>
+            <div class="print-opening-stamp">
+              <div class="print-opening-stamp-k">Documento</div>
+              <div class="print-opening-stamp-v">Pokerito PDF</div>
+            </div>
+          </div>
+
+          <div class="print-opening-grid">
+            <article class="print-opening-card print-opening-card--hero">
+              <div class="print-opening-card-k">Ganador</div>
+              <div class="print-opening-card-v">${escapeHtml(data.winnersLabel || '—')}</div>
+              <div class="print-opening-card-s ${winnerNetClass}">Resultado neto <span class="net ${winnerNetClass}">${escapeHtml(formatMoney(winnerNet))}</span>${winners.length > 1 ? ' · empate en 1er lugar' : ''}</div>
+            </article>
+
+            <article class="print-opening-card">
+              <div class="print-opening-card-k">Jugador del día</div>
+              <div class="print-opening-card-v">${escapeHtml((pod.isTie ? pod.label : pod.display) || '—')}</div>
+              <div class="print-opening-card-s ${podNetClass}">${pod.isTie ? 'Mayor ganancia compartida' : 'Mayor ganancia'} <span class="net ${podNetClass}">${escapeHtml(formatMoney(numOrZero(pod.net)))}</span></div>
+              ${pod.tieNote ? `<div class="print-opening-card-note">${escapeHtml(pod.tieNote)}</div>` : ''}
+            </article>
+
+            <article class="print-opening-card print-opening-card--chronicle">
+              <div class="print-opening-card-k">Crónica breve</div>
+              <div class="print-opening-chronicle">${escapeHtml(chronicle)}</div>
+            </article>
+          </div>
+
+          <div class="print-opening-stats">
+            ${stats.map(item => `
+              <div class="print-opening-stat">
+                <div class="print-opening-stat-k">${escapeHtml(item.label)}</div>
+                <div class="print-opening-stat-v">${escapeHtml(item.value)}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function buildPdfSessionExecutiveSection(summaryData){
+    const data = summaryData || {};
+    const sum = data.summary || {};
+    const winners = Array.isArray(data.winners) ? data.winners : [];
+    const winnerNet = winners.length ? numOrZero(winners[0].net) : 0;
+    const delta = numOrZero(sum.delta);
+    const losingTone = getPdfNetTone(numOrZero(data.lowestNet));
+    const stats = [
+      { label: 'Total jugado', value: formatMoney(sum.totalInvested) },
+      { label: 'Total de fichas', value: formatMoney(sum.totalChipsValue) },
+      { label: 'Delta de la sesión', valueHtml: buildPdfNetValue(delta, true), tone: getPdfNetTone(delta) },
+      { label: 'Cantidad de jugadores', value: String(sum.playersCount != null ? sum.playersCount : '—') },
+      { label: 'Ganador', value: data.winnersLabel || '—' },
+      { label: 'Perdedores', value: data.losersLabel || '—' },
+      { label: 'Rebuys', value: `${numOrZero(data.rebuysCount)} · ${formatMoney(data.rebuysTotal)}` },
+      { label: 'Hora de cierre', value: data.closeTime || '—' },
+    ];
+
+    const body = `
+      <div class="print-executive-shell">
+        <div class="print-executive-leads">
+          <article class="print-executive-card print-executive-card--hero">
+            <div class="print-executive-k">Ganador oficial</div>
+            <div class="print-executive-v">${escapeHtml(data.winnersLabel || '—')}</div>
+            <div class="print-executive-s">Neto final ${buildPdfNetValue(winnerNet, true)}${winners.length > 1 ? ' · empate técnico en la cima' : ''}</div>
+          </article>
+
+          <article class="print-executive-card">
+            <div class="print-executive-k">Perdedores del cierre</div>
+            <div class="print-executive-v">${escapeHtml(data.losersLabel || '—')}</div>
+            <div class="print-executive-s ${losingTone}">Menor neto ${buildPdfNetValue(numOrZero(data.lowestNet), true)}</div>
+          </article>
+
+          <article class="print-executive-card">
+            <div class="print-executive-k">Balance de la mesa</div>
+            <div class="print-executive-v">${buildPdfNetValue(delta, true)}</div>
+            <div class="print-executive-s">Diferencia entre el total jugado y el valor final en fichas.</div>
+          </article>
+        </div>
+
+        <div class="print-executive-grid">
+          ${stats.map(item => `
+            <div class="print-executive-stat${item.tone ? ` ${escapeAttr(item.tone)}` : ''}">
+              <div class="print-executive-stat-k">${escapeHtml(item.label)}</div>
+              <div class="print-executive-stat-v">${item.valueHtml || escapeHtml(String(item.value != null ? item.value : '—'))}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    return buildPdfSection({
+      title: 'Resumen ejecutivo',
+      subtitle: 'La noche en una sola mirada: contexto, balance y piezas clave antes del podio.',
+      body,
+      className: 'print-section--session-executive',
+      avoidBreak: false,
+    });
+  }
+
+  function buildPdfSessionPodium(summaryData){
+    const rows = Array.isArray(summaryData && summaryData.rows) ? summaryData.rows : [];
+    const resolveName = makeReportNameResolver(summaryData && summaryData.session);
+    const eps = 0.0001;
+    const groups = [];
+    rows.forEach(row => {
+      const net = numOrZero(row && row.net);
+      const current = groups[groups.length - 1];
+      const item = {
+        id: stableEntityId(row),
+        display: resolveName(row && row.id, row && row.display),
+        net,
+        chips: numOrZero(row && row.chips),
+        invested: numOrZero(row && row.invested),
+        pos: Math.floor(numOrZero(row && row.pos)),
+      };
+      if (!current || Math.abs(net - numOrZero(current.net)) > eps){
+        groups.push({ net, players: [item], officialPos: item.pos || (groups.length + 1) });
+      } else {
+        current.players.push(item);
+      }
+    });
+
+    return [0,1,2].map(idx => {
+      const group = groups[idx] || null;
+      if (!group){
+        return {
+          place: idx + 1,
+          empty: true,
+          label: 'Sin lugar definido',
+          net: 0,
+          note: 'No hubo suficientes resultados distintos para ocupar este escalón.',
+          officialPos: idx + 1,
+        };
+      }
+      const players = Array.isArray(group.players) ? group.players : [];
+      const label = joinNamesWithY(players.map(player => player.display));
+      const invested = players.reduce((acc, player) => acc + numOrZero(player && player.invested), 0);
+      const chips = players.reduce((acc, player) => acc + numOrZero(player && player.chips), 0);
+      const note = players.length > 1
+        ? `Empate técnico por neto final entre ${formatRecordCount(players.length, 'jugador')}.`
+        : `Fichas finales ${formatMoney(chips)} · Jugado ${formatMoney(invested)}.`;
+      return {
+        place: idx + 1,
+        empty: false,
+        label,
+        net: numOrZero(group.net),
+        players,
+        invested,
+        chips,
+        note,
+        officialPos: Math.max(1, Math.floor(numOrZero(group.officialPos) || (idx + 1))),
+      };
+    });
+  }
+
+  function buildPdfSessionPodiumSection(summaryData){
+    const podium = buildPdfSessionPodium(summaryData);
+    const body = `
+      <div class="print-podium-grid">
+        ${podium.map(item => {
+          const tone = getPdfNetTone(item.net);
+          const officialNote = item.empty
+            ? ''
+            : (item.officialPos !== item.place ? ` · Puesto oficial ${item.officialPos}°` : '');
+          return `
+            <article class="print-podium-card print-podium-card--${item.place}${item.empty ? ' is-empty' : ''}">
+              <div class="print-podium-place">${escapeHtml(String(item.place))}°</div>
+              <div class="print-podium-k">Podio por neto final</div>
+              <div class="print-podium-name">${escapeHtml(item.label || '—')}</div>
+              <div class="print-podium-net ${tone}">${buildPdfNetValue(item.net, true)}</div>
+              <div class="print-podium-sub">${escapeHtml(item.note || '—')}${escapeHtml(officialNote)}</div>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    return buildPdfSection({
+      title: 'Podio de la sesión',
+      subtitle: 'Escalera oficial del cierre ordenada por neto final.',
+      body,
+      className: 'print-section--session-podium',
+      avoidBreak: false,
+    });
+  }
+
+  function buildPdfSessionPlayerRows(rows, reportName){
+    const list = Array.isArray(rows) ? rows : [];
+    const resolveName = typeof reportName === 'function'
+      ? reportName
+      : ((id, display) => safeTrim(display) || safeTrim(id) || '—');
+    return list.map(row => {
+      const invested = numOrZero(row && row.invested);
+      const chips = numOrZero(row && row.chips);
+      const net = numOrZero(row && row.net);
+      const gained = Math.max(0, net);
+      const lost = Math.max(0, -net);
+      return {
+        id: stableEntityId(row),
+        pos: Math.max(1, Math.floor(numOrZero(row && row.pos) || 0)),
+        display: String(resolveName(row && row.id, row && row.display)),
+        invested,
+        chips,
+        net,
+        gained,
+        lost,
+        rebuysCount: Math.max(0, Math.floor(numOrZero(row && row.rebuysCount))),
+        rebuysTotal: numOrZero(row && row.rebuysTotal),
+        netTone: getPdfNetTone(net),
+      };
+    });
+  }
+
+  function buildPdfPlayerDetailSections(playerRows){
+    const rows = Array.isArray(playerRows) ? playerRows : [];
+    const chunks = chunkList(rows, 16);
+    const renderTable = (chunk) => {
+      if (!chunk.length){
+        return `
+          <div class="print-table-wrap" role="region" aria-label="Resultados completos de la sesión">
+            <table class="print-table print-results-table">
+              <thead>
+                <tr>
+                  <th class="num">Pos.</th>
+                  <th>Jugador</th>
+                  <th class="num">Jugado</th>
+                  <th class="num">Fichas finales</th>
+                  <th class="num">Neto final</th>
+                  <th class="num">Ganado</th>
+                  <th class="num">Perdido</th>
+                  <th class="num">Rebuys</th>
+                </tr>
+              </thead>
+              <tbody><tr><td colspan="8">—</td></tr></tbody>
+            </table>
+          </div>
+        `;
+      }
+      return `
+        <div class="print-table-wrap" role="region" aria-label="Resultados completos de la sesión">
+          <table class="print-table print-results-table">
+            <thead>
+              <tr>
+                <th class="num">Pos.</th>
+                <th>Jugador</th>
+                <th class="num">Jugado</th>
+                <th class="num">Fichas finales</th>
+                <th class="num">Neto final</th>
+                <th class="num">Ganado</th>
+                <th class="num">Perdido</th>
+                <th class="num">Rebuys</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${chunk.map(row => {
+                const rowClass = ['print-results-row', `tone-${row.netTone}`];
+                if (row.pos === 1) rowClass.push('is-winner');
+                if (row.lost > 0.0001 && row.pos >= 3) rowClass.push('is-loss');
+                return `
+                  <tr class="${rowClass.join(' ')}">
+                    <td class="num">${escapeHtml(String(row.pos))}°</td>
+                    <td>
+                      <div class="print-results-player">
+                        <span class="print-results-name">${escapeHtml(row.display)}</span>
+                        ${row.pos <= 3 ? `<span class="print-results-badge">Podio</span>` : ''}
+                      </div>
+                    </td>
+                    <td class="num">${escapeHtml(formatMoney(row.invested))}</td>
+                    <td class="num">${escapeHtml(formatMoney(row.chips))}</td>
+                    <td class="num">${buildPdfNetValue(row.net, true)}</td>
+                    <td class="num">${escapeHtml(formatMoney(row.gained))}</td>
+                    <td class="num">${escapeHtml(formatMoney(row.lost))}</td>
+                    <td class="num">${escapeHtml(formatPdfRebuyCell(row))}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    if (!chunks.length){
+      return buildPdfSection({
+        title: 'Resultados completos de la sesión',
+        subtitle: 'Detalle individual completo, todavía con todas las tripas útiles del cierre.',
+        body: renderTable([]),
+        className: 'print-section--session-detail',
+      });
+    }
+
+    return chunks.map((chunk, idx) => buildPdfSection({
+      title: 'Resultados completos de la sesión',
+      subtitle: chunks.length > 1 ? `Bloque ${idx + 1} de ${chunks.length} · ordenado por neto final` : 'Detalle individual completo, ordenado por neto final.',
+      body: `${idx === 0 ? '<div class="print-note">Se conserva el detalle completo por jugador y se presenta después del resumen ejecutivo y del podio para contar mejor la noche.</div>' : ''}${renderTable(chunk)}`,
+      className: idx === 0 ? 'print-section--session-detail' : 'print-section--session-detail-cont',
+      breakBefore: idx > 0,
+      avoidBreak: false,
+    })).join('');
+  }
+
+  function buildPdfGlobalBaseSection(globalBase, fallbackCloseDateTime){
+    const data = globalBase || {};
+    const body = `
+      <div class="print-meta print-meta--compact">
+        ${buildPdfMetaLines([
+          { label: 'Exportado el', value: data.exportedAt ? formatDateTimeForPdf(data.exportedAt) : '—' },
+          { label: 'Sesión cerrada', value: data.sessionRef || '—' },
+          { label: 'Cierre registrado', value: data.closedAt ? formatDateTimeForPdf(data.closedAt) : (fallbackCloseDateTime || '—') },
+          { label: 'Total histórico de sesiones cerradas', value: String(data.totalClosedSessions != null ? data.totalClosedSessions : '—') },
+          { label: 'Total histórico de jugadores con registro', value: String(data.totalTrackedPlayers != null ? data.totalTrackedPlayers : '—') },
+          { label: 'Criterio oficial del ranking global', value: data.rankingCriterion || '—' },
+          { label: 'ROI para récords globales', value: `Mínimo ${data.roiMinGames || ROI_RECORD_MIN_GAMES} sesiones e inversión acumulada mayor a 0` },
+          { label: 'Manejo de empates', value: data.rankingTieNote || '—' },
+        ])}
+      </div>
+    `;
+    return buildPdfSection({
+      title: 'Base global del histórico',
+      subtitle: 'Referencia histórica usada para el cierre, el ranking global y los récords.',
+      body,
+      subtle: true,
+      className: 'print-section--global-base',
+    });
+  }
+
+  function buildPdfDocumentModel(session){
+    const s = session || {};
+    const analysis = analyzeSession(s);
+    const analytics = computeAnalytics();
+    const reportName = makeReportNameResolver(s);
+    const summary = resolvePdfSessionSummary(s, analysis, reportName);
+    const globalBase = getPdfGlobalBaseData(s, analytics);
+    const impactData = resolveSessionHistoricalImpact(s, { persist: true });
+    const playerRows = buildPdfSessionPlayerRows(summary.rows, reportName);
+
+    const sections = {
+      opening: buildPdfPremiumOpeningSection(summary),
+      executive: buildPdfSessionExecutiveSection(summary),
+      podium: buildPdfSessionPodiumSection(summary),
+      session: buildPdfPlayerDetailSections(playerRows),
+      impact: buildPdfImpactSections(impactData),
+      globalBase: buildPdfGlobalBaseSection(globalBase, summary.closeDateTime),
+      ranking: buildPdfRankingSections(analytics.ranking || []),
+      records: buildPdfRecordsSections(analytics.records || {}),
+    };
+
+    const editorialGroups = [
+      { ...PDF_EDITORIAL_GROUPS.OPENING, sections: [sections.opening] },
+      { ...PDF_EDITORIAL_GROUPS.SESSION, sections: [sections.executive, sections.podium, sections.session] },
+      { ...PDF_EDITORIAL_GROUPS.IMPACT, sections: [sections.impact] },
+      { ...PDF_EDITORIAL_GROUPS.ARCHIVE, sections: [sections.globalBase, sections.ranking, sections.records] },
+    ];
+
+    return {
+      session: s,
+      analysis,
+      analytics,
+      reportName,
+      summary,
+      globalBase,
+      impactData,
+      sections,
+      editorialGroups,
+    };
+  }
+
+  function buildPdfDocumentSections(model){
+    const groups = Array.isArray(model && model.editorialGroups) ? model.editorialGroups : [];
+    return groups.map(group => buildPdfEditorialGroup(group)).join('');
+  }
+
+  function mountPdfRoot(root){
+    resetPrintSurface();
+    $app.innerHTML = '';
+    if ($printRoot) $printRoot.appendChild(root);
+    else $app.appendChild(root);
+  }
+
+  function renderPdfNotFound(){
+    const root = el(`
+      <section class="print-screen" aria-label="Reporte PDF">
+        <div class="empty">Sesión no encontrada.</div>
+      </section>
+    `);
+    mountPdfRoot(root);
+  }
+
+  function buildPdfScreenRoot(model){
+    const content = buildPdfDocumentSections(model);
+    return el(`
+      <section class="print-screen" aria-label="Reporte PDF">
+        <div class="print-actions">
+          <div class="print-status" id="printStatus" role="status" aria-live="polite" data-tone="muted">Preparando documento…</div>
+          <div class="print-action-buttons">
+            <button class="btn primary" type="button" id="printBtn" disabled>Imprimir / Guardar PDF</button>
+          </div>
+        </div>
+
+        <div class="print-head">
+          <div class="print-brand">
+            <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
+            <span>POKERITO</span>
+          </div>
+        </div>
+
+        <div class="print-content">${content}</div>
+      </section>
+    `);
+  }
+
+  function bindPdfPrintFlow(root, opts){
+    const options = opts && typeof opts === 'object' ? opts : {};
+    const printBtn = root && root.querySelector ? root.querySelector('#printBtn') : null;
+    const signal = options.signal;
+    const isStalePrintRender = typeof options.isStalePrintRender === 'function' ? options.isStalePrintRender : (() => false);
+    const setPrintTitle = typeof options.setPrintTitle === 'function' ? options.setPrintTitle : (() => {});
+    let printInFlight = null;
+    let lastPrintAt = 0;
+
+    async function runPrintFlow(){
+      if (printInFlight) return printInFlight;
+      printInFlight = (async () => {
+        try{
+          setPrintStatus(root, 'Preparando documento…', 'loading');
+          if (printBtn) printBtn.disabled = true;
+          await waitForPrintReady(root, signal);
+          if (isStalePrintRender()) return false;
+          try{ window.scrollTo(0, 0); }catch(e){}
+          await nextPaint(signal);
+          if (isStalePrintRender()) return false;
+          setPrintStatus(root, 'Documento listo para imprimir.', 'ready');
+          if (printBtn) printBtn.disabled = false;
+          const now = Date.now();
+          if ((now - lastPrintAt) < 1200) return false;
+          lastPrintAt = now;
+          try{ setPrintTitle(); }catch(e){}
+          try{ window.print(); }catch(err){
+            setPrintStatus(root, 'No se pudo abrir la impresión del navegador.', 'error');
+            throw err;
+          }
+          return true;
+        }catch(err){
+          if (isAbortError(err) || isStalePrintRender()) return false;
+          setPrintStatus(root, 'Hubo un problema preparando el PDF.', 'error');
+          throw err;
+        }finally{
+          printInFlight = null;
+          if (printBtn && !isStalePrintRender()) printBtn.disabled = false;
+        }
+      })();
+      return printInFlight;
+    }
+
+    if (printBtn){
+      printBtn.addEventListener('click', () => {
+        runPrintFlow().catch(() => {});
+      });
+    }
+
+    runPrintFlow().catch(() => {});
+  }
+
   // ===== Etapa 2: Reporte PDF (imprimible, landscape) =====
   function renderPdf(){
     const q = getHashQuery();
     const id = (q.get('id') || '').trim();
     const s = id ? getSessionById(id) : null;
     if (!s){
-      const root = el(`
-        <section class="print-screen" aria-label="Reporte PDF">
-          <div class="empty">Sesión no encontrada.</div>
-        </section>
-      `);
-      resetPrintSurface();
-      $app.innerHTML = '';
-      if ($printRoot) $printRoot.appendChild(root);
-      else $app.appendChild(root);
+      renderPdfNotFound();
       return;
     }
 
@@ -4369,197 +5271,19 @@ function renderHistorialDetalle(){
       try{ document.title = prevTitle; }catch(e){}
     }
 
-    function cancelPrintPrep(){
-      try{ printAbort.abort(); }catch(e){}
-    }
-
     setPrintTitle();
     try{ window.addEventListener('afterprint', restoreTitle, { once: true }); }catch(e){}
     try{ window.addEventListener('focus', restoreTitle, { once: true }); }catch(e){}
 
-    const an = analyzeSession(s);
-    const analytics = computeAnalytics();
-    const sum = an.summary;
-    const rows = an.rows.slice();
-    const eps = 0.0001;
-    const reportName = makeReportNameResolver(s);
+    const model = buildPdfDocumentModel(s);
+    const root = buildPdfScreenRoot(model);
+    mountPdfRoot(root);
 
-    const winners = rows.filter(r => r.pos === 1);
-    const winnersLabel = winners.length ? winners.map(r => reportName(r.id, r.display)).join(', ') : '—';
-
-    const zeroChips = rows.filter(r => Math.abs(numOrZero(r.chips)) <= eps);
-    let losers = [];
-    if (zeroChips.length){
-      losers = zeroChips;
-    } else if (rows.length){
-      const minNet = rows.reduce((m, r) => Math.min(m, numOrZero(r.net)), Infinity);
-      losers = rows.filter(r => Math.abs(numOrZero(r.net) - minNet) <= eps);
-    }
-    const losersLabel = losers.length ? losers.map(r => reportName(r.id, r.display)).join(', ') : '—';
-
-    const rebuysCount = rows.reduce((a, r) => a + Math.max(0, Math.floor(numOrZero(r.rebuysCount))), 0);
-    const rebuysTotal = rows.reduce((a, r) => a + numOrZero(r.rebuysTotal), 0);
-
-    const ts = numOrZero(s.closedAt || s.updatedAt) || Date.now();
-    const d = new Date(ts);
-    const closeTime = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-    const closeDateTime = formatDateTimeForPdf(ts);
-
-    const summaryMeta = buildPdfMetaLines([
-      { label: 'Fecha de juego', value: String(s.date || '—') },
-      { label: 'Monto total jugado', value: formatMoney(sum.totalInvested) },
-      { label: 'Jugador ganador', value: String(winnersLabel) },
-      { label: 'Perdedores', value: String(losersLabel) },
-      { label: 'Total fichas', value: formatMoney(sum.totalChipsValue) },
-      { label: 'Δ', value: formatMoney(sum.delta) },
-      { label: 'Cantidad de jugadores', value: String(sum.playersCount) },
-      { label: 'Rebuys totales', value: `${rebuysCount} · ${formatMoney(rebuysTotal)}` },
-      { label: 'Hora de cierre', value: String(closeTime) },
-    ]);
-
-    const playerColumns = [
-      { label: 'Jugador', className: 'who' },
-      { label: 'Jugado', className: 'num' },
-      { label: 'Ganado', className: 'num' },
-      { label: 'Perdido', className: 'num' },
-    ];
-
-    const playerRows = rows.map(r => {
-      const name = reportName(r.id, r.display);
-      const invested = numOrZero(r.invested);
-      const net = numOrZero(r.net);
-      const ganado = Math.max(0, net);
-      const perdido = Math.max(0, -net);
-      return [
-        escapeHtml(String(name)),
-        escapeHtml(formatMoney(invested)),
-        escapeHtml(formatMoney(ganado)),
-        escapeHtml(formatMoney(perdido)),
-      ];
+    bindPdfPrintFlow(root, {
+      signal: printAbort.signal,
+      isStalePrintRender,
+      setPrintTitle,
     });
-
-    const playerChunks = chunkList(playerRows, 18);
-    const globalBase = getPdfGlobalBaseData(s, analytics);
-    const impactData = resolveSessionHistoricalImpact(s, { persist: true });
-    const impactSections = buildPdfImpactSections(impactData);
-    const rankingSections = buildPdfRankingSections(analytics.ranking || []);
-    const recordSections = buildPdfRecordsSections(analytics.records || {});
-    const playerSections = playerChunks.length ? playerChunks.map((chunk, idx) => buildPdfTableSection({
-      title: 'Detalle por jugador',
-      subtitle: playerChunks.length > 1 ? `Bloque ${idx + 1} de ${playerChunks.length}` : 'Resumen individual de la sesión cerrada.',
-      columns: playerColumns,
-      rows: chunk,
-      ariaLabel: 'Tabla por jugador',
-      breakBefore: idx > 0,
-    })).join('') : buildPdfTableSection({
-      title: 'Detalle por jugador',
-      subtitle: 'Resumen individual de la sesión cerrada.',
-      columns: playerColumns,
-      rows: [],
-      ariaLabel: 'Tabla por jugador',
-    });
-
-    const globalBody = `
-      <div class="print-meta print-meta--compact">
-        ${buildPdfMetaLines([
-          { label: 'Exportado el', value: globalBase.exportedAt ? formatDateTimeForPdf(globalBase.exportedAt) : '—' },
-          { label: 'Sesión cerrada', value: globalBase.sessionRef },
-          { label: 'Cierre registrado', value: globalBase.closedAt ? formatDateTimeForPdf(globalBase.closedAt) : closeDateTime },
-          { label: 'Total histórico de sesiones cerradas', value: String(globalBase.totalClosedSessions) },
-          { label: 'Total histórico de jugadores con registro', value: String(globalBase.totalTrackedPlayers) },
-          { label: 'Criterio oficial del ranking global', value: globalBase.rankingCriterion },
-          { label: 'ROI para récords globales', value: `Mínimo ${globalBase.roiMinGames} sesiones e inversión acumulada mayor a 0` },
-          { label: 'Manejo de empates', value: globalBase.rankingTieNote },
-        ])}
-      </div>
-    `;
-
-    const root = el(`
-      <section class="print-screen" aria-label="Reporte PDF">
-        <div class="print-actions">
-          <div class="print-status" id="printStatus" role="status" aria-live="polite" data-tone="muted">Preparando documento…</div>
-          <div class="print-action-buttons">
-            <button class="btn primary" type="button" id="printBtn" disabled>Imprimir / Guardar PDF</button>
-          </div>
-        </div>
-
-        <div class="print-head">
-          <div class="print-brand">
-            <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
-            <span>POKERITO</span>
-          </div>
-        </div>
-
-        <div class="print-content">
-          ${buildPdfSection({
-            title: 'Resumen de cierre',
-            subtitle: `Sesión ${pdfSessionReferenceLabel(s)}`,
-            body: `<div class="print-meta">${summaryMeta}</div>`,
-          })}
-          ${playerSections}
-          ${buildPdfSection({
-            title: 'Base global del histórico',
-            subtitle: 'Referencia histórica usada para el cierre, el ranking global y los récords.',
-            body: globalBody,
-            subtle: true,
-          })}
-          ${impactSections}
-          ${rankingSections}
-          ${recordSections}
-        </div>
-      </section>
-    `);
-
-    resetPrintSurface();
-    $app.innerHTML = '';
-    if ($printRoot) $printRoot.appendChild(root);
-    else $app.appendChild(root);
-
-    const printBtn = document.getElementById('printBtn');
-    let printInFlight = null;
-    let lastPrintAt = 0;
-
-    async function runPrintFlow(origin){
-      if (printInFlight) return printInFlight;
-      printInFlight = (async () => {
-        try{
-          setPrintStatus(root, 'Preparando documento…', 'loading');
-          if (printBtn) printBtn.disabled = true;
-          await waitForPrintReady(root, printAbort.signal);
-          if (isStalePrintRender()) return false;
-          try{ window.scrollTo(0, 0); }catch(e){}
-          await nextPaint(printAbort.signal);
-          if (isStalePrintRender()) return false;
-          setPrintStatus(root, 'Documento listo para imprimir.', 'ready');
-          if (printBtn) printBtn.disabled = false;
-          const now = Date.now();
-          if ((now - lastPrintAt) < 1200) return false;
-          lastPrintAt = now;
-          try{ setPrintTitle(); }catch(e){}
-          try{ window.print(); }catch(err){
-            setPrintStatus(root, 'No se pudo abrir la impresión del navegador.', 'error');
-            throw err;
-          }
-          return true;
-        }catch(err){
-          if (isAbortError(err) || isStalePrintRender()) return false;
-          setPrintStatus(root, 'Hubo un problema preparando el PDF.', 'error');
-          throw err;
-        }finally{
-          printInFlight = null;
-          if (printBtn && !isStalePrintRender()) printBtn.disabled = false;
-        }
-      })();
-      return printInFlight;
-    }
-
-    if (printBtn){
-      printBtn.addEventListener('click', () => {
-        runPrintFlow('manual').catch(() => {});
-      });
-    }
-
-    runPrintFlow('auto').catch(() => {});
   }
 
 // ===== Etapa 7: Ranking global (sin tiempo) =====
