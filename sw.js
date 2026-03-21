@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.45 pdf-editorial-final-stage2 */
-const CACHE_NAME = 'pokerito-v0.1.45-pdf-editorial-final-stage2';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.47 admin-update-ux-stage3 */
+const CACHE_NAME = 'pokerito-v0.1.47-admin-update-ux-stage3';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -37,7 +37,6 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(CORE_ASSETS.map((u) => new Request(u, { cache: 'reload' }))))
-      .then(() => self.skipWaiting())
   );
 });
 
@@ -52,6 +51,15 @@ self.addEventListener('activate', (event) => {
     await self.clients.claim();
   })());
 });
+
+self.addEventListener('message', (event) => {
+  const data = event && event.data;
+  if (data && data.type === 'POKERITO_SKIP_WAITING') {
+    const skip = self.skipWaiting();
+    if (skip && typeof skip.catch === 'function') skip.catch(() => {});
+  }
+});
+
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
@@ -76,7 +84,7 @@ self.addEventListener('fetch', (event) => {
 
       return fetch(req).then((res) => {
         const url = new URL(req.url);
-        if (url.origin === location.origin && RUNTIME_ASSET_RE.test(url.pathname)) {
+        if (url.origin === location.origin && RUNTIME_ASSET_RE.test(url.pathname) && !url.search) {
           const copy = res.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(() => {});
         }

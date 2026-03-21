@@ -12,10 +12,14 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.45';
-  const APP_BUILD = 'pdf-editorial-final-stage2';
-  const APP_CACHE_NAME = 'pokerito-v0.1.45-pdf-editorial-final-stage2';
-  const SW_URL = './sw.js?v=0.1.45-pdf-editorial-final-stage2';
+  const APP_VERSION = '0.1.47';
+  const APP_BUILD = 'admin-update-ux-stage3';
+  const APP_CACHE_NAME = 'pokerito-v0.1.47-admin-update-ux-stage3';
+  const SW_URL = './sw.js?v=0.1.47-admin-update-ux-stage3';
+  const UPDATE_UI_KEY = 'pokerito_update_ui';
+  const UPDATE_BOOT_KEY = 'pokerito_update_boot';
+  const UPDATE_ACTIVATION_TIMEOUT_MS = 8000;
+
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -59,6 +63,11 @@
   const headerNavTrail = [];
   let currentHeaderRouteHref = '/inicio';
   let pendingHeaderNavIntent = null;
+  let updateUiState = loadUpdateUiState();
+  let updateCheckInFlight = false;
+  let updateApplyInFlight = false;
+  let swRegistrationRef = null;
+  let swLifecycleBound = false;
 
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
@@ -1120,6 +1129,573 @@ function formatDateTimeShort(ts){
   const hh = String(d.getHours()).padStart(2,'0');
   const mi = String(d.getMinutes()).padStart(2,'0');
   return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+}
+
+function getDefaultUpdateUiState(){
+  return {
+    currentVersion: APP_VERSION,
+    currentBuild: APP_BUILD,
+    state: 'idle',
+    checkedAt: 0,
+    latestVersion: '',
+    latestBuild: '',
+    errorCode: ''
+  };
+}
+
+function normalizeUpdateUiState(input){
+  const base = getDefaultUpdateUiState();
+  const src = isPlainObject(input) ? input : {};
+  const state = safeTrim(src.state);
+  const out = Object.assign({}, base, {
+    state: ['idle','checking','current','available','updating','updated','unsupported','error'].includes(state) ? state : 'idle',
+    checkedAt: numOrZero(src.checkedAt),
+    latestVersion: safeTrim(src.latestVersion),
+    latestBuild: safeTrim(src.latestBuild),
+    errorCode: safeTrim(src.errorCode),
+  });
+  if (safeTrim(src.currentVersion) !== APP_VERSION || safeTrim(src.currentBuild) !== APP_BUILD){
+    return base;
+  }
+  if (out.state === 'checking') out.state = 'idle';
+  if (!['available','error','unsupported'].includes(out.state)) out.errorCode = '';
+  if (out.state === 'available' && sameReleaseMeta(out, { version: APP_VERSION, build: APP_BUILD })) {
+    out.state = 'current';
+    out.errorCode = '';
+  }
+  if (out.state === 'updated') out.state = 'current';
+  return out;
+}
+
+function loadUpdateUiState(){
+  try{
+    const raw = localStorage.getItem(UPDATE_UI_KEY);
+    if (!raw) return getDefaultUpdateUiState();
+    return normalizeUpdateUiState(JSON.parse(raw));
+  }catch(e){
+    return getDefaultUpdateUiState();
+  }
+}
+
+function persistUpdateUiState(nextState){
+  try{
+    localStorage.setItem(UPDATE_UI_KEY, JSON.stringify(normalizeUpdateUiState(nextState)));
+  }catch(e){}
+}
+
+function persistUpdateBootMark(meta){
+  try{
+    sessionStorage.setItem(UPDATE_BOOT_KEY, JSON.stringify({
+      version: safeTrim(meta && meta.version),
+      build: safeTrim(meta && meta.build),
+      checkedAt: numOrZero(meta && meta.checkedAt) || Date.now(),
+    }));
+  }catch(e){}
+}
+
+function consumeUpdateBootMark(){
+  try{
+    const raw = sessionStorage.getItem(UPDATE_BOOT_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(UPDATE_BOOT_KEY);
+    const parsed = JSON.parse(raw);
+    const version = safeTrim(parsed && parsed.version);
+    const build = safeTrim(parsed && parsed.build);
+    if (!version || !build) return null;
+    if (version !== APP_VERSION || build !== APP_BUILD) return null;
+    return {
+      version,
+      build,
+      checkedAt: numOrZero(parsed && parsed.checkedAt) || Date.now(),
+    };
+  }catch(e){
+    return null;
+  }
+}
+
+function hydratePostUpdateUiState(){
+  const mark = consumeUpdateBootMark();
+  if (!mark) return;
+  updateUiState = normalizeUpdateUiState({
+    currentVersion: APP_VERSION,
+    currentBuild: APP_BUILD,
+    state: 'current',
+    checkedAt: mark.checkedAt,
+    latestVersion: mark.version,
+    latestBuild: mark.build,
+    errorCode: ''
+  });
+  persistUpdateUiState(updateUiState);
+}
+
+function buildReleaseDisplayLabel(version){
+  const value = safeTrim(version);
+  return value ? `v${value}` : '—';
+}
+
+function humanizeBuildLabel(build){
+  const raw = safeTrim(build);
+  if (!raw) return '';
+  const normalized = raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/\bstage\s*(\d+)/ig, 'etapa $1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return '';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function sameReleaseMeta(a, b){
+  return safeTrim(a && a.version) === safeTrim(b && b.version)
+    && safeTrim(a && a.build) === safeTrim(b && b.build);
+}
+
+function getUpdateErrorMessage(code){
+  const normalized = safeTrim(code).toUpperCase();
+  if (normalized === 'SW_UNAVAILABLE' || normalized === 'SW_REG_MISSING') {
+    return 'Esta instalación no permite aplicar la actualización desde este panel.';
+  }
+  if (normalized === 'HTTP_0' || normalized === 'HTTP_503' || normalized === 'HTTP_504' || normalized === 'ABORTERROR') {
+    return 'No se pudo revisar si hay una versión nueva en este momento. Revisa conexión y vuelve a intentar.';
+  }
+  if (normalized === 'ACTIVATE_NOT_READY' || normalized === 'SW_WAITING_MISSING') {
+    return 'La versión nueva ya apareció, pero todavía no terminó de quedar lista. Vuelve a intentarlo en unos segundos.';
+  }
+  if (normalized === 'SW_ACTIVATE_TIMEOUT') {
+    return 'La actualización tardó demasiado y la app evitó una recarga dudosa. Intenta nuevamente.';
+  }
+  if (normalized === 'SW_REDUNDANT') {
+    return 'La actualización cambió mientras se aplicaba. Vuelve a revisar y repite el intento.';
+  }
+  if (normalized === 'META_PARSE_FAIL') {
+    return 'La revisión respondió, pero no devolvió datos válidos de versión.';
+  }
+  return 'No se pudo completar la operación en este momento. Intenta otra vez.';
+}
+
+function getUpdateUiCopy(stateObj){
+  const state = safeTrim(stateObj && stateObj.state) || 'idle';
+  if (state === 'checking') {
+    return {
+      pill: 'Revisando…',
+      tone: 'loading',
+      body: 'Revisando si ya existe una versión más reciente para esta instalación.',
+      button: 'Revisando…'
+    };
+  }
+  if (state === 'current') {
+    return {
+      pill: 'App al día',
+      tone: 'success',
+      body: 'Esta instalación ya está corriendo la versión más reciente disponible.',
+      button: 'Buscar actualización'
+    };
+  }
+  if (state === 'available') {
+    return {
+      pill: 'Nueva versión lista',
+      tone: 'warn',
+      body: 'Hay una versión más reciente lista para aplicarse. Este mismo botón la instala sin salir de Administración.',
+      button: 'Actualizar ahora'
+    };
+  }
+  if (state === 'updating') {
+    return {
+      pill: 'Aplicando actualización',
+      tone: 'loading',
+      body: 'Aplicando la nueva versión del PWA y preparando la recarga controlada de la app.',
+      button: 'Aplicando…'
+    };
+  }
+  if (state === 'updated') {
+    return {
+      pill: 'Actualización aplicada',
+      tone: 'success',
+      body: 'La nueva versión quedó aplicada. La app se está recargando para abrir ya con esa edición.',
+      button: 'Buscar actualización'
+    };
+  }
+  if (state === 'unsupported') {
+    return {
+      pill: 'Actualización no disponible',
+      tone: 'error',
+      body: 'Esta instalación no permite aplicar la actualización desde este panel. Aquí solo queda reintentar la revisión.',
+      button: 'Buscar actualización'
+    };
+  }
+  if (state === 'error') {
+    return {
+      pill: 'No se pudo completar',
+      tone: 'error',
+      body: getUpdateErrorMessage(stateObj && stateObj.errorCode),
+      button: 'Buscar actualización'
+    };
+  }
+  return {
+    pill: 'Listo para revisar',
+    tone: 'neutral',
+    body: 'Consulta si esta instalación visible está al día o si ya hay una versión nueva lista para aplicarse.',
+    button: 'Buscar actualización'
+  };
+}
+
+function renderAdminUpdateUi(){
+  const $version = document.getElementById('adminVisibleVersion');
+  if (!$version) return;
+  const $build = document.getElementById('adminVisibleBuild');
+  const $pill = document.getElementById('adminUpdateStatusPill');
+  const $copy = document.getElementById('adminUpdateStatusText');
+  const $compare = document.getElementById('adminUpdateCompare');
+  const $checked = document.getElementById('adminUpdateCheckedAt');
+  const $btn = document.getElementById('checkUpdateBtn');
+  const stateObj = normalizeUpdateUiState(updateUiState);
+  const copy = getUpdateUiCopy(stateObj);
+  const buildLabel = humanizeBuildLabel(APP_BUILD);
+
+  $version.textContent = buildReleaseDisplayLabel(APP_VERSION);
+  if ($build) {
+    $build.textContent = buildLabel ? `Edición visible: ${buildLabel}` : '';
+    $build.style.display = buildLabel ? '' : 'none';
+  }
+
+  if ($pill){
+    $pill.textContent = copy.pill;
+    $pill.classList.remove('is-neutral', 'is-loading', 'is-success', 'is-warn', 'is-error');
+    $pill.classList.add(`is-${copy.tone}`);
+  }
+  if ($copy) $copy.textContent = copy.body;
+
+  if ($compare){
+    let compareText = '';
+    if (stateObj.state === 'available') {
+      const latestVersion = safeTrim(stateObj.latestVersion);
+      const latestBuild = humanizeBuildLabel(stateObj.latestBuild);
+      compareText = latestVersion
+        ? `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Disponible ${buildReleaseDisplayLabel(latestVersion)}${latestBuild ? ` · ${latestBuild}` : ''}`
+        : `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Hay una versión más reciente lista para aplicarse.`;
+    } else if (stateObj.state === 'current' && stateObj.checkedAt) {
+      compareText = `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Sin cambios pendientes.`;
+    } else if (stateObj.state === 'updating' || stateObj.state === 'updated') {
+      const targetVersion = safeTrim(stateObj.latestVersion);
+      compareText = targetVersion
+        ? `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Aplicando ${buildReleaseDisplayLabel(targetVersion)}.`
+        : `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Aplicando nueva edición.`;
+    }
+    $compare.textContent = compareText;
+    $compare.style.display = compareText ? '' : 'none';
+  }
+
+  if ($checked){
+    const checkedText = stateObj.checkedAt ? `Última revisión: ${formatDateTimeShort(stateObj.checkedAt)}` : '';
+    $checked.textContent = checkedText;
+    $checked.style.display = checkedText ? '' : 'none';
+  }
+
+  if ($btn){
+    const busy = !!updateCheckInFlight || !!updateApplyInFlight || stateObj.state === 'checking' || stateObj.state === 'updating';
+    $btn.textContent = copy.button;
+    $btn.disabled = busy;
+    $btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+  }
+}
+
+function setUpdateUiState(patch, options){
+  const opts = options || {};
+  updateUiState = normalizeUpdateUiState(Object.assign({}, updateUiState, patch || {}, {
+    currentVersion: APP_VERSION,
+    currentBuild: APP_BUILD,
+  }));
+  if (opts.persist !== false) persistUpdateUiState(updateUiState);
+  renderAdminUpdateUi();
+}
+
+async function getUpdateRegistration(options){
+  if (!('serviceWorker' in navigator)) return null;
+  const opts = options || {};
+  let reg = swRegistrationRef;
+  if (!reg) {
+    try{
+      reg = await navigator.serviceWorker.getRegistration();
+    }catch(e){
+      reg = null;
+    }
+  }
+  if (!reg) return null;
+  swRegistrationRef = reg;
+  bindServiceWorkerLifecycle(reg);
+  if (opts.refresh === true) {
+    try{ await reg.update(); }catch(e){}
+  }
+  return reg;
+}
+
+function bindServiceWorkerLifecycle(reg){
+  if (!reg || swLifecycleBound) return;
+  swLifecycleBound = true;
+
+  const markAvailableFromWorker = (worker) => {
+    if (!worker) return;
+    const applyAvailableState = async () => {
+      if (!navigator.serviceWorker.controller) return;
+      const latest = await fetchLatestReleaseMeta().catch(() => null);
+      setUpdateUiState({
+        state: 'available',
+        checkedAt: Date.now(),
+        latestVersion: safeTrim(latest && latest.version),
+        latestBuild: safeTrim(latest && latest.build),
+        errorCode: ''
+      });
+    };
+
+    if (worker.state === 'installed') {
+      applyAvailableState().catch(() => {});
+      return;
+    }
+
+    worker.addEventListener('statechange', () => {
+      const state = safeTrim(worker.state);
+      if (state === 'installed') applyAvailableState().catch(() => {});
+    });
+  };
+
+  if (reg.waiting) markAvailableFromWorker(reg.waiting);
+  if (reg.installing) markAvailableFromWorker(reg.installing);
+
+  reg.addEventListener('updatefound', () => {
+    markAvailableFromWorker(reg.installing || null);
+  });
+}
+
+async function getServiceWorkerUpdateHint(reg){
+  const targetReg = reg || await getUpdateRegistration();
+  if (!targetReg) return { available: false, supported: ('serviceWorker' in navigator), waiting: false, installingState: '' };
+  const installingState = safeTrim(targetReg.installing && targetReg.installing.state);
+  return {
+    available: !!targetReg.waiting || installingState === 'installed' || installingState === 'activating',
+    installingState,
+    waiting: !!targetReg.waiting,
+    supported: true,
+  };
+}
+
+async function fetchLatestReleaseMeta(){
+  const controller = (typeof AbortController === 'function') ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => {
+    try{ controller.abort(); }catch(e){}
+  }, 7000) : 0;
+  try{
+    const cacheBust = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const res = await fetch(`./app.js?update-check=${cacheBust}`, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { 'cache-control': 'no-cache' },
+      signal: controller ? controller.signal : undefined,
+    });
+    if (!res || !res.ok) throw new Error(`HTTP_${res ? res.status : 0}`);
+    const body = await res.text();
+    const versionMatch = body.match(/const\s+APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
+    const buildMatch = body.match(/const\s+APP_BUILD\s*=\s*['"]([^'"]+)['"]/);
+    const version = safeTrim(versionMatch && versionMatch[1]);
+    const build = safeTrim(buildMatch && buildMatch[1]);
+    if (!version || !build) throw new Error('META_PARSE_FAIL');
+    return { version, build };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function delay(ms){
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForWaitingWorker(reg, timeoutMs){
+  const limit = Math.max(800, numOrZero(timeoutMs) || 0);
+  const startedAt = Date.now();
+  while ((Date.now() - startedAt) < limit) {
+    if (reg && reg.waiting) return reg.waiting;
+    const installing = reg && reg.installing;
+    const state = safeTrim(installing && installing.state);
+    if (installing && state === 'installed') return reg.waiting || installing;
+    await delay(250);
+  }
+  return reg && reg.waiting ? reg.waiting : null;
+}
+
+async function activateWaitingWorkerAndReload(worker, nextMeta){
+  if (!worker) throw new Error('SW_WAITING_MISSING');
+
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let timeoutId = 0;
+
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      try{ navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange); }catch(e){}
+      try{ worker.removeEventListener('statechange', onStateChange); }catch(e){}
+    };
+
+    const settle = (type, error) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      if (type === 'resolve') resolve();
+      else reject(error instanceof Error ? error : new Error(String(error || 'UPDATE_APPLY_FAIL')));
+    };
+
+    const onControllerChange = () => {
+      persistUpdateBootMark({
+        version: safeTrim(nextMeta && nextMeta.version),
+        build: safeTrim(nextMeta && nextMeta.build),
+        checkedAt: Date.now(),
+      });
+      setUpdateUiState({
+        state: 'updated',
+        checkedAt: Date.now(),
+        latestVersion: safeTrim(nextMeta && nextMeta.version),
+        latestBuild: safeTrim(nextMeta && nextMeta.build),
+        errorCode: ''
+      }, { persist: false });
+      try{ window.location.reload(); }catch(e){}
+      settle('resolve');
+    };
+
+    const onStateChange = () => {
+      const state = safeTrim(worker.state);
+      if (state === 'redundant') settle('reject', new Error('SW_REDUNDANT'));
+    };
+
+    timeoutId = setTimeout(() => {
+      settle('reject', new Error('SW_ACTIVATE_TIMEOUT'));
+    }, UPDATE_ACTIVATION_TIMEOUT_MS);
+
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange, { once: false });
+    worker.addEventListener('statechange', onStateChange);
+
+    try{
+      worker.postMessage({ type: 'POKERITO_SKIP_WAITING' });
+    }catch(e){
+      settle('reject', e);
+    }
+  });
+}
+
+async function checkForAppUpdate(){
+  if (updateCheckInFlight || updateApplyInFlight) return;
+  updateCheckInFlight = true;
+  setUpdateUiState({ state: 'checking', errorCode: '' }, { persist: false });
+  const checkedAt = Date.now();
+  try{
+    const reg = await getUpdateRegistration({ refresh: true });
+    if (!('serviceWorker' in navigator) || !reg) {
+      setUpdateUiState({
+        state: 'unsupported',
+        checkedAt,
+        latestVersion: '',
+        latestBuild: '',
+        errorCode: 'SW_UNAVAILABLE'
+      });
+      return;
+    }
+
+    const swHint = await getServiceWorkerUpdateHint(reg);
+    const latest = await fetchLatestReleaseMeta();
+    const same = sameReleaseMeta(latest, { version: APP_VERSION, build: APP_BUILD });
+    setUpdateUiState({
+      state: (same && !swHint.available) ? 'current' : 'available',
+      checkedAt,
+      latestVersion: latest.version,
+      latestBuild: latest.build,
+      errorCode: ''
+    });
+    return;
+  } catch (err) {
+    const reg = await getUpdateRegistration();
+    const swHint = await getServiceWorkerUpdateHint(reg || null);
+    if (swHint && swHint.available){
+      setUpdateUiState({
+        state: 'available',
+        checkedAt,
+        latestVersion: '',
+        latestBuild: '',
+        errorCode: ''
+      });
+      return;
+    }
+    setUpdateUiState({
+      state: reg ? 'error' : 'unsupported',
+      checkedAt,
+      latestVersion: '',
+      latestBuild: '',
+      errorCode: safeTrim(err && err.message) || (reg ? 'UPDATE_CHECK_FAIL' : 'SW_UNAVAILABLE')
+    });
+  } finally {
+    updateCheckInFlight = false;
+    renderAdminUpdateUi();
+  }
+}
+
+async function applyAppUpdate(){
+  if (updateCheckInFlight || updateApplyInFlight) return;
+  updateApplyInFlight = true;
+  setUpdateUiState({ state: 'updating', errorCode: '' }, { persist: false });
+  const checkedAt = Date.now();
+  try{
+    const reg = await getUpdateRegistration({ refresh: true });
+    if (!reg) throw new Error('SW_REG_MISSING');
+
+    let targetWorker = reg.waiting || null;
+    if (!targetWorker && reg.installing) {
+      targetWorker = await waitForWaitingWorker(reg, 4000);
+    }
+    if (!targetWorker) {
+      try{ await reg.update(); }catch(e){}
+      targetWorker = await waitForWaitingWorker(reg, 4000);
+    }
+    if (!targetWorker) {
+      const latest = await fetchLatestReleaseMeta().catch(() => null);
+      const same = latest ? sameReleaseMeta(latest, { version: APP_VERSION, build: APP_BUILD }) : false;
+      if (same) {
+        setUpdateUiState({
+          state: 'current',
+          checkedAt,
+          latestVersion: safeTrim(latest && latest.version),
+          latestBuild: safeTrim(latest && latest.build),
+          errorCode: ''
+        });
+        return;
+      }
+      throw new Error('ACTIVATE_NOT_READY');
+    }
+
+    const nextMeta = {
+      version: safeTrim(updateUiState.latestVersion),
+      build: safeTrim(updateUiState.latestBuild)
+    };
+    if (!nextMeta.version || !nextMeta.build) {
+      const fetchedMeta = await fetchLatestReleaseMeta().catch(() => null);
+      nextMeta.version = safeTrim(fetchedMeta && fetchedMeta.version);
+      nextMeta.build = safeTrim(fetchedMeta && fetchedMeta.build);
+    }
+
+    setUpdateUiState({
+      state: 'updating',
+      checkedAt,
+      latestVersion: nextMeta.version,
+      latestBuild: nextMeta.build,
+      errorCode: ''
+    }, { persist: false });
+    await activateWaitingWorkerAndReload(targetWorker, nextMeta);
+  } catch (err) {
+    const code = safeTrim(err && err.message) || 'UPDATE_APPLY_FAIL';
+    setUpdateUiState({
+      state: code === 'SW_REG_MISSING' ? 'unsupported' : 'error',
+      checkedAt,
+      errorCode: code
+    });
+  } finally {
+    updateApplyInFlight = false;
+    renderAdminUpdateUi();
+  }
 }
 
 function normalizeChipEntity(chip, index, usedIds, ctx){
@@ -2349,7 +2925,7 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
 
 
 function purgeLegacyStorageResidue(){
-  const keep = new Set([STORE_KEY, THEME_KEY]);
+  const keep = new Set([STORE_KEY, THEME_KEY, UPDATE_UI_KEY, UPDATE_BOOT_KEY]);
 
   try{
     const keys = [];
@@ -5889,6 +6465,29 @@ function renderAdministracion(){
           </div>
         </div>
 
+        <div class="panel admin-utility-panel admin-update-panel" id="adminUpdateSection" role="region" aria-label="Versión y actualización" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Versión y actualización</div>
+            <button class="btn secondary" type="button" id="checkUpdateBtn">Buscar actualización</button>
+          </div>
+          <div class="small-note" style="margin-top:10px">Confirma qué edición visible está abierta, revisa si ya hay una más reciente y aplícala desde este mismo flujo cuando esté lista.</div>
+          <div class="admin-update-strip">
+            <div class="admin-update-card admin-update-card--version">
+              <div class="admin-update-kicker">Versión visible</div>
+              <div class="admin-update-version" id="adminVisibleVersion">—</div>
+              <div class="admin-update-build" id="adminVisibleBuild"></div>
+            </div>
+            <div class="admin-update-card admin-update-card--status">
+              <div class="admin-update-status-head">
+                <span class="pill admin-update-pill is-neutral" id="adminUpdateStatusPill">Pendiente</span>
+              </div>
+              <div class="small-note admin-update-copy" id="adminUpdateStatusText" style="margin-top:10px"></div>
+              <div class="small-note admin-update-compare" id="adminUpdateCompare" style="margin-top:8px; display:none"></div>
+              <div class="small-note admin-update-checked" id="adminUpdateCheckedAt" style="margin-top:8px; display:none"></div>
+            </div>
+          </div>
+        </div>
+
       </section>
     `);
 
@@ -5910,6 +6509,7 @@ function renderAdministracion(){
 
     document.getElementById('exportExcelBtn').addEventListener('click', () => exportExcel());
     wireAdminUtilities();
+    renderAdminUpdateUi();
 
     // Players
     const $pgrid = document.getElementById('playerGrid');
@@ -8648,13 +9248,22 @@ function formatMoney(n){
     });
   }
 
-
   function wireAdminUtilities(){
     // wire theme selector
     $app.querySelectorAll('.seg[data-theme]').forEach(b => {
       b.addEventListener('click', () => setThemePref(b.getAttribute('data-theme')));
     });
     syncSupportThemeUI();
+    renderAdminUpdateUi();
+
+    const $checkUpdateBtn = document.getElementById('checkUpdateBtn');
+    if ($checkUpdateBtn){
+      $checkUpdateBtn.addEventListener('click', () => {
+        const stateObj = normalizeUpdateUiState(updateUiState);
+        const job = stateObj.state === 'available' ? applyAppUpdate() : checkForAppUpdate();
+        Promise.resolve(job).catch(() => {});
+      });
+    }
 
     // Backup
     const $file = document.getElementById('importFile');
@@ -9179,7 +9788,11 @@ La base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register(SW_URL, { updateViaCache: 'none' })
-        .then((reg) => reg.update().catch(() => {}))
+        .then((reg) => {
+          swRegistrationRef = reg;
+          bindServiceWorkerLifecycle(reg);
+          return reg.update().catch(() => {});
+        })
         .catch(() => {});
     });
   }
@@ -9203,6 +9816,7 @@ La base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true
     // ensure default route
     if (!window.location.hash) window.location.hash = '#/inicio';
     applyTheme();
+    hydratePostUpdateUiState();
     onRoute();
   });
 
