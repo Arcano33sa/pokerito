@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.42';
-  const APP_BUILD = 'pdf-premium-final-stage6';
-  const APP_CACHE_NAME = 'pokerito-v0.1.42-pdf-premium-final-stage6';
-  const SW_URL = './sw.js?v=0.1.42-pdf-premium-final-stage6';
+  const APP_VERSION = '0.1.44';
+  const APP_BUILD = 'screen-report-premium-stage2';
+  const APP_CACHE_NAME = 'pokerito-v0.1.44-screen-report-premium-stage2';
+  const SW_URL = './sw.js?v=0.1.44-screen-report-premium-stage2';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -2993,7 +2993,7 @@ function setPlayerActive(id, active){
                     </div>
                     <div class="hist-right">
                       <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
-                      <button class="btn" type="button" data-act="view">Ver</button>
+                      <button class="btn" type="button" data-act="view">Leer</button>
                       <button class="btn" type="button" data-act="pdf">PDF</button>
                     </div>
                   </div>
@@ -3001,7 +3001,7 @@ function setPlayerActive(id, active){
               }).join('')}
             </div>
             ${closedSessions.length > 1 ? `<div class="small-note">Hay ${escapeHtml(String(closedSessions.length))} sesiones cerradas. Mira <b>Historial</b> para ver todas.</div>` : ''}
-            <div class="small-note">Tip: el detalle rápido abre una tabla por jugador (invertido, fichas, neto, posición).</div>
+            <div class="small-note">Tip: <b>Leer</b> abre la vista corrida premium y <b>PDF</b> conserva la salida oficial exportable.</div>
           ` : `<div class="empty">Aún no hay sesiones cerradas. Tu historial está más limpio que tu conciencia (por ahora).</div>`}
         </div>
       </section>
@@ -3216,7 +3216,7 @@ function setPlayerActive(id, active){
       const root = el(`
         <section class="screen screen--historial" aria-label="Historial">
           <h1 class="screen-title">Historial</h1>
-          <p class="screen-sub">Archivo · sesiones cerradas en orden cronológico descendente. La más reciente manda y va arriba.</p>
+          <p class="screen-sub">Archivo · sesiones cerradas en orden cronológico descendente. La más reciente manda y va arriba. <b>Leer</b> abre la lectura corrida; <b>PDF</b> exporta la salida oficial.</p>
 
           <div class="panel" role="region" aria-label="Listado">
             <div class="panel-head">
@@ -3268,7 +3268,7 @@ function setPlayerActive(id, active){
               </div>
               <div class="hist-right">
                 <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
-                <button class="btn" type="button" data-act="view">Ver</button>
+                <button class="btn" type="button" data-act="view">Leer</button>
                 <button class="btn" type="button" data-act="pdf">PDF</button>
               </div>
             </div>
@@ -3340,80 +3340,22 @@ function renderHistorialDetalle(){
     }
     ensureSessionGame(s);
 
-    const reportName = makeReportNameResolver(s);
+    try{
+      const changed = assignPdfSeqIfNeeded(s);
+      if (changed) saveSession(s);
+    }catch(e){}
 
-    const analysis = analyzeSession(s);
-    const sum = analysis.summary;
-    const deltaClass = Math.abs(sum.delta) < 0.0001 ? 'ok' : (sum.delta > 0 ? 'pos' : 'neg');
-
-    const root = el(`
-      <section class="screen screen--historial-detail" aria-label="Detalle de sesión">
-        <div class="mesa-head">
-          <div class="mesa-title">
-            <div class="mesa-h1">Archivo · Historial <span class="badge">${escapeHtml(String(s.date || ''))}</span></div>
-            <div class="mesa-sub">${escapeHtml(String(analysis.rows.length))} jugadores · sesión cerrada</div>
-          </div>
-          <div class="row panel-actions history-detail-actions">
-            <button class="btn" type="button" id="toMesaBtn">Ver mesa</button>
-          </div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Resumen">
-          <div class="kpi-row">
-            <div class="kpi">
-              <div class="k">Total invertido</div>
-              <div class="v">${escapeHtml(formatMoney(sum.totalInvested))}</div>
-            </div>
-            <div class="kpi">
-              <div class="k">Total fichas</div>
-              <div class="v">${escapeHtml(formatMoney(sum.totalChipsValue))}</div>
-            </div>
-            <div class="kpi">
-              <div class="k">Delta</div>
-              <div class="v delta ${deltaClass}">${escapeHtml(formatMoney(sum.delta))}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="panel" role="region" aria-label="Tabla" style="margin-top:14px">
-          <div class="panel-title">Por jugador</div>
-          <div class="table-wrap" role="region" aria-label="Tabla de jugadores">
-            <table class="table table--session-detail">
-              <thead>
-                <tr>
-                  <th>Pos</th>
-                  <th>Jugador</th>
-                  <th class="num">Invertido</th>
-                  <th class="num">Fichas</th>
-                  <th class="num">Neto</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${analysis.rows.map(r => {
-                  const netClass = Math.abs(r.net) < 0.0001 ? 'ok' : (r.net > 0 ? 'pos' : 'neg');
-                  const who = reportName(r.id, r.display);
-                  return `
-                    <tr>
-                      <td class="pos">${escapeHtml(String(r.pos))}</td>
-                      <td class="who">${escapeHtml(String(who))}</td>
-                      <td class="num">${escapeHtml(formatMoney(r.invested))}</td>
-                      <td class="num">${escapeHtml(formatMoney(r.chips))}</td>
-                      <td class="num net ${netClass}">${escapeHtml(formatMoney(r.net))}</td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
-          <div class="small-note" style="margin-top:10px">Posición ordenada por neto (desc). Empates comparten #1.</div>
-        </div>
-      </section>
-    `);
+    const model = buildPdfDocumentModel(s);
+    const root = buildScreenReportReaderRoot(model);
 
     $app.innerHTML = '';
     $app.appendChild(root);
 
-    document.getElementById('toMesaBtn').addEventListener('click', () => navigate('/juego/sesion?id=' + encodeURIComponent(s.id)));
+    const $toMesa = document.getElementById('screenReportMesaBtn');
+    if ($toMesa) $toMesa.addEventListener('click', () => navigate('/juego/sesion?id=' + encodeURIComponent(s.id)));
+
+    const $toPdf = document.getElementById('screenReportPdfBtn');
+    if ($toPdf) $toPdf.addEventListener('click', () => exportSessionPDF(s.id));
   }
 
   
@@ -4107,7 +4049,7 @@ function renderHistorialDetalle(){
       rankCounts.set(key, (rankCounts.get(key) || 0) + 1);
     });
 
-    const chunks = chunkList(list, 4);
+    const chunks = chunkList(list, 3);
     return chunks.map((chunk, idx) => {
       const cards = chunk.map(r => {
         const net = numOrZero(r && r.netTotal);
@@ -4485,7 +4427,7 @@ function renderHistorialDetalle(){
     const topEntries = players.filter(item => (Array.isArray(item && item.milestoneLabels) ? item.milestoneLabels : []).some(label => /Top\s*[35]/i.test(String(label || '')))).length;
     const noExtraMilestone = players.filter(item => !(Array.isArray(item && item.recordLabels) && item.recordLabels.length) && !(Array.isArray(item && item.milestoneLabels) && item.milestoneLabels.length)).length;
     const summaryLead = buildPdfImpactSummaryLead(summary, players);
-    const chunks = chunkList(players, 3);
+    const chunks = chunkList(players, 2);
     return chunks.map((chunk, idx) => {
       const summaryHtml = idx === 0 ? `
         <div class="print-impact-summary">
@@ -4986,7 +4928,7 @@ function renderHistorialDetalle(){
 
   function buildPdfPlayerDetailSections(playerRows){
     const rows = Array.isArray(playerRows) ? playerRows : [];
-    const chunks = chunkList(rows, 16);
+    const chunks = chunkList(rows, 12);
     const renderTable = (chunk) => {
       if (!chunk.length){
         return `
@@ -5143,6 +5085,47 @@ function renderHistorialDetalle(){
     return groups.map(group => buildPdfEditorialGroup(group)).join('');
   }
 
+  function getReportModeMeta(model, mode){
+    const currentModel = model && typeof model === 'object' ? model : {};
+    const summary = currentModel.summary || {};
+    const session = currentModel.session || {};
+    const modeKey = safeTrim(mode).toLowerCase() === 'pdf' ? 'pdf' : 'screen';
+    const sessionTitle = safeTrim(summary.sessionTitle) || buildPdfSessionDisplayTitle(session);
+    const sessionDateLabel = safeTrim(summary.sessionDateLabel) || safeTrim(session.date) || '—';
+    const sessionRef = safeTrim(summary.sessionRef) || pdfSessionReferenceLabel(session);
+    const kicker = modeKey === 'pdf' ? 'PDF exportable oficial' : 'Vista corrida premium';
+    const lead = modeKey === 'pdf'
+      ? 'Documento oficial listo para impresión o guardado, con la misma narrativa base de la vista corrida.'
+      : 'Lectura en pantalla, continua y editorial. El PDF oficial sigue aparte para exportación.';
+    const copy = modeKey === 'pdf'
+      ? 'Este modo prioriza cortes limpios, paginación más sobria y una salida estable al guardar o descargar.'
+      : 'Toda la narrativa premium corre seguida, sin cortes visuales de página y sin perder el archivo histórico completo.';
+    const tags = modeKey === 'pdf'
+      ? ['PDF exportable', 'Impresión / guardado']
+      : ['Pantalla corrida', 'PDF oficial aparte'];
+    return { sessionTitle, sessionDateLabel, sessionRef, kicker, lead, copy, tags, modeKey };
+  }
+
+  function buildReportModePanelMarkup(meta, title){
+    const currentMeta = meta && typeof meta === 'object' ? meta : {};
+    const heading = safeTrim(title) || 'Modo del reporte';
+    const tags = Array.isArray(currentMeta.tags) ? currentMeta.tags.filter(Boolean) : [];
+    return `
+      <div class="panel report-reader-mode-panel print-mode-panel" role="region" aria-label="${escapeAttr(heading)}">
+        <div class="panel-head">
+          <div class="panel-title" style="margin:0">${escapeHtml(heading)}</div>
+          <div class="row panel-actions report-reader-mode-actions print-mode-actions">
+            ${tags.map(tag => `<span class="report-reader-tag print-mode-tag">${escapeHtml(String(tag))}</span>`).join('')}
+          </div>
+        </div>
+        <div class="report-reader-mode-copy print-mode-copy">
+          <p class="report-reader-mode-lead print-mode-lead">${escapeHtml(safeTrim(currentMeta.copy) || '—')}</p>
+          <p class="report-reader-mode-sub print-mode-sub">Referencia de sesión: ${escapeHtml(safeTrim(currentMeta.sessionRef) || '—')}.</p>
+        </div>
+      </div>
+    `;
+  }
+
   function mountPdfRoot(root){
     resetPrintSurface();
     $app.innerHTML = '';
@@ -5160,6 +5143,7 @@ function renderHistorialDetalle(){
   }
 
   function buildPdfScreenRoot(model){
+    const meta = getReportModeMeta(model, 'pdf');
     const content = buildPdfDocumentSections(model);
     return el(`
       <section class="print-screen" aria-label="Reporte PDF">
@@ -5170,14 +5154,57 @@ function renderHistorialDetalle(){
           </div>
         </div>
 
-        <div class="print-head">
+        <div class="print-head print-head--report-mode">
           <div class="print-brand">
             <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
             <span>POKERITO</span>
           </div>
         </div>
 
+        <div class="print-reader-head">
+          <div class="print-reader-kicker">${escapeHtml(meta.kicker)}</div>
+          <div class="print-reader-title">${escapeHtml(meta.sessionTitle)} <span class="badge">${escapeHtml(meta.sessionDateLabel)}</span></div>
+          <div class="print-reader-sub">${escapeHtml(meta.lead)}</div>
+        </div>
+
+        ${buildReportModePanelMarkup(meta, 'Exportación PDF')}
+
         <div class="print-content">${content}</div>
+      </section>
+    `);
+  }
+
+
+  function buildScreenReportReaderRoot(model){
+    const meta = getReportModeMeta(model, 'screen');
+    const content = buildPdfDocumentSections(model);
+    return el(`
+      <section class="screen screen--historial-detail screen--report-reader" aria-label="Reporte premium en pantalla">
+        <div class="mesa-head report-reader-head">
+          <div class="mesa-title">
+            <div class="report-reader-kicker">${escapeHtml(meta.kicker)}</div>
+            <div class="mesa-h1">${escapeHtml(meta.sessionTitle)} <span class="badge">${escapeHtml(meta.sessionDateLabel)}</span></div>
+            <div class="mesa-sub">${escapeHtml(meta.lead)}</div>
+          </div>
+          <div class="row panel-actions history-detail-actions report-reader-actions">
+            <button class="btn primary" type="button" id="screenReportPdfBtn">Exportar PDF oficial</button>
+            <button class="btn" type="button" id="screenReportMesaBtn">Ver mesa</button>
+          </div>
+        </div>
+
+        ${buildReportModePanelMarkup(meta, 'Lectura en pantalla')}
+
+        <div class="report-reader-shell print-screen" aria-label="Reporte premium continuo">
+          <div class="report-reader-brandbar">
+            <div class="print-brand">
+              <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
+              <span>POKERITO</span>
+            </div>
+            <div class="report-reader-chip">Modo pantalla</div>
+          </div>
+
+          <div class="print-content">${content}</div>
+        </div>
       </section>
     `);
   }
@@ -5256,7 +5283,7 @@ function renderHistorialDetalle(){
     const prevTitle = document.title;
     const ddmmyyyy = sessionDDMMYYYY(s);
     const seqNum = (Number.isFinite(s.pdfSeq) && Math.floor(s.pdfSeq) >= 1) ? Math.floor(s.pdfSeq) : 0;
-    const printTitle = `${pad3(seqNum)}- Pokerito ${ddmmyyyy}`;
+    const printTitle = `${pad3(seqNum)}_Pokerito_${ddmmyyyy}`;
     const renderSerial = ++pdfRenderSerial;
     const printAbort = (typeof AbortController !== 'undefined') ? new AbortController() : { signal: { aborted: false }, abort(){ this.signal.aborted = true; } };
 

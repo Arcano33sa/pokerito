@@ -1697,6 +1697,64 @@ body.print-mode .print-root{
   justify-content: center;
   margin: 8px 0 14px;
 }
+.print-head--report-mode{
+  margin-bottom: 10px;
+}
+.print-reader-head{
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.print-reader-kicker{
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(0,0,0,0.58);
+}
+.print-reader-title{
+  font-size: clamp(28px, 3vw, 34px);
+  line-height: 1.04;
+  font-weight: 1050;
+  letter-spacing: -0.04em;
+}
+.print-reader-sub{
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 850;
+  color: rgba(0,0,0,0.70);
+}
+.print-mode-panel{
+  margin: 0 0 16px;
+}
+.print-mode-actions{
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.print-mode-tag{
+  background: rgba(0,0,0,0.04);
+  color: rgba(0,0,0,0.68);
+  border-color: rgba(0,0,0,0.10);
+}
+.print-mode-copy{
+  display: grid;
+  gap: 6px;
+}
+.print-mode-lead,
+.print-mode-sub{
+  margin: 0;
+}
+.print-mode-lead{
+  font-size: 15px;
+  line-height: 1.55;
+  font-weight: 760;
+}
+.print-mode-sub{
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(0,0,0,0.62);
+  font-weight: 800;
+}
 .print-brand{
   display: flex;
   align-items: center;
@@ -2137,9 +2195,33 @@ body.print-mode .print-root{
 .print-executive-leads,
 .print-podium-grid,
 .print-rank-grid,
-.print-rank-trail{
+.print-rank-trail,
+.print-opening-card,
+.print-opening-stat,
+.print-executive-card,
+.print-executive-stat,
+.print-podium-card,
+.print-rank-stat,
+.print-rank-event,
+.print-impact-stat,
+.print-impact-summary-card,
+.print-archive-banner-card,
+.print-record-summary-card,
+.print-rank-podium-card{
   break-inside: avoid;
   page-break-inside: avoid;
+}
+.print-editorial-head,
+.print-section-head,
+.print-note,
+.print-archive-banner,
+.print-impact-summary-top{
+  break-after: avoid;
+  page-break-after: avoid;
+}
+.print-section-body > :first-child{
+  break-before: avoid;
+  page-break-before: avoid;
 }
 .print-meta--compact .print-line{
   align-items: flex-start;
@@ -2716,6 +2798,149 @@ body.print-mode .print-root{
   color: rgba(0,0,0,0.68);
 }
 
+.report-reader-head{
+  gap: 16px;
+  align-items: flex-end;
+}
+.report-reader-kicker{
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.report-reader-actions{
+  gap: 10px;
+}
+.report-reader-mode-panel{
+  margin-top: 14px;
+}
+.report-reader-mode-actions{
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.report-reader-tag{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel) 92%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.report-reader-mode-copy{
+  display: grid;
+  gap: 6px;
+}
+.report-reader-mode-lead,
+.report-reader-mode-sub{
+  margin: 0;
+}
+.report-reader-mode-lead{
+  font-size: 15px;
+  line-height: 1.55;
+  font-weight: 760;
+}
+.report-reader-mode-sub{
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  font-weight: 800;
+}
+.report-reader-shell{
+  max-width: none;
+  margin-top: 16px;
+  padding: 24px clamp(18px, 2.6vw, 30px) 30px;
+  border-radius: 30px;
+  border: 1px solid rgba(17,17,22,0.12);
+  background:
+    radial-gradient(900px 420px at 100% 0%, rgba(212,175,55,0.14), transparent 56%),
+    radial-gradient(760px 320px at 0% 0%, rgba(183,31,51,0.08), transparent 58%),
+    linear-gradient(180deg, rgba(255,255,255,0.985), rgba(255,255,255,0.965));
+  box-shadow: 0 22px 60px rgba(0,0,0,0.12);
+  color: #111;
+}
+.report-reader-shell .print-brand{
+  color: #111;
+}
+.report-reader-brandbar{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.report-reader-chip{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,0.10);
+  background: rgba(0,0,0,0.045);
+  color: rgba(0,0,0,0.68);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.report-reader-shell .print-content{
+  gap: 32px;
+}
+.report-reader-shell .print-editorial-group{
+  gap: 22px;
+}
+.report-reader-shell .print-editorial-group + .print-editorial-group{
+  padding-top: 30px;
+  border-top: 1px solid rgba(0,0,0,0.08);
+}
+.report-reader-shell .print-editorial-group--with-head{
+  gap: 18px;
+}
+.report-reader-shell .print-editorial-head{
+  padding: 16px 18px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.035), rgba(0,0,0,0.012));
+}
+.report-reader-shell .print-editorial-title{
+  font-size: 22px;
+}
+.report-reader-shell .print-editorial-lead{
+  font-size: 14px;
+}
+.report-reader-shell .print-opening{
+  padding: 20px 22px 22px;
+  border-radius: 26px;
+}
+.report-reader-shell .print-section{
+  gap: 14px;
+}
+.report-reader-shell .print-section-head{
+  padding-bottom: 10px;
+}
+.report-reader-shell .print-section-title{
+  font-size: 18px;
+}
+.report-reader-shell .print-table-wrap{
+  overflow: visible;
+}
+.report-reader-shell .pdf-break-before{
+  break-before: auto;
+  page-break-before: auto;
+}
+.report-reader-shell .pdf-avoid-break{
+  break-inside: auto;
+  page-break-inside: auto;
+}
+
 @media print{
   @page { size: landscape; margin: 11mm 12mm 12mm; }
 
@@ -2731,14 +2956,17 @@ body.print-mode .print-root{
   .print-opening, .print-opening-shell, .print-opening-grid, .print-opening-card, .print-opening-stats, .print-opening-stat,
   .print-impact-summary, .print-archive-banner, .print-record-summary-grid, .print-rank-podium, .print-rank-podium-grid,
   .print-note, .print-record-seal, .print-record-group-intro, .print-meta,
-  .print-executive-leads, .print-podium-grid, .print-rank-grid, .print-rank-trail, .print-impact-summary-grid{
+  .print-executive-leads, .print-podium-grid, .print-rank-grid, .print-rank-trail, .print-impact-summary-grid,
+  .print-executive-card, .print-executive-stat, .print-podium-card, .print-rank-stat, .print-rank-event,
+  .print-impact-stat, .print-impact-summary-card, .print-archive-banner-card, .print-record-summary-card{
     break-inside: avoid;
     page-break-inside: avoid;
   }
-  .print-section, .print-section-body, .print-rank-list, .print-impact-list{ break-inside: auto; page-break-inside: auto; orphans: 3; widows: 3; }
-  .print-section-head{ break-after: avoid; page-break-after: avoid; }
+  .print-section, .print-section-body, .print-rank-list, .print-impact-list{ break-inside: auto; page-break-inside: auto; orphans: 4; widows: 4; }
+  .print-section-head, .print-note, .print-archive-banner, .print-impact-summary-top{ break-after: avoid; page-break-after: avoid; }
+  .print-section-body > :first-child{ break-before: avoid; page-break-before: avoid; }
   .print-table-wrap, .print-table{ overflow: visible !important; }
-  .print-rank-card, .print-impact-card{ break-inside: avoid; page-break-inside: avoid; }
+  .print-rank-card, .print-impact-card, .print-table tbody tr{ break-inside: avoid; page-break-inside: avoid; }
   .print-status, .btn, .icon-btn{ display: none !important; }
 }
 
@@ -3474,6 +3702,28 @@ body.has-modal-open .modal-overlay{
 
 .late-join-grid{
   grid-template-columns: repeat(var(--grid-player-cols), minmax(0, 1fr));
+}
+
+html[data-vp-orientation="portrait"] .screen--report-reader .report-reader-head,
+html[data-vp-width="compact"] .screen--report-reader .report-reader-head{
+  align-items: stretch;
+}
+
+html[data-vp-orientation="portrait"] .screen--report-reader .report-reader-brandbar,
+html[data-vp-width="compact"] .screen--report-reader .report-reader-brandbar{
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+html[data-vp-orientation="portrait"] .screen--report-reader .report-reader-shell,
+html[data-vp-width="compact"] .screen--report-reader .report-reader-shell{
+  padding: 20px 16px 24px;
+  border-radius: 24px;
+}
+
+html[data-vp-orientation="portrait"] .screen--report-reader .print-content,
+html[data-vp-width="compact"] .screen--report-reader .print-content{
+  gap: 26px;
 }
 
 html[data-vp-orientation="portrait"] .screen--historial .hist-item,
