@@ -24,7 +24,7 @@ mustContain(app, "worker.postMessage({ type: 'POKERITO_SKIP_WAITING' });", 'wait
 mustContain(css, '.admin-update-strip{', 'admin update layout css');
 mustContain(css, '.admin-update-pill.is-success{', 'admin update success pill css');
 mustContain(css, '.admin-update-panel .panel-head{', 'admin update panel head polish css');
-mustContain(sw, "const CACHE_NAME = 'pokerito-v0.1.49-pdf-semantic-pagination-stage2';", 'service worker cache bump');
+if (!/const CACHE_NAME = 'pokerito-v0\.1\.51-pdf-editorial-(?:fragmentation-stage2|final-stage3)';/.test(sw)) throw new Error('missing service worker cache bump');
 mustContain(sw, "data.type === 'POKERITO_SKIP_WAITING'", 'service worker skip waiting message hook');
 
 console.log('test-admin-update-section=ok');

@@ -1643,6 +1643,7 @@ body{
 
 
 /* ===== Etapa 2: PDF print view (landscape) ===== */
+/* ===== Etapa 3/3 — cierre editorial final del PDF oficial ===== */
 body.print-mode{
   background: #fff;
   color: #111;
@@ -1669,6 +1670,91 @@ body.print-mode .print-root{
   margin: 0 auto;
   padding: 18px 22px 26px;
   color: #111;
+}
+
+.pdf-document-shell{
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 18px 20px 28px;
+  color: #111;
+}
+.pdf-document-stage{
+  display: grid;
+  gap: 14px;
+}
+.pdf-document-sheet{
+  border: 1px solid rgba(0,0,0,0.14);
+  border-radius: 28px;
+  padding: 16px 18px 20px;
+  background: #fff;
+  box-shadow: 0 18px 44px rgba(0,0,0,0.08);
+  display: grid;
+  gap: 14px;
+}
+.pdf-document-head{
+  display: grid;
+  gap: 12px;
+}
+.pdf-document-brandbar{
+  justify-content: space-between;
+  margin: 0;
+}
+.pdf-document-chip{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: rgba(0,0,0,0.045);
+  color: rgba(0,0,0,0.72);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.pdf-document-reader-head{
+  margin-bottom: 0;
+}
+.pdf-document-content{
+  display: grid;
+  gap: 9px;
+}
+.pdf-document-group{
+  display: grid;
+  gap: 9px;
+}
+.pdf-document-group + .pdf-document-group{
+  padding-top: 8px;
+  border-top: 1px solid rgba(0,0,0,0.08);
+}
+.pdf-document-group-head{
+  border-radius: 18px;
+}
+.pdf-document-shell .print-opening-top{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+.pdf-document-shell .print-opening-grid{
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
+.pdf-document-shell .print-opening-card{
+  min-height: 0;
+}
+.pdf-document-shell .print-opening-card--chronicle{
+  grid-column: 1 / -1;
+}
+.pdf-document-shell .print-opening-stats{
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pdf-document-shell .print-executive-leads{
+  grid-template-columns: 1.08fr 0.96fr 0.96fr;
+}
+.pdf-document-shell .print-executive-grid{
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .print-actions{
   display: flex;
@@ -1772,7 +1858,7 @@ body.print-mode .print-root{
 
 .print-content{
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .print-editorial-group{
@@ -2106,6 +2192,17 @@ body.print-mode .print-root{
 .print-results-table tbody tr.is-loss{
   background: rgba(180,35,60,0.03);
 }
+.print-results-rowcell{
+  display: block;
+  margin: -10px -12px;
+  padding: 10px 12px;
+}
+.print-results-rowcell.is-winner{
+  background: rgba(13,122,67,0.04);
+}
+.print-results-rowcell.is-loss{
+  background: rgba(180,35,60,0.03);
+}
 .print-results-player{
   display: flex;
   align-items: center;
@@ -2130,7 +2227,7 @@ body.print-mode .print-root{
 }
 .print-section{
   display: grid;
-  gap: 10px;
+  gap: 9px;
 }
 .print-section--tight{
   gap: 8px;
@@ -2160,7 +2257,7 @@ body.print-mode .print-root{
 }
 .print-section-body{
   display: grid;
-  gap: 10px;
+  gap: 9px;
 }
 .print-section--session-executive,
 .print-section--session-podium,
@@ -2170,6 +2267,24 @@ body.print-mode .print-root{
 .print-section--records-major,
 .print-section--global-base{
   gap: 12px;
+}
+.print-section--continuation{
+  gap: 8px;
+}
+.print-section--continuation .print-section-head{
+  padding-bottom: 4px;
+  border-bottom-style: dashed;
+  border-bottom-color: rgba(0,0,0,0.10);
+}
+.print-section--continuation .print-section-title{
+  font-size: 15px;
+}
+.print-section--continuation .print-section-sub{
+  font-size: 10px;
+  color: rgba(0,0,0,0.52);
+}
+.print-section--continuation .print-section-body{
+  gap: 8px;
 }
 .print-line{
   align-items: flex-start;
@@ -2223,6 +2338,50 @@ body.print-mode .print-root{
   break-before: avoid;
   page-break-before: avoid;
 }
+
+.print-fragment{
+  display: grid;
+  gap: 7px;
+  break-inside: avoid;
+  break-inside: avoid-page;
+  page-break-inside: avoid;
+}
+.print-fragment + .print-fragment{
+  margin-top: 8px;
+}
+.print-fragment-head{
+  display: grid;
+  gap: 2px;
+  padding: 8px 11px;
+  border: 1px solid rgba(0,0,0,0.10);
+  border-radius: 14px;
+  background: rgba(0,0,0,0.022);
+  break-after: avoid;
+  page-break-after: avoid;
+}
+.print-fragment-kicker{
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(0,0,0,0.56);
+}
+.print-fragment-title{
+  font-size: 14px;
+  font-weight: 950;
+  color: #111;
+}
+.print-fragment-copy{
+  font-size: 11px;
+  line-height: 1.34;
+  color: rgba(0,0,0,0.66);
+}
+.print-results-fragment .print-table-wrap,
+.print-records-fragment .print-table-wrap,
+.print-impact-fragment .print-table-wrap,
+.print-ranking-fragment .print-table-wrap{
+  margin-top: 6px;
+}
 .print-meta--compact .print-line{
   align-items: flex-start;
 }
@@ -2254,7 +2413,7 @@ body.print-mode .print-root{
 .print-line .v{ font-size: 13px; font-weight: 950; font-variant-numeric: tabular-nums; }
 
 .print-table-wrap{
-  margin-top: 14px;
+  margin-top: 12px;
   border: 1px solid rgba(0,0,0,0.14);
   border-radius: 18px;
   overflow: visible;
@@ -2302,7 +2461,7 @@ body.print-mode .print-root{
 .print-note--continuation{
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
   background: rgba(0,0,0,0.022);
 }
 .print-note-pill{
@@ -2918,12 +3077,15 @@ body.print-mode .print-root{
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
+.report-reader-shell .report-reader-content,
 .report-reader-shell .print-content{
   gap: 32px;
 }
+.report-reader-shell .report-reader-group,
 .report-reader-shell .print-editorial-group{
   gap: 22px;
 }
+.report-reader-shell .report-reader-group + .report-reader-group,
 .report-reader-shell .print-editorial-group + .print-editorial-group{
   padding-top: 30px;
   border-top: 1px solid rgba(0,0,0,0.08);
@@ -2931,6 +3093,7 @@ body.print-mode .print-root{
 .report-reader-shell .print-editorial-group--with-head{
   gap: 18px;
 }
+.report-reader-shell .report-reader-group-head,
 .report-reader-shell .print-editorial-head{
   padding: 16px 18px;
   border-radius: 22px;
@@ -2970,6 +3133,8 @@ body.print-mode .print-root{
 @media print{
   /* Etapa 1/2 — reajuste físico del PDF oficial: Legal horizontal real + respiración más estable */
   /* Etapa 2/2 — paginación semántica/editorial: el navegador ya no decide solo dónde mutilar bloques. */
+  /* Etapa 1/3 — contenedor PDF dedicado: el render oficial ya no nace pegado a la vista corrida. */
+  /* Etapa 2/3 — fragmentación editorial real: los bloques largos ahora continúan en subtramos imprimibles dignos. */
   @page { size: 356mm 216mm; margin: 7.5mm 9.5mm 10.5mm; }
 
   html, body{ height: auto !important; overflow: visible !important; }
@@ -2978,6 +3143,15 @@ body.print-mode .print-root{
   .print-actions{ display: none !important; }
   .app-header, .app-main{ display: none !important; }
   .print-screen{ max-width: none; padding: 0 !important; margin: 0 !important; }
+  .pdf-document-shell{ max-width: none; padding: 0 !important; margin: 0 !important; }
+  .pdf-document-stage{ gap: 0; }
+  .pdf-document-sheet{ padding: 0 !important; border: none !important; border-radius: 0 !important; box-shadow: none !important; gap: 8px; }
+  .pdf-document-head{ gap: 8px; }
+  .pdf-document-brandbar{ margin: 0 0 6px !important; }
+  .pdf-document-chip{ min-height: 28px; padding: 5px 10px; font-size: 10px; }
+  .pdf-document-content{ gap: 8px; }
+  .pdf-document-group{ gap: 8px; break-inside: auto; page-break-inside: auto; }
+  .pdf-document-group + .pdf-document-group{ padding-top: 0; border-top: none; }
   .print-head{ margin: 0 0 6px !important; }
   .print-head--report-mode{ margin-bottom: 6px !important; }
   .print-reader-head{ gap: 4px; margin-bottom: 8px; }
@@ -3015,6 +3189,13 @@ body.print-mode .print-root{
   .print-opening-stats{ gap: 6px; }
   .print-opening-stat{ padding: 8px 9px; gap: 3px; min-height: 52px; }
   .print-opening-stat-v{ font-size: 11px; line-height: 1.26; }
+  .pdf-document-shell .print-opening-top{ grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding-bottom: 9px; }
+  .pdf-document-shell .print-opening-grid{ grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 7px; }
+  .pdf-document-shell .print-opening-card--chronicle{ grid-column: 1 / -1; }
+  .pdf-document-shell .print-opening-card{ min-height: 0; }
+  .pdf-document-shell .print-opening-stats{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .pdf-document-shell .print-executive-leads{ grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .pdf-document-shell .print-executive-grid{ grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
   .print-executive-shell{ gap: 10px; }
   .print-executive-leads{ gap: 8px; }
@@ -3115,7 +3296,7 @@ body.print-mode .print-root{
   .print-editorial-head,
   .print-opening, .print-opening-shell, .print-opening-grid, .print-opening-card, .print-opening-stats, .print-opening-stat,
   .print-impact-summary, .print-archive-banner, .print-record-summary-grid, .print-rank-podium, .print-rank-podium-grid,
-  .print-note, .print-record-seal, .print-record-group-intro, .print-meta,
+  .print-note, .print-record-seal, .print-record-group-intro, .print-meta, .print-fragment, .print-fragment-head,
   .print-executive-leads, .print-podium-grid, .print-rank-grid, .print-rank-trail, .print-impact-summary-grid,
   .print-executive-card, .print-executive-stat, .print-podium-card, .print-rank-stat, .print-rank-event,
   .print-impact-stat, .print-impact-summary-card, .print-archive-banner-card, .print-record-summary-card,
@@ -3125,6 +3306,7 @@ body.print-mode .print-root{
     page-break-inside: avoid;
   }
   .print-section, .print-section-body, .print-rank-list, .print-impact-list{ break-inside: auto; page-break-inside: auto; orphans: 4; widows: 4; }
+  .print-results-fragment, .print-records-fragment, .print-impact-fragment, .print-ranking-fragment{ break-inside: avoid; break-inside: avoid-page; page-break-inside: avoid; }
   .print-section.pdf-avoid-break, .print-section-body > .pdf-avoid-break{ break-inside: avoid; break-inside: avoid-page; page-break-inside: avoid; }
   .print-section-head, .print-note, .print-archive-banner, .print-impact-summary-top{ break-after: avoid; page-break-after: avoid; }
   .print-section-body > :first-child{ break-before: avoid; page-break-before: avoid; }

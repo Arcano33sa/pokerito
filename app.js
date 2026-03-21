@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.49';
-  const APP_BUILD = 'pdf-semantic-pagination-stage2';
-  const APP_CACHE_NAME = 'pokerito-v0.1.49-pdf-semantic-pagination-stage2';
-  const SW_URL = './sw.js?v=0.1.49-pdf-semantic-pagination-stage2';
+  const APP_VERSION = '0.1.51';
+  const APP_BUILD = 'pdf-editorial-final-stage3';
+  const APP_CACHE_NAME = 'pokerito-v0.1.51-pdf-editorial-final-stage3';
+  const SW_URL = './sw.js?v=0.1.51-pdf-editorial-final-stage3';
   const UPDATE_UI_KEY = 'pokerito_update_ui';
   const UPDATE_BOOT_KEY = 'pokerito_update_boot';
   const UPDATE_ACTIVATION_TIMEOUT_MS = 8000;
@@ -3339,6 +3339,8 @@ function setPlayerActive(id, active){
   const PDF_PRINT_INNER_WIDTH_MM = 337;
   const PDF_PRINT_INNER_HEIGHT_MM = 198;
   const PDF_PRINT_HEIGHT_RATIO = PDF_PRINT_INNER_HEIGHT_MM / PDF_PRINT_INNER_WIDTH_MM;
+  // Etapa 3/3 — cierre editorial final: se afina la reserva vertical para reducir huecos absurdos
+  // sin volver al problema anterior de cortes toscos a media línea o media fila.
 
   function clearSemanticPdfPagination(root){
     const target = root || $printRoot;
@@ -3369,22 +3371,22 @@ function setPlayerActive(id, active){
   function getSemanticPrintMetrics(root){
     const target = root || $printRoot;
     if (!target || !target.querySelector) return null;
-    const screen = target.querySelector('.print-screen') || target;
-    const content = target.querySelector('.print-content') || screen;
+    const screen = target.querySelector('.pdf-document-sheet, .print-screen') || target;
+    const content = target.querySelector('.pdf-document-content, .print-content') || screen;
     if (!screen || !content || !screen.getBoundingClientRect || !content.getBoundingClientRect) return null;
     const contentRect = content.getBoundingClientRect();
     const screenRect = screen.getBoundingClientRect();
     const width = Math.max(0, numOrZero(contentRect.width) || numOrZero(screenRect.width));
     if (width <= 0) return null;
     const pageHeight = Math.max(320, Math.round(width * PDF_PRINT_HEIGHT_RATIO));
-    const pageBuffer = Math.max(12, Math.round(pageHeight * 0.035));
+    const pageBuffer = Math.max(10, Math.round(pageHeight * 0.028));
     return {
       target,
       screen,
       rootTop: numOrZero(screenRect.top),
       pageHeight,
       pageBuffer,
-      maxAtomicHeight: pageHeight * 0.90,
+      maxAtomicHeight: pageHeight * 0.93,
     };
   }
 
@@ -3431,9 +3433,72 @@ function setPlayerActive(id, active){
     return Array.from(body.children || []).filter(Boolean);
   }
 
+  function getSectionHeadNode(section){
+    if (!section || !section.children) return null;
+    return Array.from(section.children).find(child => child && child.classList && child.classList.contains('print-section-head')) || null;
+  }
+
+  function getEditorialCompanionNode(node){
+    const parent = node && node.parentElement;
+    if (!parent || !parent.children) return null;
+    const siblings = Array.from(parent.children || []).filter(Boolean);
+    const index = siblings.indexOf(node);
+    for (let i = index + 1; i < siblings.length; i += 1){
+      const candidate = siblings[i];
+      if (!candidate || !candidate.classList) continue;
+      if (candidate.classList.contains('print-section') || candidate.classList.contains('print-opening')) return candidate;
+    }
+    return null;
+  }
+
+  function getTopLevelPdfFragments(container){
+    if (!container || !container.querySelectorAll) return [];
+    const all = Array.from(container.querySelectorAll('[data-pdf-fragment]')).filter(Boolean);
+    return all.filter(node => {
+      let current = node && node.parentElement;
+      while (current && current !== container){
+        if (current.nodeType === 1 && current.hasAttribute && current.hasAttribute('data-pdf-fragment')) return false;
+        current = current.parentElement;
+      }
+      return current === container;
+    });
+  }
+
+  function getCombinedRect(nodes, metrics){
+    const list = Array.isArray(nodes) ? nodes : [];
+    let top = null;
+    let bottom = null;
+    list.forEach(node => {
+      const rect = getRelativeRect(node, metrics);
+      if (!rect || rect.height <= 0) return;
+      if (top == null || rect.top < top) top = rect.top;
+      if (bottom == null || rect.bottom > bottom) bottom = rect.bottom;
+    });
+    if (top == null || bottom == null || bottom <= top) return null;
+    return { top, bottom, height: bottom - top };
+  }
+
+  function shouldPushCombinedRect(rect, metrics){
+    if (!rect || !metrics || rect.height <= 0) return false;
+    if (rect.top <= numOrZero(metrics.pageBuffer)) return false;
+    if (rect.height > (numOrZero(metrics.pageHeight) * 0.92)) return false;
+    const remaining = getRemainingPageSpace(rect.top, metrics);
+    if (remaining <= 0) return false;
+    return (rect.height + numOrZero(metrics.pageBuffer)) > remaining;
+  }
+
   function getSectionSemanticUnits(section){
     const bodyChildren = getSectionBodyDirectChildren(section);
     if (!bodyChildren.length) return [];
+    const body = section && section.querySelector ? section.querySelector('.print-section-body') : null;
+    const explicitFragments = getTopLevelPdfFragments(body);
+    if (explicitFragments.length){
+      return explicitFragments.map((node, idx) => ({
+        anchor: node,
+        node,
+        reason: (node.dataset && safeTrim(node.dataset.pdfFragment)) || `fragment-${idx + 1}`,
+      }));
+    }
     const units = [];
     const first = bodyChildren[0] || null;
     if (first) units.push({ anchor: section, node: first, reason: 'section-lead' });
@@ -3481,6 +3546,14 @@ function setPlayerActive(id, active){
         if (unit.classList.contains('print-section')){
           const rect = getRelativeRect(unit, metrics);
           if (!rect || rect.height <= 0) continue;
+          const semanticUnits = getSectionSemanticUnits(unit);
+          const sectionHead = getSectionHeadNode(unit);
+          const firstSemanticAnchor = semanticUnits[0] && semanticUnits[0].anchor ? semanticUnits[0].anchor : null;
+          const openingRect = getCombinedRect([sectionHead, firstSemanticAnchor], metrics);
+          if (openingRect && shouldPushCombinedRect(openingRect, metrics)){
+            changed = markSemanticPdfBreak(unit, 'section-head-with-first-unit');
+            if (changed) break;
+          }
           if (rect.height <= metrics.maxAtomicHeight){
             if (shouldPushSemanticUnit(unit, metrics)){
               changed = markSemanticPdfBreak(unit, 'section');
@@ -3488,7 +3561,6 @@ function setPlayerActive(id, active){
             }
             continue;
           }
-          const semanticUnits = getSectionSemanticUnits(unit);
           for (const entry of semanticUnits){
             const anchor = entry && entry.anchor;
             if (!anchor || anchor === unit) continue;
@@ -3499,6 +3571,14 @@ function setPlayerActive(id, active){
           }
           if (changed) break;
           continue;
+        }
+        if (unit.classList.contains('print-editorial-head')){
+          const companion = getEditorialCompanionNode(unit);
+          const combinedRect = getCombinedRect([unit, companion], metrics);
+          if (combinedRect && shouldPushCombinedRect(combinedRect, metrics)){
+            changed = markSemanticPdfBreak(unit, 'editorial-head-with-next-block');
+            if (changed) break;
+          }
         }
         if (shouldPushSemanticUnit(unit, metrics)){
           changed = markSemanticPdfBreak(unit, unit.classList.contains('print-opening') ? 'opening' : 'editorial-head');
@@ -4177,10 +4257,39 @@ function renderHistorialDetalle(){
     `;
   }
 
-  function buildPdfTableSection(opts){
-    const columns = Array.isArray(opts && opts.columns) ? opts.columns : [];
-    const rows = Array.isArray(opts && opts.rows) ? opts.rows : [];
-    const noteHtml = String(opts && opts.noteHtml != null ? opts.noteHtml : '');
+  function buildPdfFragment(body, opts){
+    const options = opts && typeof opts === 'object' ? opts : {};
+    const classes = ['print-fragment'];
+    const extraClass = safeTrim(options.className);
+    if (extraClass) classes.push(extraClass);
+    if (options.avoidBreak !== false) classes.push('pdf-avoid-break');
+    const fragmentKey = safeTrim(options.fragment) || 'fragment';
+    const label = safeTrim(options.label);
+    const attrs = [`data-pdf-fragment="${escapeAttr(fragmentKey)}"`];
+    if (label) attrs.push(`data-pdf-fragment-label="${escapeAttr(label)}"`);
+    return `<div class="${classes.join(' ')}" ${attrs.join(' ')}>${body != null ? String(body) : ''}</div>`;
+  }
+
+  function buildPdfFragmentHead(opts){
+    const options = opts && typeof opts === 'object' ? opts : {};
+    const kicker = safeTrim(options.kicker);
+    const title = safeTrim(options.title);
+    const copy = safeTrim(options.copy);
+    if (!kicker && !title && !copy) return '';
+    return `
+      <div class="print-fragment-head">
+        ${kicker ? `<div class="print-fragment-kicker">${escapeHtml(kicker)}</div>` : ''}
+        ${title ? `<div class="print-fragment-title">${escapeHtml(title)}</div>` : ''}
+        ${copy ? `<div class="print-fragment-copy">${escapeHtml(copy)}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function buildPdfInlineTable(opts){
+    const options = opts && typeof opts === 'object' ? opts : {};
+    const columns = Array.isArray(options.columns) ? options.columns : [];
+    const rows = Array.isArray(options.rows) ? options.rows : [];
+    const noteHtml = String(options.noteHtml != null ? options.noteHtml : '');
     const colHtml = columns.map(col => {
       const label = escapeHtml(String(col && col.label != null ? col.label : ''));
       const klass = safeTrim(col && col.className);
@@ -4196,15 +4305,27 @@ function renderHistorialDetalle(){
       }).join('')}</tr>`;
     }).join('') : `<tr><td colspan="${Math.max(1, columns.length)}">—</td></tr>`;
 
-    const table = `
+    return `
       ${noteHtml}
-      <div class="print-table-wrap" role="region" aria-label="${escapeAttr(String(opts && opts.ariaLabel != null ? opts.ariaLabel : 'Tabla del PDF'))}">
-        <table class="print-table">
+      <div class="print-table-wrap" role="region" aria-label="${escapeAttr(String(options.ariaLabel != null ? options.ariaLabel : 'Tabla del PDF'))}">
+        <table class="print-table${options.tableClassName ? ` ${escapeAttr(String(options.tableClassName))}` : ''}">
           <thead><tr>${colHtml}</tr></thead>
           <tbody>${rowHtml}</tbody>
         </table>
       </div>
     `;
+  }
+
+  function buildPdfTableSection(opts){
+    const columns = Array.isArray(opts && opts.columns) ? opts.columns : [];
+    const rows = Array.isArray(opts && opts.rows) ? opts.rows : [];
+    const table = buildPdfInlineTable({
+      columns,
+      rows,
+      noteHtml: String(opts && opts.noteHtml != null ? opts.noteHtml : ''),
+      ariaLabel: String(opts && opts.ariaLabel != null ? opts.ariaLabel : 'Tabla del PDF'),
+      tableClassName: safeTrim(opts && opts.tableClassName),
+    });
 
     return buildPdfSection({
       title: (opts && opts.title) || 'Tabla',
@@ -4222,6 +4343,8 @@ function renderHistorialDetalle(){
   const ROI_RECORD_MIN_GAMES = 3;
   const HISTORICAL_IMPACT_VERSION = 5;
   const PDF_RESULTS_ROWS_PER_SECTION = 6;
+  const PDF_RESULTS_ROWS_PER_FRAGMENT = 3;
+  const PDF_RECORD_ROWS_PER_FRAGMENT = 2;
   const PDF_IMPACT_CARDS_PER_SECTION = 1;
   const PDF_RANK_CARDS_PER_SECTION = 1;
 
@@ -4297,6 +4420,14 @@ function renderHistorialDetalle(){
   function buildPdfSessionDisplayTitle(session){
     const seqNum = (Number.isFinite(session && session.pdfSeq) && Math.floor(session.pdfSeq) >= 1) ? Math.floor(session.pdfSeq) : 0;
     return seqNum ? `Sesión ${pad3(seqNum)}` : 'Sesión sin consecutivo';
+  }
+
+  function buildPdfContinuationLabel(parts, currentIndex, total){
+    const tokens = uniqStrings(Array.isArray(parts) ? parts : []);
+    const idx = Math.max(1, Math.floor(numOrZero(currentIndex) || 1));
+    const count = Math.max(1, Math.floor(numOrZero(total) || 1));
+    if (count > 1) tokens.push(`${Math.min(idx, count)}/${count}`);
+    return tokens.join(' · ') || 'Continuación';
   }
 
   function buildPdfContinuationNote(opts){
@@ -4779,27 +4910,51 @@ function renderHistorialDetalle(){
 
     return groups.map((group, idx) => {
       const groupItems = group.keys.map(key => byKey.get(key)).filter(Boolean);
-      const noteParts = [];
-      if (idx === 0) noteParts.push(buildPdfRecordsOverview(rec));
+      const rowSegments = chunkList(buildPdfRecordRows(groupItems), PDF_RECORD_ROWS_PER_FRAGMENT);
+      const introParts = [];
+      if (idx === 0) introParts.push(buildPdfRecordsOverview(rec));
       if (idx > 0){
-        noteParts.push(buildPdfContinuationNote({
-          label: `Continuación ${idx + 1} de ${groups.length}`,
-          copy: 'El bloque de récords sigue corrido dentro del mismo cierre histórico, sin abrir páginas nuevas por capricho.',
+        introParts.push(buildPdfContinuationNote({
+          label: buildPdfContinuationLabel(['Archivo global', 'Récords'], idx + 1, groups.length),
+          copy: 'El bloque sigue corrido dentro del mismo cierre histórico, sin cambiar elegibilidad ni criterio.',
         }));
       }
-      noteParts.push(`<div class="print-note print-record-group-intro">${escapeHtml(group.intro)}</div>`);
-      if (idx === groups.length - 1){
-        noteParts.push(`<div class="print-record-seal">Cierre histórico del documento: ranking global y récords globales quedan congelados con el contexto vigente de esta exportación.</div>`);
-      }
-      return buildPdfTableSection({
+      introParts.push(`<div class="print-note print-record-group-intro">${escapeHtml(group.intro)}</div>`);
+      const fragments = [buildPdfFragment(introParts.join(''), {
+        className: 'print-records-fragment',
+        fragment: idx === 0 ? 'records-opening-intro' : 'records-continuation-intro',
+        label: group.subtitle,
+      })];
+      rowSegments.forEach((segment, segIdx) => {
+        const segmentBody = [
+          buildPdfFragmentHead({
+            kicker: rowSegments.length > 1 ? `Subtramo ${segIdx + 1} de ${rowSegments.length}` : 'Tramo cerrado',
+            title: rowSegments.length > 1 ? `Registros ${segIdx * PDF_RECORD_ROWS_PER_FRAGMENT + 1}–${segIdx * PDF_RECORD_ROWS_PER_FRAGMENT + segment.length}` : 'Registros del bloque',
+            copy: 'Cabecera protegida y subtabla cerrada para evitar cortes a mitad de fila.',
+          }),
+          buildPdfInlineTable({
+            columns,
+            rows: segment,
+            ariaLabel: `Tabla de ${group.subtitle.toLowerCase()} · tramo ${segIdx + 1}`,
+          }),
+        ];
+        if (idx === groups.length - 1 && segIdx === rowSegments.length - 1){
+          segmentBody.push(`<div class="print-record-seal">Cierre histórico del documento: ranking global y récords globales quedan congelados con el contexto vigente de esta exportación.</div>`);
+        }
+        fragments.push(buildPdfFragment(segmentBody.join(''), {
+          className: 'print-records-fragment',
+          fragment: segIdx === 0 ? 'records-table-opening' : 'records-table-continuation',
+          label: `${group.subtitle} · tramo ${segIdx + 1}`,
+        }));
+      });
+      return buildPdfSection({
         title: group.title,
         subtitle: group.subtitle,
-        columns,
-        rows: buildPdfRecordRows(groupItems),
-        ariaLabel: `Tabla de ${group.subtitle.toLowerCase()}`,
-        noteHtml: noteParts.join(''),
-        className: idx === 0 ? 'print-section--records-major' : 'print-section--records-cont',
+        body: fragments.join(''),
+        tight: true,
+        className: idx === 0 ? 'print-section--records-major' : 'print-section--records-cont print-section--continuation',
         breakBefore: false,
+        avoidBreak: false,
       });
     }).join('');
   }
@@ -4903,8 +5058,8 @@ function renderHistorialDetalle(){
       const continuation = idx === 0
         ? ''
         : buildPdfContinuationNote({
-            label: `Continuación ${idx + 1} de ${chunks.length}`,
-            copy: 'Se mantiene el mismo orden oficial del ranking global y la misma lectura comparativa del archivo.',
+            label: buildPdfContinuationLabel(['Archivo global', 'Ranking'], idx + 1, chunks.length),
+            copy: 'Mismo orden oficial, mismo criterio histórico y continuación natural de la fotografía global.',
           });
 
       return buildPdfSection({
@@ -4912,9 +5067,13 @@ function renderHistorialDetalle(){
         subtitle: idx === 0
           ? 'Fotografía histórica completa al momento del cierre.'
           : `Tramo ${idx + 1} de ${chunks.length} · mismo orden oficial del ranking global`,
-        body: `${idx === 0 ? buildPdfRankingOverview(list) : continuation}<div class="print-rank-list">${cards}</div>`,
-        className: idx === 0 ? 'print-section--ranking-major' : 'print-section--ranking-cont',
-        avoidBreak: true,
+        body: buildPdfFragment(`${idx === 0 ? buildPdfRankingOverview(list) : continuation}<div class="print-rank-list">${cards}</div>`, {
+          className: 'print-ranking-fragment',
+          fragment: idx === 0 ? 'ranking-opening' : 'ranking-continuation',
+          label: `Ranking tramo ${idx + 1}`,
+        }),
+        className: idx === 0 ? 'print-section--ranking-major' : 'print-section--ranking-cont print-section--continuation',
+        avoidBreak: false,
       });
     }).join('');
   }
@@ -5207,7 +5366,7 @@ function renderHistorialDetalle(){
     const topEntries = players.filter(item => (Array.isArray(item && item.milestoneLabels) ? item.milestoneLabels : []).some(label => /Top\s*[35]/i.test(String(label || '')))).length;
     const noExtraMilestone = players.filter(item => !(Array.isArray(item && item.recordLabels) && item.recordLabels.length) && !(Array.isArray(item && item.milestoneLabels) && item.milestoneLabels.length)).length;
     const summaryLead = buildPdfImpactSummaryLead(summary, players);
-    const summaryHtml = `
+    const summaryHtml = buildPdfFragment(`
       <div class="print-impact-summary">
         <div class="print-impact-summary-top">
           <div class="print-impact-summary-kicker">Puente entre la noche y la historia</div>
@@ -5237,7 +5396,7 @@ function renderHistorialDetalle(){
           </article>
         </div>
       </div>
-    `;
+    `, { className: 'print-impact-fragment', fragment: 'impact-summary' });
 
     const renderImpactCard = (item) => {
       const sessionNet = numOrZero(item.sessionNet);
@@ -5290,7 +5449,7 @@ function renderHistorialDetalle(){
       subtitle: 'Qué cambió en la historia general de la mesa gracias a este cierre.',
       body: summaryHtml,
       className: 'print-section--impact-major',
-      avoidBreak: true,
+      avoidBreak: false,
     })];
 
     const impactChunks = chunkList(players, PDF_IMPACT_CARDS_PER_SECTION);
@@ -5298,17 +5457,21 @@ function renderHistorialDetalle(){
       const continuation = idx === 0
         ? '<div class="print-note">Cada ficha histórica conserva el mismo orden editorial del reporte y agrupa a los jugadores en tramos para que la lectura impresa respire mejor.</div>'
         : buildPdfContinuationNote({
-            label: `Continuación ${idx + 1} de ${impactChunks.length}`,
-            copy: 'Sigue la misma lectura histórica individual, sin cambiar narrativa ni criterio comparativo.',
+            label: buildPdfContinuationLabel(['Impacto histórico'], idx + 1, impactChunks.length),
+            copy: 'Sigue la misma lectura histórica individual, con el mismo previo → nuevo y sin cambiar criterio comparativo.',
           });
       sections.push(buildPdfSection({
         title: 'Impacto de esta Sesión',
         subtitle: impactChunks.length > 1
           ? `Tramo ${idx + 1} de ${impactChunks.length} · lectura histórica individual`
           : 'Lectura histórica individual de toda la mesa cerrada.',
-        body: `${continuation}<div class="print-impact-list">${chunk.map(renderImpactCard).join('')}</div>`,
-        className: 'print-section--impact-cont',
-        avoidBreak: true,
+        body: buildPdfFragment(`${continuation}<div class="print-impact-list">${chunk.map(renderImpactCard).join('')}</div>`, {
+          className: 'print-impact-fragment',
+          fragment: idx === 0 ? 'impact-cards-opening' : 'impact-cards-continuation',
+          label: `Impacto tramo ${idx + 1}`,
+        }),
+        className: 'print-section--impact-cont print-section--continuation',
+        avoidBreak: false,
       }));
     });
 
@@ -5335,33 +5498,6 @@ function renderHistorialDetalle(){
     };
   }
 
-
-  function buildPdfEditorialGroup(opts){
-    const key = safeTrim(opts && opts.key) || 'group';
-    const label = safeTrim(opts && opts.label) || key;
-    const kicker = safeTrim(opts && opts.kicker);
-    const lead = safeTrim(opts && opts.lead);
-    const copy = safeTrim(opts && opts.copy);
-    const showHeader = !!(opts && opts.showHeader) && (!!kicker || !!lead || !!copy);
-    const sections = Array.isArray(opts && opts.sections) ? opts.sections.filter(Boolean) : [];
-    const classes = ['print-editorial-group'];
-    if (opts && opts.breakBefore) classes.push('pdf-break-before');
-    if (showHeader) classes.push('print-editorial-group--with-head');
-    const headHtml = showHeader ? `
-      <div class="print-editorial-head pdf-avoid-break">
-        ${kicker ? `<div class="print-editorial-kicker">${escapeHtml(kicker)}</div>` : ''}
-        <div class="print-editorial-title">${escapeHtml(label)}</div>
-        ${lead ? `<div class="print-editorial-lead">${escapeHtml(lead)}</div>` : ''}
-        ${copy ? `<div class="print-editorial-copy">${escapeHtml(copy)}</div>` : ''}
-      </div>
-    ` : '';
-    return `
-      <div class="${classes.join(' ')}" data-pdf-group="${escapeAttr(key)}" data-pdf-group-label="${escapeAttr(label)}">
-        ${headHtml}
-        ${sections.join('')}
-      </div>
-    `;
-  }
 
   function resolvePdfSessionSummary(session, analysis, reportName){
     const s = session || {};
@@ -5726,92 +5862,98 @@ function renderHistorialDetalle(){
   function buildPdfPlayerDetailSections(playerRows){
     const rows = Array.isArray(playerRows) ? playerRows : [];
     const chunks = chunkList(rows, PDF_RESULTS_ROWS_PER_SECTION);
-    const renderTable = (chunk) => {
-      if (!chunk.length){
-        return `
-          <div class="print-table-wrap" role="region" aria-label="Resultados completos de la sesión">
-            <table class="print-table print-results-table">
-              <thead>
-                <tr>
-                  <th class="num">Pos.</th>
-                  <th>Jugador</th>
-                  <th class="num">Jugado</th>
-                  <th class="num">Fichas finales</th>
-                  <th class="num">Neto final</th>
-                  <th class="num">Ganado</th>
-                  <th class="num">Perdido</th>
-                  <th class="num">Rebuys</th>
-                </tr>
-              </thead>
-              <tbody><tr><td colspan="8">—</td></tr></tbody>
-            </table>
-          </div>
-        `;
-      }
-      return `
-        <div class="print-table-wrap" role="region" aria-label="Resultados completos de la sesión">
-          <table class="print-table print-results-table">
-            <thead>
-              <tr>
-                <th class="num">Pos.</th>
-                <th>Jugador</th>
-                <th class="num">Jugado</th>
-                <th class="num">Fichas finales</th>
-                <th class="num">Neto final</th>
-                <th class="num">Ganado</th>
-                <th class="num">Perdido</th>
-                <th class="num">Rebuys</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${chunk.map(row => {
-                const rowClass = ['print-results-row', `tone-${row.netTone}`];
-                if (row.pos === 1) rowClass.push('is-winner');
-                if (row.lost > 0.0001 && row.pos >= 3) rowClass.push('is-loss');
-                return `
-                  <tr class="${rowClass.join(' ')}">
-                    <td class="num">${escapeHtml(String(row.pos))}°</td>
-                    <td>
-                      <div class="print-results-player">
-                        <span class="print-results-name">${escapeHtml(row.display)}</span>
-                        ${row.pos <= 3 ? `<span class="print-results-badge">Podio</span>` : ''}
-                      </div>
-                    </td>
-                    <td class="num">${escapeHtml(formatMoney(row.invested))}</td>
-                    <td class="num">${escapeHtml(formatMoney(row.chips))}</td>
-                    <td class="num">${buildPdfNetValue(row.net, true)}</td>
-                    <td class="num">${escapeHtml(formatMoney(row.gained))}</td>
-                    <td class="num">${escapeHtml(formatMoney(row.lost))}</td>
-                    <td class="num">${escapeHtml(formatPdfRebuyCell(row))}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-      `;
+    const columns = [
+      { label: 'Pos.', className: 'num' },
+      { label: 'Jugador' },
+      { label: 'Jugado', className: 'num' },
+      { label: 'Fichas finales', className: 'num' },
+      { label: 'Neto final', className: 'num' },
+      { label: 'Ganado', className: 'num' },
+      { label: 'Perdido', className: 'num' },
+      { label: 'Rebuys', className: 'num' },
+    ];
+
+    const renderRows = (chunk) => {
+      if (!chunk.length) return [[ '—', '—', '—', '—', '—', '—', '—', '—' ]];
+      return chunk.map(row => {
+        const rowClass = ['print-results-row', `tone-${row.netTone}`];
+        if (row.pos === 1) rowClass.push('is-winner');
+        if (row.lost > 0.0001 && row.pos >= 3) rowClass.push('is-loss');
+        const rowClassName = rowClass.join(' ');
+        return [
+          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(String(row.pos))}°</div>`,
+          `<div class="${rowClassName} print-results-rowcell"><div class="print-results-player"><span class="print-results-name">${escapeHtml(row.display)}</span>${row.pos <= 3 ? `<span class="print-results-badge">Podio</span>` : ''}</div></div>`,
+          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatMoney(row.invested))}</div>`,
+          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatMoney(row.chips))}</div>`,
+          `<div class="${rowClassName} print-results-rowcell num">${buildPdfNetValue(row.net, true)}</div>`,
+          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatMoney(row.gained))}</div>`,
+          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatMoney(row.lost))}</div>`,
+          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatPdfRebuyCell(row))}</div>`,
+        ];
+      });
+    };
+
+    const buildResultFragment = (outerIdx, segment, segIdx, totalSegments) => {
+      const firstPos = segment[0] ? segment[0].pos : '—';
+      const lastPos = segment.length ? segment[segment.length - 1].pos : '—';
+      const rangeLabel = segment.length
+        ? `Posiciones ${firstPos}°${segment.length > 1 ? `–${lastPos}°` : ''}`
+        : 'Sin resultados';
+      const intro = segIdx === 0
+        ? (outerIdx === 0
+          ? '<div class="print-note">Se conserva el detalle completo por jugador y se presenta después del resumen ejecutivo y del podio para contar mejor la noche.</div>'
+          : buildPdfContinuationNote({ label: buildPdfContinuationLabel(['Sesión', 'Resultados'], outerIdx + 1, chunks.length), copy: 'Mismo orden por neto final, misma tabla oficial del cierre y continuación natural del bloque.' }))
+        : '';
+      return buildPdfFragment(`
+        ${intro}
+        ${buildPdfFragmentHead({
+          kicker: totalSegments > 1 ? `Subtramo ${segIdx + 1} de ${totalSegments}` : 'Tramo cerrado',
+          title: rangeLabel,
+          copy: 'Cabecera repetida y tramo cerrado para que el PDF continúe limpio sin cortar filas ni medias líneas.',
+        })}
+        ${buildPdfInlineTable({
+          columns,
+          rows: renderRows(segment),
+          ariaLabel: `Resultados completos de la sesión · ${rangeLabel}`,
+          tableClassName: 'print-results-table',
+        })}
+      `, {
+        className: 'print-results-fragment',
+        fragment: segIdx === 0 ? 'results-opening-segment' : 'results-continuation-segment',
+        label: rangeLabel,
+      });
     };
 
     if (!chunks.length){
       return buildPdfSection({
         title: 'Resultados completos de la sesión',
         subtitle: 'Detalle individual completo, todavía con todas las tripas útiles del cierre.',
-        body: renderTable([]),
+        body: buildPdfFragment(buildPdfInlineTable({
+          columns,
+          rows: renderRows([]),
+          ariaLabel: 'Resultados completos de la sesión',
+          tableClassName: 'print-results-table',
+        }), {
+          className: 'print-results-fragment',
+          fragment: 'results-empty',
+          label: 'Sin resultados',
+        }),
         className: 'print-section--session-detail',
       });
     }
 
-    return chunks.map((chunk, idx) => buildPdfSection({
-      title: 'Resultados completos de la sesión',
-      subtitle: chunks.length > 1
-        ? `Tramo ${idx + 1} de ${chunks.length} · detalle completo ordenado por neto final`
-        : 'Detalle individual completo, ordenado por neto final.',
-      body: `${idx === 0
-        ? '<div class="print-note">Se conserva el detalle completo por jugador y se presenta después del resumen ejecutivo y del podio para contar mejor la noche.</div>'
-        : buildPdfContinuationNote({ label: `Continuación ${idx + 1} de ${chunks.length}`, copy: 'Se mantiene el mismo orden por neto final y la misma tabla oficial del cierre.' })}${renderTable(chunk)}`,
-      className: idx === 0 ? 'print-section--session-detail' : 'print-section--session-detail-cont',
-      avoidBreak: true,
-    })).join('');
+    return chunks.map((chunk, idx) => {
+      const segments = chunkList(chunk, PDF_RESULTS_ROWS_PER_FRAGMENT);
+      return buildPdfSection({
+        title: 'Resultados completos de la sesión',
+        subtitle: chunks.length > 1
+          ? `Tramo ${idx + 1} de ${chunks.length} · detalle completo ordenado por neto final`
+          : 'Detalle individual completo, ordenado por neto final.',
+        body: segments.map((segment, segIdx) => buildResultFragment(idx, segment, segIdx, segments.length)).join(''),
+        className: idx === 0 ? 'print-section--session-detail' : 'print-section--session-detail-cont print-section--continuation',
+        avoidBreak: false,
+      });
+    }).join('');
   }
 
   function buildPdfGlobalBaseSection(globalBase, fallbackCloseDateTime){
@@ -5880,9 +6022,55 @@ function renderHistorialDetalle(){
     };
   }
 
-  function buildPdfDocumentSections(model){
+  function buildSharedEditorialGroupMarkup(opts, shellClassName, headClassName){
+    const key = safeTrim(opts && opts.key) || 'group';
+    const label = safeTrim(opts && opts.label) || key;
+    const kicker = safeTrim(opts && opts.kicker);
+    const lead = safeTrim(opts && opts.lead);
+    const copy = safeTrim(opts && opts.copy);
+    const showHeader = !!(opts && opts.showHeader) && (!!kicker || !!lead || !!copy);
+    const sections = Array.isArray(opts && opts.sections) ? opts.sections.filter(Boolean) : [];
+    const classes = String(shellClassName || '').split(/\s+/).filter(Boolean);
+    if (opts && opts.breakBefore) classes.push('pdf-break-before');
+    if (showHeader) classes.push('print-editorial-group--with-head');
+    const headClasses = String(headClassName || '').split(/\s+/).filter(Boolean);
+    const headHtml = showHeader ? `
+      <div class="${headClasses.join(' ')} pdf-avoid-break">
+        ${kicker ? `<div class="print-editorial-kicker">${escapeHtml(kicker)}</div>` : ''}
+        <div class="print-editorial-title">${escapeHtml(label)}</div>
+        ${lead ? `<div class="print-editorial-lead">${escapeHtml(lead)}</div>` : ''}
+        ${copy ? `<div class="print-editorial-copy">${escapeHtml(copy)}</div>` : ''}
+      </div>
+    ` : '';
+    return `
+      <article class="${classes.join(' ')}" data-pdf-group="${escapeAttr(key)}" data-pdf-group-label="${escapeAttr(label)}">
+        ${headHtml}
+        ${sections.join('')}
+      </article>
+    `;
+  }
+
+  function buildPdfEditorialGroup(opts){
+    return buildSharedEditorialGroupMarkup(opts, 'pdf-document-group print-editorial-group', 'pdf-document-group-head print-editorial-head');
+  }
+
+  function buildScreenEditorialGroup(opts){
+    return buildSharedEditorialGroupMarkup(opts, 'report-reader-group print-editorial-group', 'report-reader-group-head print-editorial-head');
+  }
+
+  function buildPdfPrintDocumentSections(model){
     const groups = Array.isArray(model && model.editorialGroups) ? model.editorialGroups : [];
     return groups.map(group => buildPdfEditorialGroup(group)).join('');
+  }
+
+  function buildScreenReportSections(model){
+    const groups = Array.isArray(model && model.editorialGroups) ? model.editorialGroups : [];
+    return groups.map(group => buildScreenEditorialGroup(group)).join('');
+  }
+
+  function buildPdfDocumentSections(model, mode){
+    const modeKey = safeTrim(mode).toLowerCase() === 'screen' ? 'screen' : 'pdf';
+    return modeKey === 'screen' ? buildScreenReportSections(model) : buildPdfPrintDocumentSections(model);
   }
 
   function getReportModeMeta(model, mode){
@@ -5935,8 +6123,12 @@ function renderHistorialDetalle(){
 
   function renderPdfNotFound(){
     const root = el(`
-      <section class="print-screen" aria-label="Reporte PDF">
-        <div class="empty">Sesión no encontrada.</div>
+      <section class="pdf-document-shell print-screen" aria-label="Reporte PDF oficial">
+        <div class="pdf-document-stage">
+          <div class="pdf-document-sheet">
+            <div class="empty">Sesión no encontrada.</div>
+          </div>
+        </div>
       </section>
     `);
     mountPdfRoot(root);
@@ -5944,9 +6136,9 @@ function renderHistorialDetalle(){
 
   function buildPdfScreenRoot(model){
     const meta = getReportModeMeta(model, 'pdf');
-    const content = buildPdfDocumentSections(model);
+    const content = buildPdfDocumentSections(model, 'pdf');
     return el(`
-      <section class="print-screen" aria-label="Reporte PDF">
+      <section class="pdf-document-shell print-screen" aria-label="Reporte PDF oficial">
         <div class="print-actions">
           <div class="print-status" id="printStatus" role="status" aria-live="polite" data-tone="muted">Preparando documento oficial…</div>
           <div class="print-action-buttons">
@@ -5954,22 +6146,29 @@ function renderHistorialDetalle(){
           </div>
         </div>
 
-        <div class="print-head print-head--report-mode">
-          <div class="print-brand">
-            <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
-            <span>POKERITO</span>
+        <div class="pdf-document-stage">
+          <div class="pdf-document-sheet">
+            <div class="pdf-document-head">
+              <div class="print-head print-head--report-mode pdf-document-brandbar">
+                <div class="print-brand">
+                  <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
+                  <span>POKERITO</span>
+                </div>
+                <div class="pdf-document-chip">PDF oficial</div>
+              </div>
+
+              <div class="print-reader-head pdf-document-reader-head">
+                <div class="print-reader-kicker">${escapeHtml(meta.kicker)}</div>
+                <div class="print-reader-title">${escapeHtml(meta.sessionTitle)} <span class="badge">${escapeHtml(meta.sessionDateLabel)}</span></div>
+                <div class="print-reader-sub">${escapeHtml(meta.lead)}</div>
+              </div>
+
+              ${buildReportModePanelMarkup(meta, 'Exportación PDF')}
+            </div>
+
+            <div class="pdf-document-content print-content">${content}</div>
           </div>
         </div>
-
-        <div class="print-reader-head">
-          <div class="print-reader-kicker">${escapeHtml(meta.kicker)}</div>
-          <div class="print-reader-title">${escapeHtml(meta.sessionTitle)} <span class="badge">${escapeHtml(meta.sessionDateLabel)}</span></div>
-          <div class="print-reader-sub">${escapeHtml(meta.lead)}</div>
-        </div>
-
-        ${buildReportModePanelMarkup(meta, 'Exportación PDF')}
-
-        <div class="print-content">${content}</div>
       </section>
     `);
   }
@@ -5977,7 +6176,7 @@ function renderHistorialDetalle(){
 
   function buildScreenReportReaderRoot(model){
     const meta = getReportModeMeta(model, 'screen');
-    const content = buildPdfDocumentSections(model);
+    const content = buildPdfDocumentSections(model, 'screen');
     return el(`
       <section class="screen screen--historial-detail screen--report-reader" aria-label="Reporte premium en pantalla">
         <div class="mesa-head report-reader-head">
@@ -5994,7 +6193,7 @@ function renderHistorialDetalle(){
 
         ${buildReportModePanelMarkup(meta, 'Lectura en pantalla')}
 
-        <div class="report-reader-shell print-screen" aria-label="Reporte premium continuo">
+        <div class="report-reader-shell" aria-label="Reporte premium continuo">
           <div class="report-reader-brandbar">
             <div class="print-brand">
               <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
@@ -6003,7 +6202,7 @@ function renderHistorialDetalle(){
             <div class="report-reader-chip">Modo pantalla</div>
           </div>
 
-          <div class="print-content">${content}</div>
+          <div class="report-reader-content print-content">${content}</div>
         </div>
       </section>
     `);

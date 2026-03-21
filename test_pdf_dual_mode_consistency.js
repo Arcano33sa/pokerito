@@ -3,7 +3,7 @@ const vm = require('vm');
 const path = require('path');
 let code = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
 
-code = code.replace(/\}\)\(\);\s*$/, `window.__TEST_HOOKS = {\n  buildPdfDocumentModel, getReportModeMeta,\n  getStore: () => store,\n  setStore: (next) => { store = normalizeStoreObject(next).store; persistStore(store); return store; },\n};})();`);
+code = code.replace(/\}\)\(\);\s*$/, `window.__TEST_HOOKS = {\n  buildPdfDocumentModel, buildPdfDocumentSections, getReportModeMeta,\n  getStore: () => store,\n  setStore: (next) => { store = normalizeStoreObject(next).store; persistStore(store); return store; },\n};})();`);
 
 function makeEl(tag='div'){
   return {
@@ -73,6 +73,8 @@ const target = hooks.getStore().sessions[0];
 const model = hooks.buildPdfDocumentModel(target);
 const screenMeta = hooks.getReportModeMeta(model, 'screen');
 const pdfMeta = hooks.getReportModeMeta(model, 'pdf');
+const screenHtml = String(hooks.buildPdfDocumentSections(model, 'screen'));
+const pdfHtml = String(hooks.buildPdfDocumentSections(model, 'pdf'));
 
 if (screenMeta.sessionTitle !== pdfMeta.sessionTitle) throw new Error('screen/pdf title mismatch');
 if (screenMeta.sessionDateLabel !== pdfMeta.sessionDateLabel) throw new Error('screen/pdf date mismatch');
@@ -84,3 +86,7 @@ if (!/Exportar PDF oficial/.test(code)) throw new Error('screen CTA should clari
 if (!/const printTitle = `\$\{pad3\(seqNum\)\}_Pokerito_\$\{ddmmyyyy\}`;/.test(code)) throw new Error('print title should use stable filename-friendly pattern');
 
 console.log('test-pdf-dual-mode-consistency=ok');
+
+if (screenHtml === pdfHtml) throw new Error('screen/pdf document trees should no longer be identical');
+if (!screenHtml.includes('report-reader-group')) throw new Error('screen document should use dedicated screen group shell');
+if (!pdfHtml.includes('pdf-document-group')) throw new Error('pdf document should use dedicated pdf group shell');
