@@ -10,8 +10,6 @@ for (const snippet of [
   "const PDF_PRINT_INNER_WIDTH_MM = 337;",
   "const PDF_PRINT_INNER_HEIGHT_MM = 198;",
   "async function prepareSemanticPdfPagination(root, signal){",
-  "setPrintStatus(root, 'Ordenando cortes editoriales…', 'loading');",
-  "await prepareSemanticPdfPagination(root, signal);",
 ]) {
   if (!app.includes(snippet)) throw new Error(`missing semantic pagination snippet: ${snippet}`);
 }

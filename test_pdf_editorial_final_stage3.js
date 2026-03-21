@@ -6,14 +6,15 @@ const css = fs.readFileSync(path.join(__dirname, 'styles.css'), 'utf8');
 const sw = fs.readFileSync(path.join(__dirname, 'sw.js'), 'utf8');
 
 for (const snippet of [
-  "const APP_BUILD = 'pdf-editorial-final-stage3';",
-  "const APP_CACHE_NAME = 'pokerito-v0.1.51-pdf-editorial-final-stage3';",
-  "const SW_URL = './sw.js?v=0.1.51-pdf-editorial-final-stage3';",
+  /const APP_BUILD = '(?:pdf-page-budget-stage2|pdf-continuity-stage3-4|pdf-route2-final-stage4)';/,
+  /const APP_CACHE_NAME = 'pokerito-v0\.1\.51-(?:pdf-page-budget-stage2|pdf-continuity-stage3-4|pdf-route2-final-stage4)';/,
+  /const SW_URL = '\.\/sw\.js\?v=0\.1\.51-(?:pdf-page-budget-stage2|pdf-continuity-stage3-4|pdf-route2-final-stage4)';/,
   "const pageBuffer = Math.max(10, Math.round(pageHeight * 0.028));",
   "maxAtomicHeight: pageHeight * 0.93",
   "function buildPdfContinuationLabel(parts, currentIndex, total){",
   "print-section--continuation",
 ]) {
+  if (snippet instanceof RegExp){ if (!snippet.test(code) && !snippet.test(css) && !snippet.test(sw)) throw new Error(`missing stage3 final snippet: ${snippet}`); continue; }
   if (!code.includes(snippet) && !css.includes(snippet) && !sw.includes(snippet)) throw new Error(`missing stage3 final snippet: ${snippet}`);
 }
 for (const snippet of [

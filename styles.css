@@ -1682,6 +1682,148 @@ body.print-mode .print-root{
   display: grid;
   gap: 14px;
 }
+.pdf-page-stage{
+  display: grid;
+  gap: 14px;
+}
+.pdf-document-flow-sandbox,
+.pdf-paging-lab{
+  position: absolute;
+  left: -100000px;
+  top: 0;
+  width: 1120px;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+}
+.pdf-document-flow{
+  width: 1120px;
+}
+.pdf-page{
+  width: min(100%, 1120px);
+  margin: 0 auto;
+}
+.pdf-page-frame{
+  aspect-ratio: 356 / 216;
+  border: 1px solid rgba(0,0,0,0.14);
+  border-radius: 28px;
+  background: #fff;
+  box-shadow: 0 18px 44px rgba(0,0,0,0.08);
+  padding: 15px 18px 18px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 9px;
+}
+.pdf-page-header{
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+.pdf-page-brand{
+  display: grid;
+  gap: 4px;
+}
+.pdf-page-kicker{
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(0,0,0,0.54);
+}
+.pdf-page-session-meta{
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.pdf-page-session-title{
+  font-size: 17px;
+  font-weight: 950;
+  line-height: 1.12;
+}
+.pdf-page-session-ref{
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(0,0,0,0.62);
+}
+.pdf-page-counter{
+  justify-self: end;
+  font-size: 12px;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+  color: rgba(0,0,0,0.72);
+}
+.pdf-page-body{
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  overflow: hidden;
+}
+.pdf-page-footer{
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0,0,0,0.08);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(0,0,0,0.54);
+}
+.pdf-page-footer-center{
+  justify-self: center;
+}
+.pdf-page-footer-right{
+  justify-self: end;
+  font-variant-numeric: tabular-nums;
+}
+.pdf-page-unit{
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.pdf-page-unit--document-head .pdf-document-head{
+  gap: 10px;
+}
+.pdf-page-unit--group-opening{
+  gap: 8px;
+}
+.pdf-page-block-section{
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+/* Etapa 4/4 — cierre final de la Ruta 2: se compactan remates y continuaciones
+   para recuperar aire útil, mantener uniformidad y bajar la sensación de parche. */
+.pdf-page-block-section--merged{
+  gap: 8px;
+}
+.pdf-page-block-section--merged .print-section-body{
+  gap: 8px;
+}
+.pdf-page-unit[data-pdf-block-kind="section-family"] .print-section-head{
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,0.03);
+}
+.pdf-page-unit[data-pdf-block-kind="section-family"] .print-note--continuation{
+  background: linear-gradient(180deg, rgba(0,0,0,0.024), rgba(0,0,0,0.012));
+}
+.print-section--paged-continuation .print-section-head{
+  background: linear-gradient(180deg, rgba(0,0,0,0.04), rgba(0,0,0,0.02));
+  border-color: rgba(0,0,0,0.08);
+}
+.print-section--paged-continuation .print-section-title::after{
+  content: " · continuación";
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(0,0,0,0.48);
+}
 .pdf-document-sheet{
   border: 1px solid rgba(0,0,0,0.14);
   border-radius: 28px;
@@ -1731,6 +1873,20 @@ body.print-mode .print-root{
 }
 .pdf-document-group-head{
   border-radius: 18px;
+}
+.pdf-page .pdf-document-head{
+  gap: 10px;
+}
+.pdf-page .pdf-document-brandbar{
+  margin: 0;
+}
+.pdf-page .pdf-document-content{
+  gap: 8px;
+}
+.pdf-page .print-opening-top{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
 }
 .pdf-document-shell .print-opening-top{
   display: grid;
@@ -3135,7 +3291,9 @@ body.print-mode .print-root{
   /* Etapa 2/2 — paginación semántica/editorial: el navegador ya no decide solo dónde mutilar bloques. */
   /* Etapa 1/3 — contenedor PDF dedicado: el render oficial ya no nace pegado a la vista corrida. */
   /* Etapa 2/3 — fragmentación editorial real: los bloques largos ahora continúan en subtramos imprimibles dignos. */
-  @page { size: 356mm 216mm; margin: 7.5mm 9.5mm 10.5mm; }
+  /* Etapa 1/4 — páginas DOM reales: el PDF oficial ya se arma como páginas físicas antes de imprimir. */
+  /* Etapa 2/4 — motor de presupuesto de página: Pokerito reparte bloques por altura útil real antes de imprimir. */
+  @page { size: 356mm 216mm; margin: 0; }
 
   html, body{ height: auto !important; overflow: visible !important; }
   body{ background: #fff !important; color: #111 !important; }
@@ -3144,7 +3302,14 @@ body.print-mode .print-root{
   .app-header, .app-main{ display: none !important; }
   .print-screen{ max-width: none; padding: 0 !important; margin: 0 !important; }
   .pdf-document-shell{ max-width: none; padding: 0 !important; margin: 0 !important; }
-  .pdf-document-stage{ gap: 0; }
+  .pdf-document-flow-sandbox, .pdf-paging-lab{ display: none !important; }
+  .pdf-document-stage, .pdf-page-stage{ gap: 0 !important; }
+  .pdf-page{ width: 356mm !important; margin: 0 !important; break-after: page; page-break-after: always; }
+  .pdf-page:last-child{ break-after: auto; page-break-after: auto; }
+  .pdf-page-frame{ aspect-ratio: auto !important; min-height: 216mm !important; height: 216mm !important; border: none !important; border-radius: 0 !important; box-shadow: none !important; padding: 7.5mm 9.5mm 10.5mm !important; gap: 8px; }
+  .pdf-page-header{ gap: 10px; padding-bottom: 6px; }
+  .pdf-page-body{ gap: 8px; overflow: hidden !important; }
+  .pdf-page-footer{ padding-top: 6px; }
   .pdf-document-sheet{ padding: 0 !important; border: none !important; border-radius: 0 !important; box-shadow: none !important; gap: 8px; }
   .pdf-document-head{ gap: 8px; }
   .pdf-document-brandbar{ margin: 0 0 6px !important; }
