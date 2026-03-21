@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.44';
-  const APP_BUILD = 'screen-report-premium-stage2';
-  const APP_CACHE_NAME = 'pokerito-v0.1.44-screen-report-premium-stage2';
-  const SW_URL = './sw.js?v=0.1.44-screen-report-premium-stage2';
+  const APP_VERSION = '0.1.45';
+  const APP_BUILD = 'pdf-editorial-final-stage2';
+  const APP_CACHE_NAME = 'pokerito-v0.1.45-pdf-editorial-final-stage2';
+  const SW_URL = './sw.js?v=0.1.45-pdf-editorial-final-stage2';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -3470,6 +3470,9 @@ function renderHistorialDetalle(){
   const PDF_GLOBAL_RANKING_CRITERION = 'Orden oficial: ganancia neta global, ROI global, victorias y sesiones jugadas.';
   const ROI_RECORD_MIN_GAMES = 3;
   const HISTORICAL_IMPACT_VERSION = 5;
+  const PDF_RESULTS_ROWS_PER_SECTION = 8;
+  const PDF_IMPACT_CARDS_PER_SECTION = 2;
+  const PDF_RANK_CARDS_PER_SECTION = 2;
 
   const PDF_EDITORIAL_GROUPS = Object.freeze({
     OPENING: Object.freeze({ key: 'opening-premium', label: 'Apertura premium', showHeader: false }),
@@ -3544,6 +3547,18 @@ function renderHistorialDetalle(){
     const seqNum = (Number.isFinite(session && session.pdfSeq) && Math.floor(session.pdfSeq) >= 1) ? Math.floor(session.pdfSeq) : 0;
     return seqNum ? `Sesión ${pad3(seqNum)}` : 'Sesión sin consecutivo';
   }
+
+  function buildPdfContinuationNote(opts){
+    const label = safeTrim(opts && opts.label) || 'Continuación';
+    const copy = safeTrim(opts && opts.copy);
+    return `
+      <div class="print-note print-note--continuation">
+        <span class="print-note-pill">${escapeHtml(label)}</span>
+        ${copy ? `<span class="print-note-copy">${escapeHtml(copy)}</span>` : ''}
+      </div>
+    `;
+  }
+
 
   function compareGlobalRanking(a, b){
     const dn = numOrZero(b && b.netTotal) - numOrZero(a && a.netTotal);
@@ -4015,6 +4030,12 @@ function renderHistorialDetalle(){
       const groupItems = group.keys.map(key => byKey.get(key)).filter(Boolean);
       const noteParts = [];
       if (idx === 0) noteParts.push(buildPdfRecordsOverview(rec));
+      if (idx > 0){
+        noteParts.push(buildPdfContinuationNote({
+          label: `Continuación ${idx + 1} de ${groups.length}`,
+          copy: 'El bloque de récords sigue corrido dentro del mismo cierre histórico, sin abrir páginas nuevas por capricho.',
+        }));
+      }
       noteParts.push(`<div class="print-note print-record-group-intro">${escapeHtml(group.intro)}</div>`);
       if (idx === groups.length - 1){
         noteParts.push(`<div class="print-record-seal">Cierre histórico del documento: ranking global y récords globales quedan congelados con el contexto vigente de esta exportación.</div>`);
@@ -4027,7 +4048,7 @@ function renderHistorialDetalle(){
         ariaLabel: `Tabla de ${group.subtitle.toLowerCase()}`,
         noteHtml: noteParts.join(''),
         className: idx === 0 ? 'print-section--records-major' : 'print-section--records-cont',
-        breakBefore: idx > 0,
+        breakBefore: false,
       });
     }).join('');
   }
@@ -4049,7 +4070,7 @@ function renderHistorialDetalle(){
       rankCounts.set(key, (rankCounts.get(key) || 0) + 1);
     });
 
-    const chunks = chunkList(list, 3);
+    const chunks = chunkList(list, PDF_RANK_CARDS_PER_SECTION);
     return chunks.map((chunk, idx) => {
       const cards = chunk.map(r => {
         const net = numOrZero(r && r.netTotal);
@@ -4128,12 +4149,20 @@ function renderHistorialDetalle(){
         `;
       }).join('');
 
+      const continuation = idx === 0
+        ? ''
+        : buildPdfContinuationNote({
+            label: `Continuación ${idx + 1} de ${chunks.length}`,
+            copy: 'Se mantiene el mismo orden oficial del ranking global y la misma lectura comparativa del archivo.',
+          });
+
       return buildPdfSection({
         title: 'Ranking global',
-        subtitle: idx === 0 ? 'Fotografía histórica completa al momento del cierre.' : `Continuación ${idx + 1} de ${chunks.length}`,
-        body: `${idx === 0 ? buildPdfRankingOverview(list) : ''}<div class="print-rank-list">${cards}</div>`,
+        subtitle: idx === 0
+          ? 'Fotografía histórica completa al momento del cierre.'
+          : `Tramo ${idx + 1} de ${chunks.length} · mismo orden oficial del ranking global`,
+        body: `${idx === 0 ? buildPdfRankingOverview(list) : continuation}<div class="print-rank-list">${cards}</div>`,
         className: idx === 0 ? 'print-section--ranking-major' : 'print-section--ranking-cont',
-        breakBefore: idx > 0,
         avoidBreak: false,
       });
     }).join('');
@@ -4427,95 +4456,112 @@ function renderHistorialDetalle(){
     const topEntries = players.filter(item => (Array.isArray(item && item.milestoneLabels) ? item.milestoneLabels : []).some(label => /Top\s*[35]/i.test(String(label || '')))).length;
     const noExtraMilestone = players.filter(item => !(Array.isArray(item && item.recordLabels) && item.recordLabels.length) && !(Array.isArray(item && item.milestoneLabels) && item.milestoneLabels.length)).length;
     const summaryLead = buildPdfImpactSummaryLead(summary, players);
-    const chunks = chunkList(players, 2);
-    return chunks.map((chunk, idx) => {
-      const summaryHtml = idx === 0 ? `
-        <div class="print-impact-summary">
-          <div class="print-impact-summary-top">
-            <div class="print-impact-summary-kicker">Puente entre la noche y la historia</div>
-            <div class="print-impact-summary-lead">${escapeHtml(summaryLead)}</div>
-            <div class="print-impact-summary-copy">Se compara el tablero histórico justo antes del cierre contra el tablero que quedó inmediatamente después. Así el previo → nuevo se mantiene limpio, incluso con sesiones locales, importadas o legacy.</div>
-          </div>
-          <div class="print-impact-summary-grid">
-            <article class="print-impact-summary-card">
-              <div class="k">Participantes analizados</div>
-              <div class="v">${escapeHtml(String(numOrZero(summary.participants)))}</div>
-              <div class="s">Lectura histórica individual de toda la mesa cerrada.</div>
-            </article>
-            <article class="print-impact-summary-card">
-              <div class="k">Balance de movimiento</div>
-              <div class="v">${escapeHtml(String(numOrZero(summary.movedUp)))} ↑ · ${escapeHtml(String(numOrZero(summary.movedDown)))} ↓</div>
-              <div class="s">${escapeHtml(String(numOrZero(summary.debuts)))} debuts · ${escapeHtml(String(numOrZero(summary.unchanged)))} sin giro fuerte.</div>
-            </article>
-            <article class="print-impact-summary-card">
-              <div class="k">Récords y aperturas</div>
-              <div class="v">${escapeHtml(String(numOrZero(summary.recordLabelsTotal)))}</div>
-              <div class="s">${escapeHtml(String(numOrZero(summary.recordBreakers)))} jugadores activaron récord nuevo.</div>
-            </article>
-            <article class="print-impact-summary-card">
-              <div class="k">Otros giros relevantes</div>
-              <div class="v">${escapeHtml(String(topEntries))} entrada${topEntries === 1 ? '' : 's'}</div>
-              <div class="s">Top 3 / Top 5 tocados · ${escapeHtml(String(noExtraMilestone))} sin hito extra.</div>
-            </article>
-          </div>
+    const summaryHtml = `
+      <div class="print-impact-summary">
+        <div class="print-impact-summary-top">
+          <div class="print-impact-summary-kicker">Puente entre la noche y la historia</div>
+          <div class="print-impact-summary-lead">${escapeHtml(summaryLead)}</div>
+          <div class="print-impact-summary-copy">Se compara el tablero histórico justo antes del cierre contra el tablero que quedó inmediatamente después. Así el previo → nuevo se mantiene limpio, incluso con sesiones locales, importadas o legacy.</div>
         </div>
-      ` : '';
-
-      const cards = chunk.map(item => {
-        const sessionNet = numOrZero(item.sessionNet);
-        const sessionNetClass = Math.abs(sessionNet) < 0.0001 ? 'ok' : (sessionNet > 0 ? 'pos' : 'neg');
-        const deltaNetClass = Math.abs(numOrZero(item.netDelta)) < 0.0001 ? 'ok' : (numOrZero(item.netDelta) > 0 ? 'pos' : 'neg');
-        const deltaRoiClass = Math.abs(numOrZero(item.roiDelta)) < 0.0001 ? 'ok' : (numOrZero(item.roiDelta) > 0 ? 'pos' : 'neg');
-        const tags = [];
-        (Array.isArray(item.recordLabels) ? item.recordLabels : []).forEach(label => tags.push({ tone: 'gold', text: `Récord: ${label}` }));
-        (Array.isArray(item.milestoneLabels) ? item.milestoneLabels : []).forEach(label => tags.push({ tone: 'blue', text: label }));
-        if (!tags.length) tags.push({ tone: 'muted', text: 'Sin hito extra en esta sesión' });
-        const tagsHtml = tags.map(tag => `<span class="print-impact-tag ${escapeAttr(tag.tone)}">${escapeHtml(tag.text)}</span>`).join('');
-        return `
-          <article class="print-impact-card pdf-avoid-break">
-            <div class="print-impact-top">
-              <div class="print-impact-who">
-                <div class="print-impact-name">${escapeHtml(String(item.display || 'Sin nombre'))}</div>
-                <div class="print-impact-sub">Terminó ${escapeHtml(String(numOrZero(item.sessionPos) || '—'))}° en la sesión · Resultado <span class="net ${sessionNetClass}">${escapeHtml(formatMoney(sessionNet))}</span></div>
-              </div>
-              <div class="print-impact-move ${escapeAttr(item.moveMeta && item.moveMeta.tone || 'flat')}">
-                <div class="print-impact-move-k">Movimiento histórico</div>
-                <div class="print-impact-move-v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</div>
-                <div class="print-impact-move-s">${escapeHtml(item.moveMeta && item.moveMeta.label || 'Sin cambio')}</div>
-              </div>
-            </div>
-            <div class="print-impact-grid">
-              <div class="print-impact-stat">
-                <span class="k">Puesto global</span>
-                <span class="v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</span>
-                <span class="sub">${escapeHtml(item.moveMeta && item.moveMeta.detail || 'Sin variación visible.')}</span>
-              </div>
-              <div class="print-impact-stat">
-                <span class="k">Neto global</span>
-                <span class="v">${escapeHtml(formatMoney(numOrZero(item.netBefore)))} → ${escapeHtml(formatMoney(numOrZero(item.netAfter)))}</span>
-                <span class="sub delta ${deltaNetClass}">${escapeHtml(formatSignedMoney(numOrZero(item.netDelta)))}</span>
-              </div>
-              <div class="print-impact-stat">
-                <span class="k">ROI global</span>
-                <span class="v">${escapeHtml(formatPercent(numOrZero(item.roiBefore)))} → ${escapeHtml(formatPercent(numOrZero(item.roiAfter)))}</span>
-                <span class="sub delta ${deltaRoiClass}">${escapeHtml(formatSignedPercent(numOrZero(item.roiDelta)))}</span>
-              </div>
-            </div>
-            <div class="print-impact-narrative"><span class="label">Lectura histórica:</span> ${escapeHtml(item.narrative || 'La sesión actualizó sus acumulados.')}</div>
-            <div class="print-impact-tags">${tagsHtml}</div>
+        <div class="print-impact-summary-grid">
+          <article class="print-impact-summary-card">
+            <div class="k">Participantes analizados</div>
+            <div class="v">${escapeHtml(String(numOrZero(summary.participants)))}</div>
+            <div class="s">Lectura histórica individual de toda la mesa cerrada.</div>
           </article>
-        `;
-      }).join('');
+          <article class="print-impact-summary-card">
+            <div class="k">Balance de movimiento</div>
+            <div class="v">${escapeHtml(String(numOrZero(summary.movedUp)))} ↑ · ${escapeHtml(String(numOrZero(summary.movedDown)))} ↓</div>
+            <div class="s">${escapeHtml(String(numOrZero(summary.debuts)))} debuts · ${escapeHtml(String(numOrZero(summary.unchanged)))} sin giro fuerte.</div>
+          </article>
+          <article class="print-impact-summary-card">
+            <div class="k">Récords y aperturas</div>
+            <div class="v">${escapeHtml(String(numOrZero(summary.recordLabelsTotal)))}</div>
+            <div class="s">${escapeHtml(String(numOrZero(summary.recordBreakers)))} jugadores activaron récord nuevo.</div>
+          </article>
+          <article class="print-impact-summary-card">
+            <div class="k">Otros giros relevantes</div>
+            <div class="v">${escapeHtml(String(topEntries))} entrada${topEntries === 1 ? '' : 's'}</div>
+            <div class="s">Top 3 / Top 5 tocados · ${escapeHtml(String(noExtraMilestone))} sin hito extra.</div>
+          </article>
+        </div>
+      </div>
+    `;
 
-      return buildPdfSection({
+    const renderImpactCard = (item) => {
+      const sessionNet = numOrZero(item.sessionNet);
+      const sessionNetClass = Math.abs(sessionNet) < 0.0001 ? 'ok' : (sessionNet > 0 ? 'pos' : 'neg');
+      const deltaNetClass = Math.abs(numOrZero(item.netDelta)) < 0.0001 ? 'ok' : (numOrZero(item.netDelta) > 0 ? 'pos' : 'neg');
+      const deltaRoiClass = Math.abs(numOrZero(item.roiDelta)) < 0.0001 ? 'ok' : (numOrZero(item.roiDelta) > 0 ? 'pos' : 'neg');
+      const tags = [];
+      (Array.isArray(item.recordLabels) ? item.recordLabels : []).forEach(label => tags.push({ tone: 'gold', text: `Récord: ${label}` }));
+      (Array.isArray(item.milestoneLabels) ? item.milestoneLabels : []).forEach(label => tags.push({ tone: 'blue', text: label }));
+      if (!tags.length) tags.push({ tone: 'muted', text: 'Sin hito extra en esta sesión' });
+      const tagsHtml = tags.map(tag => `<span class="print-impact-tag ${escapeAttr(tag.tone)}">${escapeHtml(tag.text)}</span>`).join('');
+      return `
+        <article class="print-impact-card pdf-avoid-break">
+          <div class="print-impact-top">
+            <div class="print-impact-who">
+              <div class="print-impact-name">${escapeHtml(String(item.display || 'Sin nombre'))}</div>
+              <div class="print-impact-sub">Terminó ${escapeHtml(String(numOrZero(item.sessionPos) || '—'))}° en la sesión · Resultado <span class="net ${sessionNetClass}">${escapeHtml(formatMoney(sessionNet))}</span></div>
+            </div>
+            <div class="print-impact-move ${escapeAttr(item.moveMeta && item.moveMeta.tone || 'flat')}">
+              <div class="print-impact-move-k">Movimiento histórico</div>
+              <div class="print-impact-move-v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</div>
+              <div class="print-impact-move-s">${escapeHtml(item.moveMeta && item.moveMeta.label || 'Sin cambio')}</div>
+            </div>
+          </div>
+          <div class="print-impact-grid">
+            <div class="print-impact-stat">
+              <span class="k">Puesto global</span>
+              <span class="v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</span>
+              <span class="sub">${escapeHtml(item.moveMeta && item.moveMeta.detail || 'Sin variación visible.')}</span>
+            </div>
+            <div class="print-impact-stat">
+              <span class="k">Neto global</span>
+              <span class="v">${escapeHtml(formatMoney(numOrZero(item.netBefore)))} → ${escapeHtml(formatMoney(numOrZero(item.netAfter)))}</span>
+              <span class="sub delta ${deltaNetClass}">${escapeHtml(formatSignedMoney(numOrZero(item.netDelta)))}</span>
+            </div>
+            <div class="print-impact-stat">
+              <span class="k">ROI global</span>
+              <span class="v">${escapeHtml(formatPercent(numOrZero(item.roiBefore)))} → ${escapeHtml(formatPercent(numOrZero(item.roiAfter)))}</span>
+              <span class="sub delta ${deltaRoiClass}">${escapeHtml(formatSignedPercent(numOrZero(item.roiDelta)))}</span>
+            </div>
+          </div>
+          <div class="print-impact-narrative"><span class="label">Lectura histórica:</span> ${escapeHtml(item.narrative || 'La sesión actualizó sus acumulados.')}</div>
+          <div class="print-impact-tags">${tagsHtml}</div>
+        </article>
+      `;
+    };
+
+    const sections = [buildPdfSection({
+      title: 'Impacto de esta Sesión',
+      subtitle: 'Qué cambió en la historia general de la mesa gracias a este cierre.',
+      body: summaryHtml,
+      className: 'print-section--impact-major',
+      avoidBreak: true,
+    })];
+
+    const impactChunks = chunkList(players, PDF_IMPACT_CARDS_PER_SECTION);
+    impactChunks.forEach((chunk, idx) => {
+      const continuation = idx === 0
+        ? '<div class="print-note">Cada ficha histórica conserva el mismo orden editorial del reporte y agrupa a los jugadores en tramos para que la lectura impresa respire mejor.</div>'
+        : buildPdfContinuationNote({
+            label: `Continuación ${idx + 1} de ${impactChunks.length}`,
+            copy: 'Sigue la misma lectura histórica individual, sin cambiar narrativa ni criterio comparativo.',
+          });
+      sections.push(buildPdfSection({
         title: 'Impacto de esta Sesión',
-        subtitle: idx === 0 ? 'Qué cambió en la historia general de la mesa gracias a este cierre.' : `Continuación ${idx + 1} de ${chunks.length}`,
-        body: `${summaryHtml}<div class="print-impact-list">${cards}</div>`,
-        className: idx === 0 ? 'print-section--impact-major' : 'print-section--impact-cont',
-        breakBefore: idx > 0,
+        subtitle: impactChunks.length > 1
+          ? `Tramo ${idx + 1} de ${impactChunks.length} · lectura histórica individual`
+          : 'Lectura histórica individual de toda la mesa cerrada.',
+        body: `${continuation}<div class="print-impact-list">${chunk.map(renderImpactCard).join('')}</div>`,
+        className: 'print-section--impact-cont',
         avoidBreak: false,
-      });
-    }).join('');
+      }));
+    });
+
+    return sections.join('');
   }
 
   function getPdfGlobalBaseData(session, analytics){
@@ -4808,7 +4854,7 @@ function renderHistorialDetalle(){
       subtitle: 'La noche en una sola mirada: contexto, balance y piezas clave antes del podio.',
       body,
       className: 'print-section--session-executive',
-      avoidBreak: false,
+      avoidBreak: true,
     });
   }
 
@@ -4895,7 +4941,7 @@ function renderHistorialDetalle(){
       subtitle: 'Escalera oficial del cierre ordenada por neto final.',
       body,
       className: 'print-section--session-podium',
-      avoidBreak: false,
+      avoidBreak: true,
     });
   }
 
@@ -4928,7 +4974,7 @@ function renderHistorialDetalle(){
 
   function buildPdfPlayerDetailSections(playerRows){
     const rows = Array.isArray(playerRows) ? playerRows : [];
-    const chunks = chunkList(rows, 12);
+    const chunks = chunkList(rows, PDF_RESULTS_ROWS_PER_SECTION);
     const renderTable = (chunk) => {
       if (!chunk.length){
         return `
@@ -5006,11 +5052,14 @@ function renderHistorialDetalle(){
 
     return chunks.map((chunk, idx) => buildPdfSection({
       title: 'Resultados completos de la sesión',
-      subtitle: chunks.length > 1 ? `Bloque ${idx + 1} de ${chunks.length} · ordenado por neto final` : 'Detalle individual completo, ordenado por neto final.',
-      body: `${idx === 0 ? '<div class="print-note">Se conserva el detalle completo por jugador y se presenta después del resumen ejecutivo y del podio para contar mejor la noche.</div>' : ''}${renderTable(chunk)}`,
+      subtitle: chunks.length > 1
+        ? `Tramo ${idx + 1} de ${chunks.length} · detalle completo ordenado por neto final`
+        : 'Detalle individual completo, ordenado por neto final.',
+      body: `${idx === 0
+        ? '<div class="print-note">Se conserva el detalle completo por jugador y se presenta después del resumen ejecutivo y del podio para contar mejor la noche.</div>'
+        : buildPdfContinuationNote({ label: `Continuación ${idx + 1} de ${chunks.length}`, copy: 'Se mantiene el mismo orden por neto final y la misma tabla oficial del cierre.' })}${renderTable(chunk)}`,
       className: idx === 0 ? 'print-section--session-detail' : 'print-section--session-detail-cont',
-      breakBefore: idx > 0,
-      avoidBreak: false,
+      avoidBreak: true,
     })).join('');
   }
 
@@ -5148,9 +5197,9 @@ function renderHistorialDetalle(){
     return el(`
       <section class="print-screen" aria-label="Reporte PDF">
         <div class="print-actions">
-          <div class="print-status" id="printStatus" role="status" aria-live="polite" data-tone="muted">Preparando documento…</div>
+          <div class="print-status" id="printStatus" role="status" aria-live="polite" data-tone="muted">Preparando documento oficial…</div>
           <div class="print-action-buttons">
-            <button class="btn primary" type="button" id="printBtn" disabled>Imprimir / Guardar PDF</button>
+            <button class="btn primary" type="button" id="printBtn" disabled>Imprimir / Guardar PDF oficial</button>
           </div>
         </div>
 
@@ -5222,7 +5271,7 @@ function renderHistorialDetalle(){
       if (printInFlight) return printInFlight;
       printInFlight = (async () => {
         try{
-          setPrintStatus(root, 'Preparando documento…', 'loading');
+          setPrintStatus(root, 'Preparando documento oficial…', 'loading');
           if (printBtn) printBtn.disabled = true;
           await waitForPrintReady(root, signal);
           if (isStalePrintRender()) return false;

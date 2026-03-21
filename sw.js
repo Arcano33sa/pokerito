@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.44 screen-report-premium-stage2 */
-const CACHE_NAME = 'pokerito-v0.1.44-screen-report-premium-stage2';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.45 pdf-editorial-final-stage2 */
+const CACHE_NAME = 'pokerito-v0.1.45-pdf-editorial-final-stage2';
 const CORE_ASSETS = [
   './',
   './index.html',
