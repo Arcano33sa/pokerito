@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.47';
-  const APP_BUILD = 'admin-update-ux-stage3';
-  const APP_CACHE_NAME = 'pokerito-v0.1.47-admin-update-ux-stage3';
-  const SW_URL = './sw.js?v=0.1.47-admin-update-ux-stage3';
+  const APP_VERSION = '0.1.49';
+  const APP_BUILD = 'pdf-semantic-pagination-stage2';
+  const APP_CACHE_NAME = 'pokerito-v0.1.49-pdf-semantic-pagination-stage2';
+  const SW_URL = './sw.js?v=0.1.49-pdf-semantic-pagination-stage2';
   const UPDATE_UI_KEY = 'pokerito_update_ui';
   const UPDATE_BOOT_KEY = 'pokerito_update_boot';
   const UPDATE_ACTIVATION_TIMEOUT_MS = 8000;
@@ -3336,6 +3336,181 @@ function setPlayerActive(id, active){
     await nextPaint(signal);
   }
 
+  const PDF_PRINT_INNER_WIDTH_MM = 337;
+  const PDF_PRINT_INNER_HEIGHT_MM = 198;
+  const PDF_PRINT_HEIGHT_RATIO = PDF_PRINT_INNER_HEIGHT_MM / PDF_PRINT_INNER_WIDTH_MM;
+
+  function clearSemanticPdfPagination(root){
+    const target = root || $printRoot;
+    if (!target || !target.querySelectorAll) return;
+    Array.from(target.querySelectorAll('.pdf-break-before-semantic')).forEach(node => {
+      try{ node.classList.remove('pdf-break-before-semantic'); }catch(e){}
+      try{
+        if (node.dataset && safeTrim(node.dataset.pdfBreakReason)) delete node.dataset.pdfBreakReason;
+      }catch(e){}
+      try{
+        if (node.classList && node.classList.contains('pdf-break-before') && (!node.dataset || !safeTrim(node.dataset.pdfBreakSticky))) node.classList.remove('pdf-break-before');
+      }catch(e){}
+    });
+  }
+
+  function markSemanticPdfBreak(node, reason){
+    if (!node || !node.classList) return false;
+    if (node.classList.contains('pdf-break-before-semantic')) return false;
+    try{ node.classList.add('pdf-break-before', 'pdf-break-before-semantic'); }catch(e){ return false; }
+    try{
+      if (node.dataset){
+        node.dataset.pdfBreakReason = safeTrim(reason) || 'semantic';
+      }
+    }catch(e){}
+    return true;
+  }
+
+  function getSemanticPrintMetrics(root){
+    const target = root || $printRoot;
+    if (!target || !target.querySelector) return null;
+    const screen = target.querySelector('.print-screen') || target;
+    const content = target.querySelector('.print-content') || screen;
+    if (!screen || !content || !screen.getBoundingClientRect || !content.getBoundingClientRect) return null;
+    const contentRect = content.getBoundingClientRect();
+    const screenRect = screen.getBoundingClientRect();
+    const width = Math.max(0, numOrZero(contentRect.width) || numOrZero(screenRect.width));
+    if (width <= 0) return null;
+    const pageHeight = Math.max(320, Math.round(width * PDF_PRINT_HEIGHT_RATIO));
+    const pageBuffer = Math.max(12, Math.round(pageHeight * 0.035));
+    return {
+      target,
+      screen,
+      rootTop: numOrZero(screenRect.top),
+      pageHeight,
+      pageBuffer,
+      maxAtomicHeight: pageHeight * 0.90,
+    };
+  }
+
+  function getRelativeRect(node, metrics){
+    if (!node || !metrics || !node.getBoundingClientRect) return null;
+    const rect = node.getBoundingClientRect();
+    const top = numOrZero(rect.top) - numOrZero(metrics.rootTop);
+    const bottom = numOrZero(rect.bottom) - numOrZero(metrics.rootTop);
+    const height = Math.max(0, numOrZero(rect.height) || (bottom - top));
+    return { top, bottom, height };
+  }
+
+  function getRemainingPageSpace(offsetTop, metrics){
+    const pageHeight = numOrZero(metrics && metrics.pageHeight);
+    if (pageHeight <= 0) return 0;
+    const pageIndex = Math.max(0, Math.floor(Math.max(0, numOrZero(offsetTop)) / pageHeight));
+    const pageEnd = (pageIndex + 1) * pageHeight;
+    return pageEnd - Math.max(0, numOrZero(offsetTop));
+  }
+
+  function shouldPushSemanticUnit(node, metrics){
+    const rect = getRelativeRect(node, metrics);
+    if (!rect || rect.height <= 0) return false;
+    if (rect.top <= numOrZero(metrics.pageBuffer)) return false;
+    if (rect.height > numOrZero(metrics.maxAtomicHeight)) return false;
+    const remaining = getRemainingPageSpace(rect.top, metrics);
+    if (remaining <= 0) return false;
+    return (rect.height + numOrZero(metrics.pageBuffer)) > remaining;
+  }
+
+  function isSemanticSupportBlock(node){
+    if (!node || !node.classList) return false;
+    return node.classList.contains('print-note')
+      || node.classList.contains('print-meta')
+      || node.classList.contains('print-impact-summary')
+      || node.classList.contains('print-archive-banner')
+      || node.classList.contains('print-rank-podium')
+      || node.classList.contains('print-record-seal');
+  }
+
+  function getSectionBodyDirectChildren(section){
+    const body = section && section.querySelector ? section.querySelector('.print-section-body') : null;
+    if (!body) return [];
+    return Array.from(body.children || []).filter(Boolean);
+  }
+
+  function getSectionSemanticUnits(section){
+    const bodyChildren = getSectionBodyDirectChildren(section);
+    if (!bodyChildren.length) return [];
+    const units = [];
+    const first = bodyChildren[0] || null;
+    if (first) units.push({ anchor: section, node: first, reason: 'section-lead' });
+    for (let i = 1; i < bodyChildren.length; i += 1){
+      const child = bodyChildren[i];
+      if (!child || child === first) continue;
+      if (child.classList && (child.classList.contains('print-impact-list') || child.classList.contains('print-rank-list'))){
+        const cards = Array.from(child.children || []).filter(Boolean);
+        if (cards.length){
+          const prev = bodyChildren[i - 1] || null;
+          if (prev && prev.classList && prev.classList.contains('print-note')){
+            units.push({ anchor: prev, node: cards[0], reason: 'continuation-with-card' });
+          }
+          cards.forEach((card, idx) => {
+            if (idx === 0 && prev && prev.classList && prev.classList.contains('print-note')) return;
+            units.push({ anchor: card, node: card, reason: child.classList.contains('print-impact-list') ? 'impact-card' : 'rank-card' });
+          });
+          continue;
+        }
+      }
+      const prev = bodyChildren[i - 1] || null;
+      if (prev && prev.classList && prev.classList.contains('print-note') && !isSemanticSupportBlock(child)){
+        units.push({ anchor: prev, node: child, reason: 'note-with-following-block' });
+        continue;
+      }
+      units.push({ anchor: child, node: child, reason: isSemanticSupportBlock(child) ? 'support-block' : 'body-block' });
+    }
+    return units;
+  }
+
+  async function prepareSemanticPdfPagination(root, signal){
+    const target = root || $printRoot;
+    if (!target || !target.querySelectorAll) return;
+    clearSemanticPdfPagination(target);
+    const maxPasses = 16;
+    for (let pass = 0; pass < maxPasses; pass += 1){
+      throwIfAborted(signal);
+      await nextPaint(signal);
+      const metrics = getSemanticPrintMetrics(target);
+      if (!metrics) return;
+      let changed = false;
+      const primaryUnits = Array.from(target.querySelectorAll('.print-opening, .print-editorial-head, .print-section'));
+      for (const unit of primaryUnits){
+        if (!unit || !unit.classList) continue;
+        if (unit.classList.contains('print-section')){
+          const rect = getRelativeRect(unit, metrics);
+          if (!rect || rect.height <= 0) continue;
+          if (rect.height <= metrics.maxAtomicHeight){
+            if (shouldPushSemanticUnit(unit, metrics)){
+              changed = markSemanticPdfBreak(unit, 'section');
+              if (changed) break;
+            }
+            continue;
+          }
+          const semanticUnits = getSectionSemanticUnits(unit);
+          for (const entry of semanticUnits){
+            const anchor = entry && entry.anchor;
+            if (!anchor || anchor === unit) continue;
+            if (shouldPushSemanticUnit(anchor, metrics)){
+              changed = markSemanticPdfBreak(anchor, entry.reason || 'section-unit');
+              if (changed) break;
+            }
+          }
+          if (changed) break;
+          continue;
+        }
+        if (shouldPushSemanticUnit(unit, metrics)){
+          changed = markSemanticPdfBreak(unit, unit.classList.contains('print-opening') ? 'opening' : 'editorial-head');
+          if (changed) break;
+        }
+      }
+      if (!changed) break;
+      await waitForPrintLayout(target, signal);
+    }
+    await nextPaint(signal);
+  }
+
   function setPrintStatus(root, message, tone){
     const node = root && root.querySelector ? root.querySelector('#printStatus') : null;
     if (!node) return;
@@ -4046,9 +4221,9 @@ function renderHistorialDetalle(){
   const PDF_GLOBAL_RANKING_CRITERION = 'Orden oficial: ganancia neta global, ROI global, victorias y sesiones jugadas.';
   const ROI_RECORD_MIN_GAMES = 3;
   const HISTORICAL_IMPACT_VERSION = 5;
-  const PDF_RESULTS_ROWS_PER_SECTION = 8;
-  const PDF_IMPACT_CARDS_PER_SECTION = 2;
-  const PDF_RANK_CARDS_PER_SECTION = 2;
+  const PDF_RESULTS_ROWS_PER_SECTION = 6;
+  const PDF_IMPACT_CARDS_PER_SECTION = 1;
+  const PDF_RANK_CARDS_PER_SECTION = 1;
 
   const PDF_EDITORIAL_GROUPS = Object.freeze({
     OPENING: Object.freeze({ key: 'opening-premium', label: 'Apertura premium', showHeader: false }),
@@ -4739,7 +4914,7 @@ function renderHistorialDetalle(){
           : `Tramo ${idx + 1} de ${chunks.length} · mismo orden oficial del ranking global`,
         body: `${idx === 0 ? buildPdfRankingOverview(list) : continuation}<div class="print-rank-list">${cards}</div>`,
         className: idx === 0 ? 'print-section--ranking-major' : 'print-section--ranking-cont',
-        avoidBreak: false,
+        avoidBreak: true,
       });
     }).join('');
   }
@@ -5133,7 +5308,7 @@ function renderHistorialDetalle(){
           : 'Lectura histórica individual de toda la mesa cerrada.',
         body: `${continuation}<div class="print-impact-list">${chunk.map(renderImpactCard).join('')}</div>`,
         className: 'print-section--impact-cont',
-        avoidBreak: false,
+        avoidBreak: true,
       }));
     });
 
@@ -5851,6 +6026,9 @@ function renderHistorialDetalle(){
           if (printBtn) printBtn.disabled = true;
           await waitForPrintReady(root, signal);
           if (isStalePrintRender()) return false;
+          setPrintStatus(root, 'Ordenando cortes editoriales…', 'loading');
+          await prepareSemanticPdfPagination(root, signal);
+          if (isStalePrintRender()) return false;
           try{ window.scrollTo(0, 0); }catch(e){}
           await nextPaint(signal);
           if (isStalePrintRender()) return false;
@@ -5920,6 +6098,7 @@ function renderHistorialDetalle(){
       try{ document.title = printTitle; }catch(e){}
     }
     function restoreTitle(){
+      try{ clearSemanticPdfPagination($printRoot || document.getElementById('printRoot')); }catch(e){}
       try{ document.title = prevTitle; }catch(e){}
     }
 

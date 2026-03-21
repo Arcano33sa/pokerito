@@ -2968,7 +2968,9 @@ body.print-mode .print-root{
 }
 
 @media print{
-  @page { size: landscape; margin: 11mm 12mm 14mm; }
+  /* Etapa 1/2 — reajuste físico del PDF oficial: Legal horizontal real + respiración más estable */
+  /* Etapa 2/2 — paginación semántica/editorial: el navegador ya no decide solo dónde mutilar bloques. */
+  @page { size: 356mm 216mm; margin: 7.5mm 9.5mm 10.5mm; }
 
   html, body{ height: auto !important; overflow: visible !important; }
   body{ background: #fff !important; color: #111 !important; }
@@ -2976,12 +2978,140 @@ body.print-mode .print-root{
   .print-actions{ display: none !important; }
   .app-header, .app-main{ display: none !important; }
   .print-screen{ max-width: none; padding: 0 !important; margin: 0 !important; }
-  .print-content{ gap: 10px; }
+  .print-head{ margin: 0 0 6px !important; }
+  .print-head--report-mode{ margin-bottom: 6px !important; }
+  .print-reader-head{ gap: 4px; margin-bottom: 8px; }
+  .print-reader-title{ font-size: 28px; }
+  .print-reader-sub{ font-size: 12px; line-height: 1.36; }
+  .print-mode-panel{ margin: 0 0 10px; }
+  .print-mode-copy{ gap: 4px; }
+  .print-mode-lead{ font-size: 13px; line-height: 1.42; }
+  .print-mode-sub{ font-size: 11px; line-height: 1.34; }
+  .print-brand{ gap: 8px; font-size: 18px; }
+  .print-logo{ width: 38px; height: 38px; border-radius: 10px; }
+
+  .print-content{ gap: 8px; }
+  .print-editorial-group{ gap: 9px; break-inside: auto; page-break-inside: auto; orphans: 3; widows: 3; }
+  .print-editorial-group--with-head{ gap: 8px; }
+  .print-editorial-head{ padding: 10px 12px; gap: 4px; border-radius: 18px; }
+  .print-editorial-title{ font-size: 17px; }
+  .print-editorial-lead{ font-size: 12px; line-height: 1.36; }
+  .print-editorial-copy{ font-size: 11px; line-height: 1.34; }
+
+  .print-opening{ padding: 13px 15px 15px; gap: 11px; border-radius: 22px; }
+  .print-opening-shell{ gap: 11px; }
+  .print-opening-top{ gap: 12px; padding-bottom: 10px; }
+  .print-opening-headcopy{ gap: 5px; }
+  .print-opening-title{ font-size: 26px; }
+  .print-opening-sub{ font-size: 12px; }
+  .print-opening-stamp{ min-width: 146px; padding: 10px 12px; gap: 3px; }
+  .print-opening-stamp-v{ font-size: 15px; }
+  .print-opening-grid{ gap: 8px; }
+  .print-opening-card{ padding: 10px 12px; gap: 5px; min-height: 108px; }
+  .print-opening-card-v{ font-size: 19px; }
+  .print-opening-card-s{ font-size: 12px; line-height: 1.3; }
+  .print-opening-card-note{ font-size: 10px; line-height: 1.3; }
+  .print-opening-chronicle{ font-size: 12px; line-height: 1.38; }
+  .print-opening-stats{ gap: 6px; }
+  .print-opening-stat{ padding: 8px 9px; gap: 3px; min-height: 52px; }
+  .print-opening-stat-v{ font-size: 11px; line-height: 1.26; }
+
+  .print-executive-shell{ gap: 10px; }
+  .print-executive-leads{ gap: 8px; }
+  .print-executive-card{ padding: 10px 12px; gap: 5px; min-height: 100px; }
+  .print-executive-v{ font-size: 19px; }
+  .print-executive-s{ font-size: 11px; line-height: 1.34; }
+  .print-executive-grid{ gap: 6px; }
+  .print-executive-stat{ padding: 8px 9px; gap: 3px; min-height: 52px; }
+  .print-executive-stat-v{ font-size: 11px; line-height: 1.26; }
+
+  .print-podium-grid{ gap: 8px; }
+  .print-podium-card{ padding: 10px 12px; gap: 5px; min-height: 126px; }
+  .print-podium-place{ min-width: 48px; padding: 5px 8px; font-size: 15px; }
+  .print-podium-name{ font-size: 18px; }
+  .print-podium-net{ font-size: 19px; }
+  .print-podium-sub{ font-size: 11px; line-height: 1.34; }
+
+  .print-section{ gap: 8px; }
+  .print-section--session-executive,
+  .print-section--session-podium,
+  .print-section--session-detail,
+  .print-section--impact-major,
+  .print-section--ranking-major,
+  .print-section--records-major,
+  .print-section--global-base{ gap: 10px; }
+  .print-section-body{ gap: 8px; }
+  .print-section-head{ gap: 10px; padding-bottom: 5px; }
+  .print-section-title{ font-size: 15px; }
+  .print-section-sub{ font-size: 10px; }
+
+  .print-meta{ padding: 10px 12px; border-radius: 16px; }
+  .print-line{ gap: 12px; padding: 5px 0; }
+  .print-line .k{ font-size: 11px; }
+  .print-line .v{ font-size: 12px; line-height: 1.34; }
+
+  .print-note{ padding: 8px 10px; border-radius: 14px; font-size: 11px; line-height: 1.34; }
+  .print-note-pill{ min-height: 22px; padding: 3px 8px; font-size: 9px; }
+
+  .print-table-wrap{ margin-top: 10px; border-radius: 16px; }
+  .print-table thead th{ padding: 10px 10px; font-size: 11px; }
+  .print-table td{ padding: 8px 10px; font-size: 12px; }
+
+  .print-archive-banner{ padding: 12px 14px; gap: 8px; border-radius: 18px; }
+  .print-archive-banner-lead{ font-size: 15px; line-height: 1.2; }
+  .print-archive-banner-copy{ font-size: 11px; line-height: 1.35; }
+  .print-archive-banner-grid,
+  .print-record-summary-grid,
+  .print-rank-podium-grid,
+  .print-rank-grid,
+  .print-rank-trail,
+  .print-impact-summary-grid,
+  .print-impact-grid{ gap: 6px; }
+  .print-archive-banner-card,
+  .print-record-summary-card,
+  .print-rank-podium-card,
+  .print-rank-stat,
+  .print-impact-stat,
+  .print-rank-event{ padding: 8px 9px; gap: 3px; }
+  .print-archive-banner-card .v,
+  .print-record-summary-card .v,
+  .print-rank-podium-net,
+  .print-impact-summary-card .v{ font-size: 15px; }
+  .print-archive-banner-card .s,
+  .print-record-summary-card .s,
+  .print-record-summary-card .p,
+  .print-rank-podium-sub,
+  .print-impact-summary-card .s{ font-size: 10px; line-height: 1.28; }
+  .print-record-seal{ padding-top: 8px; font-size: 11px; line-height: 1.34; }
+
+  .print-rank-list,
+  .print-impact-list,
+  .print-rank-podium,
+  .print-impact-summary{ gap: 8px; }
+  .print-rank-card,
+  .print-impact-card{ padding: 10px 12px; gap: 8px; }
+  .print-rank-top,
+  .print-impact-top{ gap: 10px; }
+  .print-rank-pos{ min-width: 48px; padding: 7px 8px; font-size: 15px; }
+  .print-rank-name,
+  .print-impact-name{ font-size: 15px; }
+  .print-rank-sub,
+  .print-impact-sub{ font-size: 11px; line-height: 1.3; }
+  .print-rank-balance{ min-width: 176px; padding: 8px 10px; border-radius: 14px; }
+  .print-rank-balance-v{ font-size: 17px; }
+  .print-rank-balance-s,
+  .print-impact-move-s{ font-size: 11px; line-height: 1.3; }
+  .print-impact-move{ min-width: 200px; padding: 8px 10px; border-radius: 14px; }
+  .print-impact-move-v{ font-size: 17px; }
+  .print-impact-narrative{ font-size: 11px; line-height: 1.34; }
+  .print-impact-tags{ gap: 5px; }
+  .print-impact-tag{ padding: 4px 8px; font-size: 10px; }
+
   .print-section--impact-cont + .print-section--impact-cont,
   .print-section--ranking-cont + .print-section--ranking-cont,
   .print-section--session-detail-cont + .print-section--session-detail-cont,
-  .print-section--records-cont + .print-section--records-cont{ margin-top: 2px; }
-  .print-editorial-group{ break-inside: auto; page-break-inside: auto; orphans: 3; widows: 3; }
+  .print-section--records-cont + .print-section--records-cont{ margin-top: 1px; }
+
   .print-editorial-head,
   .print-opening, .print-opening-shell, .print-opening-grid, .print-opening-card, .print-opening-stats, .print-opening-stat,
   .print-impact-summary, .print-archive-banner, .print-record-summary-grid, .print-rank-podium, .print-rank-podium-grid,
@@ -3004,6 +3134,7 @@ body.print-mode .print-root{
   .print-rank-card, .print-impact-card, .print-table tbody tr, .print-line{ break-inside: avoid; break-inside: avoid-page; page-break-inside: avoid; }
   .print-status, .btn, .icon-btn{ display: none !important; }
 }
+
 
 
 
