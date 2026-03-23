@@ -12,14 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.51';
-  const APP_BUILD = 'pdf-route2-final-stage4';
-  const APP_CACHE_NAME = 'pokerito-v0.1.51-pdf-route2-final-stage4';
-  const SW_URL = './sw.js?v=0.1.51-pdf-route2-final-stage4';
-  const UPDATE_UI_KEY = 'pokerito_update_ui';
-  const UPDATE_BOOT_KEY = 'pokerito_update_boot';
-  const UPDATE_ACTIVATION_TIMEOUT_MS = 8000;
-
+  const APP_VERSION = '0.1.42';
+  const APP_BUILD = 'pdf-premium-final-stage6';
+  const APP_CACHE_NAME = 'pokerito-v0.1.42-pdf-premium-final-stage6';
+  const SW_URL = './sw.js?v=0.1.42-pdf-premium-final-stage6';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -63,11 +59,6 @@
   const headerNavTrail = [];
   let currentHeaderRouteHref = '/inicio';
   let pendingHeaderNavIntent = null;
-  let updateUiState = loadUpdateUiState();
-  let updateCheckInFlight = false;
-  let updateApplyInFlight = false;
-  let swRegistrationRef = null;
-  let swLifecycleBound = false;
 
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
@@ -1129,573 +1120,6 @@ function formatDateTimeShort(ts){
   const hh = String(d.getHours()).padStart(2,'0');
   const mi = String(d.getMinutes()).padStart(2,'0');
   return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
-}
-
-function getDefaultUpdateUiState(){
-  return {
-    currentVersion: APP_VERSION,
-    currentBuild: APP_BUILD,
-    state: 'idle',
-    checkedAt: 0,
-    latestVersion: '',
-    latestBuild: '',
-    errorCode: ''
-  };
-}
-
-function normalizeUpdateUiState(input){
-  const base = getDefaultUpdateUiState();
-  const src = isPlainObject(input) ? input : {};
-  const state = safeTrim(src.state);
-  const out = Object.assign({}, base, {
-    state: ['idle','checking','current','available','updating','updated','unsupported','error'].includes(state) ? state : 'idle',
-    checkedAt: numOrZero(src.checkedAt),
-    latestVersion: safeTrim(src.latestVersion),
-    latestBuild: safeTrim(src.latestBuild),
-    errorCode: safeTrim(src.errorCode),
-  });
-  if (safeTrim(src.currentVersion) !== APP_VERSION || safeTrim(src.currentBuild) !== APP_BUILD){
-    return base;
-  }
-  if (out.state === 'checking') out.state = 'idle';
-  if (!['available','error','unsupported'].includes(out.state)) out.errorCode = '';
-  if (out.state === 'available' && sameReleaseMeta(out, { version: APP_VERSION, build: APP_BUILD })) {
-    out.state = 'current';
-    out.errorCode = '';
-  }
-  if (out.state === 'updated') out.state = 'current';
-  return out;
-}
-
-function loadUpdateUiState(){
-  try{
-    const raw = localStorage.getItem(UPDATE_UI_KEY);
-    if (!raw) return getDefaultUpdateUiState();
-    return normalizeUpdateUiState(JSON.parse(raw));
-  }catch(e){
-    return getDefaultUpdateUiState();
-  }
-}
-
-function persistUpdateUiState(nextState){
-  try{
-    localStorage.setItem(UPDATE_UI_KEY, JSON.stringify(normalizeUpdateUiState(nextState)));
-  }catch(e){}
-}
-
-function persistUpdateBootMark(meta){
-  try{
-    sessionStorage.setItem(UPDATE_BOOT_KEY, JSON.stringify({
-      version: safeTrim(meta && meta.version),
-      build: safeTrim(meta && meta.build),
-      checkedAt: numOrZero(meta && meta.checkedAt) || Date.now(),
-    }));
-  }catch(e){}
-}
-
-function consumeUpdateBootMark(){
-  try{
-    const raw = sessionStorage.getItem(UPDATE_BOOT_KEY);
-    if (!raw) return null;
-    sessionStorage.removeItem(UPDATE_BOOT_KEY);
-    const parsed = JSON.parse(raw);
-    const version = safeTrim(parsed && parsed.version);
-    const build = safeTrim(parsed && parsed.build);
-    if (!version || !build) return null;
-    if (version !== APP_VERSION || build !== APP_BUILD) return null;
-    return {
-      version,
-      build,
-      checkedAt: numOrZero(parsed && parsed.checkedAt) || Date.now(),
-    };
-  }catch(e){
-    return null;
-  }
-}
-
-function hydratePostUpdateUiState(){
-  const mark = consumeUpdateBootMark();
-  if (!mark) return;
-  updateUiState = normalizeUpdateUiState({
-    currentVersion: APP_VERSION,
-    currentBuild: APP_BUILD,
-    state: 'current',
-    checkedAt: mark.checkedAt,
-    latestVersion: mark.version,
-    latestBuild: mark.build,
-    errorCode: ''
-  });
-  persistUpdateUiState(updateUiState);
-}
-
-function buildReleaseDisplayLabel(version){
-  const value = safeTrim(version);
-  return value ? `v${value}` : '—';
-}
-
-function humanizeBuildLabel(build){
-  const raw = safeTrim(build);
-  if (!raw) return '';
-  const normalized = raw
-    .replace(/[_-]+/g, ' ')
-    .replace(/\bstage\s*(\d+)/ig, 'etapa $1')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!normalized) return '';
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
-}
-
-function sameReleaseMeta(a, b){
-  return safeTrim(a && a.version) === safeTrim(b && b.version)
-    && safeTrim(a && a.build) === safeTrim(b && b.build);
-}
-
-function getUpdateErrorMessage(code){
-  const normalized = safeTrim(code).toUpperCase();
-  if (normalized === 'SW_UNAVAILABLE' || normalized === 'SW_REG_MISSING') {
-    return 'Esta instalación no permite aplicar la actualización desde este panel.';
-  }
-  if (normalized === 'HTTP_0' || normalized === 'HTTP_503' || normalized === 'HTTP_504' || normalized === 'ABORTERROR') {
-    return 'No se pudo revisar si hay una versión nueva en este momento. Revisa conexión y vuelve a intentar.';
-  }
-  if (normalized === 'ACTIVATE_NOT_READY' || normalized === 'SW_WAITING_MISSING') {
-    return 'La versión nueva ya apareció, pero todavía no terminó de quedar lista. Vuelve a intentarlo en unos segundos.';
-  }
-  if (normalized === 'SW_ACTIVATE_TIMEOUT') {
-    return 'La actualización tardó demasiado y la app evitó una recarga dudosa. Intenta nuevamente.';
-  }
-  if (normalized === 'SW_REDUNDANT') {
-    return 'La actualización cambió mientras se aplicaba. Vuelve a revisar y repite el intento.';
-  }
-  if (normalized === 'META_PARSE_FAIL') {
-    return 'La revisión respondió, pero no devolvió datos válidos de versión.';
-  }
-  return 'No se pudo completar la operación en este momento. Intenta otra vez.';
-}
-
-function getUpdateUiCopy(stateObj){
-  const state = safeTrim(stateObj && stateObj.state) || 'idle';
-  if (state === 'checking') {
-    return {
-      pill: 'Revisando…',
-      tone: 'loading',
-      body: 'Revisando si ya existe una versión más reciente para esta instalación.',
-      button: 'Revisando…'
-    };
-  }
-  if (state === 'current') {
-    return {
-      pill: 'App al día',
-      tone: 'success',
-      body: 'Esta instalación ya está corriendo la versión más reciente disponible.',
-      button: 'Buscar actualización'
-    };
-  }
-  if (state === 'available') {
-    return {
-      pill: 'Nueva versión lista',
-      tone: 'warn',
-      body: 'Hay una versión más reciente lista para aplicarse. Este mismo botón la instala sin salir de Administración.',
-      button: 'Actualizar ahora'
-    };
-  }
-  if (state === 'updating') {
-    return {
-      pill: 'Aplicando actualización',
-      tone: 'loading',
-      body: 'Aplicando la nueva versión del PWA y preparando la recarga controlada de la app.',
-      button: 'Aplicando…'
-    };
-  }
-  if (state === 'updated') {
-    return {
-      pill: 'Actualización aplicada',
-      tone: 'success',
-      body: 'La nueva versión quedó aplicada. La app se está recargando para abrir ya con esa edición.',
-      button: 'Buscar actualización'
-    };
-  }
-  if (state === 'unsupported') {
-    return {
-      pill: 'Actualización no disponible',
-      tone: 'error',
-      body: 'Esta instalación no permite aplicar la actualización desde este panel. Aquí solo queda reintentar la revisión.',
-      button: 'Buscar actualización'
-    };
-  }
-  if (state === 'error') {
-    return {
-      pill: 'No se pudo completar',
-      tone: 'error',
-      body: getUpdateErrorMessage(stateObj && stateObj.errorCode),
-      button: 'Buscar actualización'
-    };
-  }
-  return {
-    pill: 'Listo para revisar',
-    tone: 'neutral',
-    body: 'Consulta si esta instalación visible está al día o si ya hay una versión nueva lista para aplicarse.',
-    button: 'Buscar actualización'
-  };
-}
-
-function renderAdminUpdateUi(){
-  const $version = document.getElementById('adminVisibleVersion');
-  if (!$version) return;
-  const $build = document.getElementById('adminVisibleBuild');
-  const $pill = document.getElementById('adminUpdateStatusPill');
-  const $copy = document.getElementById('adminUpdateStatusText');
-  const $compare = document.getElementById('adminUpdateCompare');
-  const $checked = document.getElementById('adminUpdateCheckedAt');
-  const $btn = document.getElementById('checkUpdateBtn');
-  const stateObj = normalizeUpdateUiState(updateUiState);
-  const copy = getUpdateUiCopy(stateObj);
-  const buildLabel = humanizeBuildLabel(APP_BUILD);
-
-  $version.textContent = buildReleaseDisplayLabel(APP_VERSION);
-  if ($build) {
-    $build.textContent = buildLabel ? `Edición visible: ${buildLabel}` : '';
-    $build.style.display = buildLabel ? '' : 'none';
-  }
-
-  if ($pill){
-    $pill.textContent = copy.pill;
-    $pill.classList.remove('is-neutral', 'is-loading', 'is-success', 'is-warn', 'is-error');
-    $pill.classList.add(`is-${copy.tone}`);
-  }
-  if ($copy) $copy.textContent = copy.body;
-
-  if ($compare){
-    let compareText = '';
-    if (stateObj.state === 'available') {
-      const latestVersion = safeTrim(stateObj.latestVersion);
-      const latestBuild = humanizeBuildLabel(stateObj.latestBuild);
-      compareText = latestVersion
-        ? `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Disponible ${buildReleaseDisplayLabel(latestVersion)}${latestBuild ? ` · ${latestBuild}` : ''}`
-        : `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Hay una versión más reciente lista para aplicarse.`;
-    } else if (stateObj.state === 'current' && stateObj.checkedAt) {
-      compareText = `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Sin cambios pendientes.`;
-    } else if (stateObj.state === 'updating' || stateObj.state === 'updated') {
-      const targetVersion = safeTrim(stateObj.latestVersion);
-      compareText = targetVersion
-        ? `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Aplicando ${buildReleaseDisplayLabel(targetVersion)}.`
-        : `Instalada ${buildReleaseDisplayLabel(APP_VERSION)} · Aplicando nueva edición.`;
-    }
-    $compare.textContent = compareText;
-    $compare.style.display = compareText ? '' : 'none';
-  }
-
-  if ($checked){
-    const checkedText = stateObj.checkedAt ? `Última revisión: ${formatDateTimeShort(stateObj.checkedAt)}` : '';
-    $checked.textContent = checkedText;
-    $checked.style.display = checkedText ? '' : 'none';
-  }
-
-  if ($btn){
-    const busy = !!updateCheckInFlight || !!updateApplyInFlight || stateObj.state === 'checking' || stateObj.state === 'updating';
-    $btn.textContent = copy.button;
-    $btn.disabled = busy;
-    $btn.setAttribute('aria-busy', busy ? 'true' : 'false');
-  }
-}
-
-function setUpdateUiState(patch, options){
-  const opts = options || {};
-  updateUiState = normalizeUpdateUiState(Object.assign({}, updateUiState, patch || {}, {
-    currentVersion: APP_VERSION,
-    currentBuild: APP_BUILD,
-  }));
-  if (opts.persist !== false) persistUpdateUiState(updateUiState);
-  renderAdminUpdateUi();
-}
-
-async function getUpdateRegistration(options){
-  if (!('serviceWorker' in navigator)) return null;
-  const opts = options || {};
-  let reg = swRegistrationRef;
-  if (!reg) {
-    try{
-      reg = await navigator.serviceWorker.getRegistration();
-    }catch(e){
-      reg = null;
-    }
-  }
-  if (!reg) return null;
-  swRegistrationRef = reg;
-  bindServiceWorkerLifecycle(reg);
-  if (opts.refresh === true) {
-    try{ await reg.update(); }catch(e){}
-  }
-  return reg;
-}
-
-function bindServiceWorkerLifecycle(reg){
-  if (!reg || swLifecycleBound) return;
-  swLifecycleBound = true;
-
-  const markAvailableFromWorker = (worker) => {
-    if (!worker) return;
-    const applyAvailableState = async () => {
-      if (!navigator.serviceWorker.controller) return;
-      const latest = await fetchLatestReleaseMeta().catch(() => null);
-      setUpdateUiState({
-        state: 'available',
-        checkedAt: Date.now(),
-        latestVersion: safeTrim(latest && latest.version),
-        latestBuild: safeTrim(latest && latest.build),
-        errorCode: ''
-      });
-    };
-
-    if (worker.state === 'installed') {
-      applyAvailableState().catch(() => {});
-      return;
-    }
-
-    worker.addEventListener('statechange', () => {
-      const state = safeTrim(worker.state);
-      if (state === 'installed') applyAvailableState().catch(() => {});
-    });
-  };
-
-  if (reg.waiting) markAvailableFromWorker(reg.waiting);
-  if (reg.installing) markAvailableFromWorker(reg.installing);
-
-  reg.addEventListener('updatefound', () => {
-    markAvailableFromWorker(reg.installing || null);
-  });
-}
-
-async function getServiceWorkerUpdateHint(reg){
-  const targetReg = reg || await getUpdateRegistration();
-  if (!targetReg) return { available: false, supported: ('serviceWorker' in navigator), waiting: false, installingState: '' };
-  const installingState = safeTrim(targetReg.installing && targetReg.installing.state);
-  return {
-    available: !!targetReg.waiting || installingState === 'installed' || installingState === 'activating',
-    installingState,
-    waiting: !!targetReg.waiting,
-    supported: true,
-  };
-}
-
-async function fetchLatestReleaseMeta(){
-  const controller = (typeof AbortController === 'function') ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => {
-    try{ controller.abort(); }catch(e){}
-  }, 7000) : 0;
-  try{
-    const cacheBust = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const res = await fetch(`./app.js?update-check=${cacheBust}`, {
-      method: 'GET',
-      cache: 'no-store',
-      headers: { 'cache-control': 'no-cache' },
-      signal: controller ? controller.signal : undefined,
-    });
-    if (!res || !res.ok) throw new Error(`HTTP_${res ? res.status : 0}`);
-    const body = await res.text();
-    const versionMatch = body.match(/const\s+APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
-    const buildMatch = body.match(/const\s+APP_BUILD\s*=\s*['"]([^'"]+)['"]/);
-    const version = safeTrim(versionMatch && versionMatch[1]);
-    const build = safeTrim(buildMatch && buildMatch[1]);
-    if (!version || !build) throw new Error('META_PARSE_FAIL');
-    return { version, build };
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function delay(ms){
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForWaitingWorker(reg, timeoutMs){
-  const limit = Math.max(800, numOrZero(timeoutMs) || 0);
-  const startedAt = Date.now();
-  while ((Date.now() - startedAt) < limit) {
-    if (reg && reg.waiting) return reg.waiting;
-    const installing = reg && reg.installing;
-    const state = safeTrim(installing && installing.state);
-    if (installing && state === 'installed') return reg.waiting || installing;
-    await delay(250);
-  }
-  return reg && reg.waiting ? reg.waiting : null;
-}
-
-async function activateWaitingWorkerAndReload(worker, nextMeta){
-  if (!worker) throw new Error('SW_WAITING_MISSING');
-
-  return new Promise((resolve, reject) => {
-    let done = false;
-    let timeoutId = 0;
-
-    const cleanup = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      try{ navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange); }catch(e){}
-      try{ worker.removeEventListener('statechange', onStateChange); }catch(e){}
-    };
-
-    const settle = (type, error) => {
-      if (done) return;
-      done = true;
-      cleanup();
-      if (type === 'resolve') resolve();
-      else reject(error instanceof Error ? error : new Error(String(error || 'UPDATE_APPLY_FAIL')));
-    };
-
-    const onControllerChange = () => {
-      persistUpdateBootMark({
-        version: safeTrim(nextMeta && nextMeta.version),
-        build: safeTrim(nextMeta && nextMeta.build),
-        checkedAt: Date.now(),
-      });
-      setUpdateUiState({
-        state: 'updated',
-        checkedAt: Date.now(),
-        latestVersion: safeTrim(nextMeta && nextMeta.version),
-        latestBuild: safeTrim(nextMeta && nextMeta.build),
-        errorCode: ''
-      }, { persist: false });
-      try{ window.location.reload(); }catch(e){}
-      settle('resolve');
-    };
-
-    const onStateChange = () => {
-      const state = safeTrim(worker.state);
-      if (state === 'redundant') settle('reject', new Error('SW_REDUNDANT'));
-    };
-
-    timeoutId = setTimeout(() => {
-      settle('reject', new Error('SW_ACTIVATE_TIMEOUT'));
-    }, UPDATE_ACTIVATION_TIMEOUT_MS);
-
-    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange, { once: false });
-    worker.addEventListener('statechange', onStateChange);
-
-    try{
-      worker.postMessage({ type: 'POKERITO_SKIP_WAITING' });
-    }catch(e){
-      settle('reject', e);
-    }
-  });
-}
-
-async function checkForAppUpdate(){
-  if (updateCheckInFlight || updateApplyInFlight) return;
-  updateCheckInFlight = true;
-  setUpdateUiState({ state: 'checking', errorCode: '' }, { persist: false });
-  const checkedAt = Date.now();
-  try{
-    const reg = await getUpdateRegistration({ refresh: true });
-    if (!('serviceWorker' in navigator) || !reg) {
-      setUpdateUiState({
-        state: 'unsupported',
-        checkedAt,
-        latestVersion: '',
-        latestBuild: '',
-        errorCode: 'SW_UNAVAILABLE'
-      });
-      return;
-    }
-
-    const swHint = await getServiceWorkerUpdateHint(reg);
-    const latest = await fetchLatestReleaseMeta();
-    const same = sameReleaseMeta(latest, { version: APP_VERSION, build: APP_BUILD });
-    setUpdateUiState({
-      state: (same && !swHint.available) ? 'current' : 'available',
-      checkedAt,
-      latestVersion: latest.version,
-      latestBuild: latest.build,
-      errorCode: ''
-    });
-    return;
-  } catch (err) {
-    const reg = await getUpdateRegistration();
-    const swHint = await getServiceWorkerUpdateHint(reg || null);
-    if (swHint && swHint.available){
-      setUpdateUiState({
-        state: 'available',
-        checkedAt,
-        latestVersion: '',
-        latestBuild: '',
-        errorCode: ''
-      });
-      return;
-    }
-    setUpdateUiState({
-      state: reg ? 'error' : 'unsupported',
-      checkedAt,
-      latestVersion: '',
-      latestBuild: '',
-      errorCode: safeTrim(err && err.message) || (reg ? 'UPDATE_CHECK_FAIL' : 'SW_UNAVAILABLE')
-    });
-  } finally {
-    updateCheckInFlight = false;
-    renderAdminUpdateUi();
-  }
-}
-
-async function applyAppUpdate(){
-  if (updateCheckInFlight || updateApplyInFlight) return;
-  updateApplyInFlight = true;
-  setUpdateUiState({ state: 'updating', errorCode: '' }, { persist: false });
-  const checkedAt = Date.now();
-  try{
-    const reg = await getUpdateRegistration({ refresh: true });
-    if (!reg) throw new Error('SW_REG_MISSING');
-
-    let targetWorker = reg.waiting || null;
-    if (!targetWorker && reg.installing) {
-      targetWorker = await waitForWaitingWorker(reg, 4000);
-    }
-    if (!targetWorker) {
-      try{ await reg.update(); }catch(e){}
-      targetWorker = await waitForWaitingWorker(reg, 4000);
-    }
-    if (!targetWorker) {
-      const latest = await fetchLatestReleaseMeta().catch(() => null);
-      const same = latest ? sameReleaseMeta(latest, { version: APP_VERSION, build: APP_BUILD }) : false;
-      if (same) {
-        setUpdateUiState({
-          state: 'current',
-          checkedAt,
-          latestVersion: safeTrim(latest && latest.version),
-          latestBuild: safeTrim(latest && latest.build),
-          errorCode: ''
-        });
-        return;
-      }
-      throw new Error('ACTIVATE_NOT_READY');
-    }
-
-    const nextMeta = {
-      version: safeTrim(updateUiState.latestVersion),
-      build: safeTrim(updateUiState.latestBuild)
-    };
-    if (!nextMeta.version || !nextMeta.build) {
-      const fetchedMeta = await fetchLatestReleaseMeta().catch(() => null);
-      nextMeta.version = safeTrim(fetchedMeta && fetchedMeta.version);
-      nextMeta.build = safeTrim(fetchedMeta && fetchedMeta.build);
-    }
-
-    setUpdateUiState({
-      state: 'updating',
-      checkedAt,
-      latestVersion: nextMeta.version,
-      latestBuild: nextMeta.build,
-      errorCode: ''
-    }, { persist: false });
-    await activateWaitingWorkerAndReload(targetWorker, nextMeta);
-  } catch (err) {
-    const code = safeTrim(err && err.message) || 'UPDATE_APPLY_FAIL';
-    setUpdateUiState({
-      state: code === 'SW_REG_MISSING' ? 'unsupported' : 'error',
-      checkedAt,
-      errorCode: code
-    });
-  } finally {
-    updateApplyInFlight = false;
-    renderAdminUpdateUi();
-  }
 }
 
 function normalizeChipEntity(chip, index, usedIds, ctx){
@@ -2925,7 +2349,7 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
 
 
 function purgeLegacyStorageResidue(){
-  const keep = new Set([STORE_KEY, THEME_KEY, UPDATE_UI_KEY, UPDATE_BOOT_KEY]);
+  const keep = new Set([STORE_KEY, THEME_KEY]);
 
   try{
     const keys = [];
@@ -3336,261 +2760,6 @@ function setPlayerActive(id, active){
     await nextPaint(signal);
   }
 
-  const PDF_PRINT_INNER_WIDTH_MM = 337;
-  const PDF_PRINT_INNER_HEIGHT_MM = 198;
-  const PDF_PRINT_HEIGHT_RATIO = PDF_PRINT_INNER_HEIGHT_MM / PDF_PRINT_INNER_WIDTH_MM;
-  // Etapa 4/4 — cierre final de la Ruta 2: se mantiene la reserva de seguridad,
-  // pero se agrega una segunda pasada de compactación para recuperar aire útil sin reabrir cortes indignos.
-
-  function clearSemanticPdfPagination(root){
-    const target = root || $printRoot;
-    if (!target || !target.querySelectorAll) return;
-    Array.from(target.querySelectorAll('.pdf-break-before-semantic')).forEach(node => {
-      try{ node.classList.remove('pdf-break-before-semantic'); }catch(e){}
-      try{
-        if (node.dataset && safeTrim(node.dataset.pdfBreakReason)) delete node.dataset.pdfBreakReason;
-      }catch(e){}
-      try{
-        if (node.classList && node.classList.contains('pdf-break-before') && (!node.dataset || !safeTrim(node.dataset.pdfBreakSticky))) node.classList.remove('pdf-break-before');
-      }catch(e){}
-    });
-  }
-
-  function markSemanticPdfBreak(node, reason){
-    if (!node || !node.classList) return false;
-    if (node.classList.contains('pdf-break-before-semantic')) return false;
-    try{ node.classList.add('pdf-break-before', 'pdf-break-before-semantic'); }catch(e){ return false; }
-    try{
-      if (node.dataset){
-        node.dataset.pdfBreakReason = safeTrim(reason) || 'semantic';
-      }
-    }catch(e){}
-    return true;
-  }
-
-  function getSemanticPrintMetrics(root){
-    const target = root || $printRoot;
-    if (!target || !target.querySelector) return null;
-    const screen = target.querySelector('.pdf-document-sheet, .print-screen') || target;
-    const content = target.querySelector('.pdf-document-content, .print-content') || screen;
-    if (!screen || !content || !screen.getBoundingClientRect || !content.getBoundingClientRect) return null;
-    const contentRect = content.getBoundingClientRect();
-    const screenRect = screen.getBoundingClientRect();
-    const width = Math.max(0, numOrZero(contentRect.width) || numOrZero(screenRect.width));
-    if (width <= 0) return null;
-    const pageHeight = Math.max(320, Math.round(width * PDF_PRINT_HEIGHT_RATIO));
-    const pageBuffer = Math.max(10, Math.round(pageHeight * 0.028));
-    return {
-      target,
-      screen,
-      rootTop: numOrZero(screenRect.top),
-      pageHeight,
-      pageBuffer,
-      maxAtomicHeight: pageHeight * 0.93,
-    };
-  }
-
-  function getRelativeRect(node, metrics){
-    if (!node || !metrics || !node.getBoundingClientRect) return null;
-    const rect = node.getBoundingClientRect();
-    const top = numOrZero(rect.top) - numOrZero(metrics.rootTop);
-    const bottom = numOrZero(rect.bottom) - numOrZero(metrics.rootTop);
-    const height = Math.max(0, numOrZero(rect.height) || (bottom - top));
-    return { top, bottom, height };
-  }
-
-  function getRemainingPageSpace(offsetTop, metrics){
-    const pageHeight = numOrZero(metrics && metrics.pageHeight);
-    if (pageHeight <= 0) return 0;
-    const pageIndex = Math.max(0, Math.floor(Math.max(0, numOrZero(offsetTop)) / pageHeight));
-    const pageEnd = (pageIndex + 1) * pageHeight;
-    return pageEnd - Math.max(0, numOrZero(offsetTop));
-  }
-
-  function shouldPushSemanticUnit(node, metrics){
-    const rect = getRelativeRect(node, metrics);
-    if (!rect || rect.height <= 0) return false;
-    if (rect.top <= numOrZero(metrics.pageBuffer)) return false;
-    if (rect.height > numOrZero(metrics.maxAtomicHeight)) return false;
-    const remaining = getRemainingPageSpace(rect.top, metrics);
-    if (remaining <= 0) return false;
-    return (rect.height + numOrZero(metrics.pageBuffer)) > remaining;
-  }
-
-  function isSemanticSupportBlock(node){
-    if (!node || !node.classList) return false;
-    return node.classList.contains('print-note')
-      || node.classList.contains('print-meta')
-      || node.classList.contains('print-impact-summary')
-      || node.classList.contains('print-archive-banner')
-      || node.classList.contains('print-rank-podium')
-      || node.classList.contains('print-record-seal');
-  }
-
-  function getSectionBodyDirectChildren(section){
-    const body = section && section.querySelector ? section.querySelector('.print-section-body') : null;
-    if (!body) return [];
-    return Array.from(body.children || []).filter(Boolean);
-  }
-
-  function getSectionHeadNode(section){
-    if (!section || !section.children) return null;
-    return Array.from(section.children).find(child => child && child.classList && child.classList.contains('print-section-head')) || null;
-  }
-
-  function getEditorialCompanionNode(node){
-    const parent = node && node.parentElement;
-    if (!parent || !parent.children) return null;
-    const siblings = Array.from(parent.children || []).filter(Boolean);
-    const index = siblings.indexOf(node);
-    for (let i = index + 1; i < siblings.length; i += 1){
-      const candidate = siblings[i];
-      if (!candidate || !candidate.classList) continue;
-      if (candidate.classList.contains('print-section') || candidate.classList.contains('print-opening')) return candidate;
-    }
-    return null;
-  }
-
-  function getTopLevelPdfFragments(container){
-    if (!container || !container.querySelectorAll) return [];
-    const all = Array.from(container.querySelectorAll('[data-pdf-fragment]')).filter(Boolean);
-    return all.filter(node => {
-      let current = node && node.parentElement;
-      while (current && current !== container){
-        if (current.nodeType === 1 && current.hasAttribute && current.hasAttribute('data-pdf-fragment')) return false;
-        current = current.parentElement;
-      }
-      return current === container;
-    });
-  }
-
-  function getCombinedRect(nodes, metrics){
-    const list = Array.isArray(nodes) ? nodes : [];
-    let top = null;
-    let bottom = null;
-    list.forEach(node => {
-      const rect = getRelativeRect(node, metrics);
-      if (!rect || rect.height <= 0) return;
-      if (top == null || rect.top < top) top = rect.top;
-      if (bottom == null || rect.bottom > bottom) bottom = rect.bottom;
-    });
-    if (top == null || bottom == null || bottom <= top) return null;
-    return { top, bottom, height: bottom - top };
-  }
-
-  function shouldPushCombinedRect(rect, metrics){
-    if (!rect || !metrics || rect.height <= 0) return false;
-    if (rect.top <= numOrZero(metrics.pageBuffer)) return false;
-    if (rect.height > (numOrZero(metrics.pageHeight) * 0.92)) return false;
-    const remaining = getRemainingPageSpace(rect.top, metrics);
-    if (remaining <= 0) return false;
-    return (rect.height + numOrZero(metrics.pageBuffer)) > remaining;
-  }
-
-  function getSectionSemanticUnits(section){
-    const bodyChildren = getSectionBodyDirectChildren(section);
-    if (!bodyChildren.length) return [];
-    const body = section && section.querySelector ? section.querySelector('.print-section-body') : null;
-    const explicitFragments = getTopLevelPdfFragments(body);
-    if (explicitFragments.length){
-      return explicitFragments.map((node, idx) => ({
-        anchor: node,
-        node,
-        reason: (node.dataset && safeTrim(node.dataset.pdfFragment)) || `fragment-${idx + 1}`,
-      }));
-    }
-    const units = [];
-    const first = bodyChildren[0] || null;
-    if (first) units.push({ anchor: section, node: first, reason: 'section-lead' });
-    for (let i = 1; i < bodyChildren.length; i += 1){
-      const child = bodyChildren[i];
-      if (!child || child === first) continue;
-      if (child.classList && (child.classList.contains('print-impact-list') || child.classList.contains('print-rank-list'))){
-        const cards = Array.from(child.children || []).filter(Boolean);
-        if (cards.length){
-          const prev = bodyChildren[i - 1] || null;
-          if (prev && prev.classList && prev.classList.contains('print-note')){
-            units.push({ anchor: prev, node: cards[0], reason: 'continuation-with-card' });
-          }
-          cards.forEach((card, idx) => {
-            if (idx === 0 && prev && prev.classList && prev.classList.contains('print-note')) return;
-            units.push({ anchor: card, node: card, reason: child.classList.contains('print-impact-list') ? 'impact-card' : 'rank-card' });
-          });
-          continue;
-        }
-      }
-      const prev = bodyChildren[i - 1] || null;
-      if (prev && prev.classList && prev.classList.contains('print-note') && !isSemanticSupportBlock(child)){
-        units.push({ anchor: prev, node: child, reason: 'note-with-following-block' });
-        continue;
-      }
-      units.push({ anchor: child, node: child, reason: isSemanticSupportBlock(child) ? 'support-block' : 'body-block' });
-    }
-    return units;
-  }
-
-  async function prepareSemanticPdfPagination(root, signal){
-    const target = root || $printRoot;
-    if (!target || !target.querySelectorAll) return;
-    clearSemanticPdfPagination(target);
-    const maxPasses = 16;
-    for (let pass = 0; pass < maxPasses; pass += 1){
-      throwIfAborted(signal);
-      await nextPaint(signal);
-      const metrics = getSemanticPrintMetrics(target);
-      if (!metrics) return;
-      let changed = false;
-      const primaryUnits = Array.from(target.querySelectorAll('.print-opening, .print-editorial-head, .print-section'));
-      for (const unit of primaryUnits){
-        if (!unit || !unit.classList) continue;
-        if (unit.classList.contains('print-section')){
-          const rect = getRelativeRect(unit, metrics);
-          if (!rect || rect.height <= 0) continue;
-          const semanticUnits = getSectionSemanticUnits(unit);
-          const sectionHead = getSectionHeadNode(unit);
-          const firstSemanticAnchor = semanticUnits[0] && semanticUnits[0].anchor ? semanticUnits[0].anchor : null;
-          const openingRect = getCombinedRect([sectionHead, firstSemanticAnchor], metrics);
-          if (openingRect && shouldPushCombinedRect(openingRect, metrics)){
-            changed = markSemanticPdfBreak(unit, 'section-head-with-first-unit');
-            if (changed) break;
-          }
-          if (rect.height <= metrics.maxAtomicHeight){
-            if (shouldPushSemanticUnit(unit, metrics)){
-              changed = markSemanticPdfBreak(unit, 'section');
-              if (changed) break;
-            }
-            continue;
-          }
-          for (const entry of semanticUnits){
-            const anchor = entry && entry.anchor;
-            if (!anchor || anchor === unit) continue;
-            if (shouldPushSemanticUnit(anchor, metrics)){
-              changed = markSemanticPdfBreak(anchor, entry.reason || 'section-unit');
-              if (changed) break;
-            }
-          }
-          if (changed) break;
-          continue;
-        }
-        if (unit.classList.contains('print-editorial-head')){
-          const companion = getEditorialCompanionNode(unit);
-          const combinedRect = getCombinedRect([unit, companion], metrics);
-          if (combinedRect && shouldPushCombinedRect(combinedRect, metrics)){
-            changed = markSemanticPdfBreak(unit, 'editorial-head-with-next-block');
-            if (changed) break;
-          }
-        }
-        if (shouldPushSemanticUnit(unit, metrics)){
-          changed = markSemanticPdfBreak(unit, unit.classList.contains('print-opening') ? 'opening' : 'editorial-head');
-          if (changed) break;
-        }
-      }
-      if (!changed) break;
-      await waitForPrintLayout(target, signal);
-    }
-    await nextPaint(signal);
-  }
-
   function setPrintStatus(root, message, tone){
     const node = root && root.querySelector ? root.querySelector('#printStatus') : null;
     if (!node) return;
@@ -3824,7 +2993,7 @@ function setPlayerActive(id, active){
                     </div>
                     <div class="hist-right">
                       <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
-                      <button class="btn" type="button" data-act="view">Leer</button>
+                      <button class="btn" type="button" data-act="view">Ver</button>
                       <button class="btn" type="button" data-act="pdf">PDF</button>
                     </div>
                   </div>
@@ -3832,7 +3001,7 @@ function setPlayerActive(id, active){
               }).join('')}
             </div>
             ${closedSessions.length > 1 ? `<div class="small-note">Hay ${escapeHtml(String(closedSessions.length))} sesiones cerradas. Mira <b>Historial</b> para ver todas.</div>` : ''}
-            <div class="small-note">Tip: <b>Leer</b> abre la vista corrida premium y <b>PDF</b> conserva la salida oficial exportable.</div>
+            <div class="small-note">Tip: el detalle rápido abre una tabla por jugador (invertido, fichas, neto, posición).</div>
           ` : `<div class="empty">Aún no hay sesiones cerradas. Tu historial está más limpio que tu conciencia (por ahora).</div>`}
         </div>
       </section>
@@ -4047,7 +3216,7 @@ function setPlayerActive(id, active){
       const root = el(`
         <section class="screen screen--historial" aria-label="Historial">
           <h1 class="screen-title">Historial</h1>
-          <p class="screen-sub">Archivo · sesiones cerradas en orden cronológico descendente. La más reciente manda y va arriba. <b>Leer</b> abre la lectura corrida; <b>PDF</b> exporta la salida oficial.</p>
+          <p class="screen-sub">Archivo · sesiones cerradas en orden cronológico descendente. La más reciente manda y va arriba.</p>
 
           <div class="panel" role="region" aria-label="Listado">
             <div class="panel-head">
@@ -4099,7 +3268,7 @@ function setPlayerActive(id, active){
               </div>
               <div class="hist-right">
                 <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
-                <button class="btn" type="button" data-act="view">Leer</button>
+                <button class="btn" type="button" data-act="view">Ver</button>
                 <button class="btn" type="button" data-act="pdf">PDF</button>
               </div>
             </div>
@@ -4171,22 +3340,80 @@ function renderHistorialDetalle(){
     }
     ensureSessionGame(s);
 
-    try{
-      const changed = assignPdfSeqIfNeeded(s);
-      if (changed) saveSession(s);
-    }catch(e){}
+    const reportName = makeReportNameResolver(s);
 
-    const model = buildPdfDocumentModel(s);
-    const root = buildScreenReportReaderRoot(model);
+    const analysis = analyzeSession(s);
+    const sum = analysis.summary;
+    const deltaClass = Math.abs(sum.delta) < 0.0001 ? 'ok' : (sum.delta > 0 ? 'pos' : 'neg');
+
+    const root = el(`
+      <section class="screen screen--historial-detail" aria-label="Detalle de sesión">
+        <div class="mesa-head">
+          <div class="mesa-title">
+            <div class="mesa-h1">Archivo · Historial <span class="badge">${escapeHtml(String(s.date || ''))}</span></div>
+            <div class="mesa-sub">${escapeHtml(String(analysis.rows.length))} jugadores · sesión cerrada</div>
+          </div>
+          <div class="row panel-actions history-detail-actions">
+            <button class="btn" type="button" id="toMesaBtn">Ver mesa</button>
+          </div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Resumen">
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="k">Total invertido</div>
+              <div class="v">${escapeHtml(formatMoney(sum.totalInvested))}</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Total fichas</div>
+              <div class="v">${escapeHtml(formatMoney(sum.totalChipsValue))}</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Delta</div>
+              <div class="v delta ${deltaClass}">${escapeHtml(formatMoney(sum.delta))}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" role="region" aria-label="Tabla" style="margin-top:14px">
+          <div class="panel-title">Por jugador</div>
+          <div class="table-wrap" role="region" aria-label="Tabla de jugadores">
+            <table class="table table--session-detail">
+              <thead>
+                <tr>
+                  <th>Pos</th>
+                  <th>Jugador</th>
+                  <th class="num">Invertido</th>
+                  <th class="num">Fichas</th>
+                  <th class="num">Neto</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${analysis.rows.map(r => {
+                  const netClass = Math.abs(r.net) < 0.0001 ? 'ok' : (r.net > 0 ? 'pos' : 'neg');
+                  const who = reportName(r.id, r.display);
+                  return `
+                    <tr>
+                      <td class="pos">${escapeHtml(String(r.pos))}</td>
+                      <td class="who">${escapeHtml(String(who))}</td>
+                      <td class="num">${escapeHtml(formatMoney(r.invested))}</td>
+                      <td class="num">${escapeHtml(formatMoney(r.chips))}</td>
+                      <td class="num net ${netClass}">${escapeHtml(formatMoney(r.net))}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div class="small-note" style="margin-top:10px">Posición ordenada por neto (desc). Empates comparten #1.</div>
+        </div>
+      </section>
+    `);
 
     $app.innerHTML = '';
     $app.appendChild(root);
 
-    const $toMesa = document.getElementById('screenReportMesaBtn');
-    if ($toMesa) $toMesa.addEventListener('click', () => navigate('/juego/sesion?id=' + encodeURIComponent(s.id)));
-
-    const $toPdf = document.getElementById('screenReportPdfBtn');
-    if ($toPdf) $toPdf.addEventListener('click', () => exportSessionPDF(s.id));
+    document.getElementById('toMesaBtn').addEventListener('click', () => navigate('/juego/sesion?id=' + encodeURIComponent(s.id)));
   }
 
   
@@ -4235,18 +3462,8 @@ function renderHistorialDetalle(){
     }).join('');
   }
 
-  function toPdfFamilySlug(value){
-    return safeTrim(String(value || ''))
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-  }
-
   function buildPdfSection(opts){
     const title = escapeHtml(String(opts && opts.title != null ? opts.title : ''));
-    const rawTitle = String(opts && opts.title != null ? opts.title : '');
     const subtitle = safeTrim(opts && opts.subtitle);
     const body = String(opts && opts.body != null ? opts.body : '');
     const extraClass = safeTrim(opts && opts.className);
@@ -4256,13 +3473,8 @@ function renderHistorialDetalle(){
     if (extraClass) classes.push(extraClass);
     if (opts && opts.breakBefore) classes.push('pdf-break-before');
     if ((opts && opts.avoidBreak) !== false) classes.push('pdf-avoid-break');
-    const familyKey = safeTrim(opts && opts.familyKey) || toPdfFamilySlug(`${rawTitle} ${subtitle}`) || '';
-    const familyLabel = safeTrim(opts && opts.familyLabel) || safeTrim(rawTitle) || familyKey;
-    const attrs = [];
-    if (familyKey) attrs.push(`data-pdf-family-key="${escapeAttr(familyKey)}"`);
-    if (familyLabel) attrs.push(`data-pdf-family-label="${escapeAttr(familyLabel)}"`);
     return `
-      <section class="${classes.join(' ')}" ${attrs.join(' ')}>
+      <section class="${classes.join(' ')}">
         <div class="print-section-head">
           <div class="print-section-title">${title}</div>
           ${subtitle ? `<div class="print-section-sub">${escapeHtml(subtitle)}</div>` : ''}
@@ -4272,39 +3484,10 @@ function renderHistorialDetalle(){
     `;
   }
 
-  function buildPdfFragment(body, opts){
-    const options = opts && typeof opts === 'object' ? opts : {};
-    const classes = ['print-fragment'];
-    const extraClass = safeTrim(options.className);
-    if (extraClass) classes.push(extraClass);
-    if (options.avoidBreak !== false) classes.push('pdf-avoid-break');
-    const fragmentKey = safeTrim(options.fragment) || 'fragment';
-    const label = safeTrim(options.label);
-    const attrs = [`data-pdf-fragment="${escapeAttr(fragmentKey)}"`];
-    if (label) attrs.push(`data-pdf-fragment-label="${escapeAttr(label)}"`);
-    return `<div class="${classes.join(' ')}" ${attrs.join(' ')}>${body != null ? String(body) : ''}</div>`;
-  }
-
-  function buildPdfFragmentHead(opts){
-    const options = opts && typeof opts === 'object' ? opts : {};
-    const kicker = safeTrim(options.kicker);
-    const title = safeTrim(options.title);
-    const copy = safeTrim(options.copy);
-    if (!kicker && !title && !copy) return '';
-    return `
-      <div class="print-fragment-head">
-        ${kicker ? `<div class="print-fragment-kicker">${escapeHtml(kicker)}</div>` : ''}
-        ${title ? `<div class="print-fragment-title">${escapeHtml(title)}</div>` : ''}
-        ${copy ? `<div class="print-fragment-copy">${escapeHtml(copy)}</div>` : ''}
-      </div>
-    `;
-  }
-
-  function buildPdfInlineTable(opts){
-    const options = opts && typeof opts === 'object' ? opts : {};
-    const columns = Array.isArray(options.columns) ? options.columns : [];
-    const rows = Array.isArray(options.rows) ? options.rows : [];
-    const noteHtml = String(options.noteHtml != null ? options.noteHtml : '');
+  function buildPdfTableSection(opts){
+    const columns = Array.isArray(opts && opts.columns) ? opts.columns : [];
+    const rows = Array.isArray(opts && opts.rows) ? opts.rows : [];
+    const noteHtml = String(opts && opts.noteHtml != null ? opts.noteHtml : '');
     const colHtml = columns.map(col => {
       const label = escapeHtml(String(col && col.label != null ? col.label : ''));
       const klass = safeTrim(col && col.className);
@@ -4320,27 +3503,15 @@ function renderHistorialDetalle(){
       }).join('')}</tr>`;
     }).join('') : `<tr><td colspan="${Math.max(1, columns.length)}">—</td></tr>`;
 
-    return `
+    const table = `
       ${noteHtml}
-      <div class="print-table-wrap" role="region" aria-label="${escapeAttr(String(options.ariaLabel != null ? options.ariaLabel : 'Tabla del PDF'))}">
-        <table class="print-table${options.tableClassName ? ` ${escapeAttr(String(options.tableClassName))}` : ''}">
+      <div class="print-table-wrap" role="region" aria-label="${escapeAttr(String(opts && opts.ariaLabel != null ? opts.ariaLabel : 'Tabla del PDF'))}">
+        <table class="print-table">
           <thead><tr>${colHtml}</tr></thead>
           <tbody>${rowHtml}</tbody>
         </table>
       </div>
     `;
-  }
-
-  function buildPdfTableSection(opts){
-    const columns = Array.isArray(opts && opts.columns) ? opts.columns : [];
-    const rows = Array.isArray(opts && opts.rows) ? opts.rows : [];
-    const table = buildPdfInlineTable({
-      columns,
-      rows,
-      noteHtml: String(opts && opts.noteHtml != null ? opts.noteHtml : ''),
-      ariaLabel: String(opts && opts.ariaLabel != null ? opts.ariaLabel : 'Tabla del PDF'),
-      tableClassName: safeTrim(opts && opts.tableClassName),
-    });
 
     return buildPdfSection({
       title: (opts && opts.title) || 'Tabla',
@@ -4357,11 +3528,6 @@ function renderHistorialDetalle(){
   const PDF_GLOBAL_RANKING_CRITERION = 'Orden oficial: ganancia neta global, ROI global, victorias y sesiones jugadas.';
   const ROI_RECORD_MIN_GAMES = 3;
   const HISTORICAL_IMPACT_VERSION = 5;
-  const PDF_RESULTS_ROWS_PER_SECTION = 6;
-  const PDF_RESULTS_ROWS_PER_FRAGMENT = 3;
-  const PDF_RECORD_ROWS_PER_FRAGMENT = 2;
-  const PDF_IMPACT_CARDS_PER_SECTION = 1;
-  const PDF_RANK_CARDS_PER_SECTION = 1;
 
   const PDF_EDITORIAL_GROUPS = Object.freeze({
     OPENING: Object.freeze({ key: 'opening-premium', label: 'Apertura premium', showHeader: false }),
@@ -4436,26 +3602,6 @@ function renderHistorialDetalle(){
     const seqNum = (Number.isFinite(session && session.pdfSeq) && Math.floor(session.pdfSeq) >= 1) ? Math.floor(session.pdfSeq) : 0;
     return seqNum ? `Sesión ${pad3(seqNum)}` : 'Sesión sin consecutivo';
   }
-
-  function buildPdfContinuationLabel(parts, currentIndex, total){
-    const tokens = uniqStrings(Array.isArray(parts) ? parts : []);
-    const idx = Math.max(1, Math.floor(numOrZero(currentIndex) || 1));
-    const count = Math.max(1, Math.floor(numOrZero(total) || 1));
-    if (count > 1) tokens.push(`${Math.min(idx, count)}/${count}`);
-    return tokens.join(' · ') || 'Continuación';
-  }
-
-  function buildPdfContinuationNote(opts){
-    const label = safeTrim(opts && opts.label) || 'Continuación';
-    const copy = safeTrim(opts && opts.copy);
-    return `
-      <div class="print-note print-note--continuation">
-        <span class="print-note-pill">${escapeHtml(label)}</span>
-        ${copy ? `<span class="print-note-copy">${escapeHtml(copy)}</span>` : ''}
-      </div>
-    `;
-  }
-
 
   function compareGlobalRanking(a, b){
     const dn = numOrZero(b && b.netTotal) - numOrZero(a && a.netTotal);
@@ -4925,53 +4071,21 @@ function renderHistorialDetalle(){
 
     return groups.map((group, idx) => {
       const groupItems = group.keys.map(key => byKey.get(key)).filter(Boolean);
-      const rowSegments = chunkList(buildPdfRecordRows(groupItems), PDF_RECORD_ROWS_PER_FRAGMENT);
-      const introParts = [];
-      if (idx === 0) introParts.push(buildPdfRecordsOverview(rec));
-      if (idx > 0){
-        introParts.push(buildPdfContinuationNote({
-          label: buildPdfContinuationLabel(['Archivo global', 'Récords'], idx + 1, groups.length),
-          copy: 'El bloque sigue corrido dentro del mismo cierre histórico, sin cambiar elegibilidad ni criterio.',
-        }));
+      const noteParts = [];
+      if (idx === 0) noteParts.push(buildPdfRecordsOverview(rec));
+      noteParts.push(`<div class="print-note print-record-group-intro">${escapeHtml(group.intro)}</div>`);
+      if (idx === groups.length - 1){
+        noteParts.push(`<div class="print-record-seal">Cierre histórico del documento: ranking global y récords globales quedan congelados con el contexto vigente de esta exportación.</div>`);
       }
-      introParts.push(`<div class="print-note print-record-group-intro">${escapeHtml(group.intro)}</div>`);
-      const fragments = [buildPdfFragment(introParts.join(''), {
-        className: 'print-records-fragment',
-        fragment: idx === 0 ? 'records-opening-intro' : 'records-continuation-intro',
-        label: group.subtitle,
-      })];
-      rowSegments.forEach((segment, segIdx) => {
-        const segmentBody = [
-          buildPdfFragmentHead({
-            kicker: rowSegments.length > 1 ? `Subtramo ${segIdx + 1} de ${rowSegments.length}` : 'Tramo cerrado',
-            title: rowSegments.length > 1 ? `Registros ${segIdx * PDF_RECORD_ROWS_PER_FRAGMENT + 1}–${segIdx * PDF_RECORD_ROWS_PER_FRAGMENT + segment.length}` : 'Registros del bloque',
-            copy: 'Cabecera protegida y subtabla cerrada para evitar cortes a mitad de fila.',
-          }),
-          buildPdfInlineTable({
-            columns,
-            rows: segment,
-            ariaLabel: `Tabla de ${group.subtitle.toLowerCase()} · tramo ${segIdx + 1}`,
-          }),
-        ];
-        if (idx === groups.length - 1 && segIdx === rowSegments.length - 1){
-          segmentBody.push(`<div class="print-record-seal">Cierre histórico del documento: ranking global y récords globales quedan congelados con el contexto vigente de esta exportación.</div>`);
-        }
-        fragments.push(buildPdfFragment(segmentBody.join(''), {
-          className: 'print-records-fragment',
-          fragment: segIdx === 0 ? 'records-table-opening' : 'records-table-continuation',
-          label: `${group.subtitle} · tramo ${segIdx + 1}`,
-        }));
-      });
-      return buildPdfSection({
+      return buildPdfTableSection({
         title: group.title,
         subtitle: group.subtitle,
-        body: fragments.join(''),
-        tight: true,
-        className: idx === 0 ? 'print-section--records-major' : 'print-section--records-cont print-section--continuation',
-        familyKey: `global-records-${toPdfFamilySlug(group.subtitle) || idx + 1}`,
-        familyLabel: `${group.title} · ${group.subtitle}`,
-        breakBefore: false,
-        avoidBreak: false,
+        columns,
+        rows: buildPdfRecordRows(groupItems),
+        ariaLabel: `Tabla de ${group.subtitle.toLowerCase()}`,
+        noteHtml: noteParts.join(''),
+        className: idx === 0 ? 'print-section--records-major' : 'print-section--records-cont',
+        breakBefore: idx > 0,
       });
     }).join('');
   }
@@ -4984,8 +4098,6 @@ function renderHistorialDetalle(){
         subtitle: 'Fotografía histórica al momento del cierre.',
         body: `<div class="empty">Aún no hay jugadores con historial válido para el ranking global.</div>`,
         subtle: true,
-        familyKey: 'global-ranking',
-        familyLabel: 'Ranking global',
       });
     }
 
@@ -4995,7 +4107,7 @@ function renderHistorialDetalle(){
       rankCounts.set(key, (rankCounts.get(key) || 0) + 1);
     });
 
-    const chunks = chunkList(list, PDF_RANK_CARDS_PER_SECTION);
+    const chunks = chunkList(list, 4);
     return chunks.map((chunk, idx) => {
       const cards = chunk.map(r => {
         const net = numOrZero(r && r.netTotal);
@@ -5074,30 +4186,12 @@ function renderHistorialDetalle(){
         `;
       }).join('');
 
-      const continuation = idx === 0
-        ? ''
-        : buildPdfContinuationNote({
-            label: buildPdfContinuationLabel(['Archivo global', 'Ranking'], idx + 1, chunks.length),
-            copy: 'Mismo orden oficial, mismo criterio histórico y continuación natural de la fotografía global.',
-          });
-
       return buildPdfSection({
         title: 'Ranking global',
-        subtitle: idx === 0
-          ? 'Fotografía histórica completa al momento del cierre.'
-          : 'Continuación natural del mismo ranking global oficial.',
-        body: buildPdfFragment(`${idx === 0 ? buildPdfRankingOverview(list) : continuation}${buildPdfFragmentHead({
-          kicker: chunks.length > 1 ? `Ficha ${idx + 1} de ${chunks.length}` : 'Ficha de ranking',
-          title: chunk[0] ? `${safeTrim(chunk[0].display) || 'Jugador'} · puesto ${Math.max(1, Math.floor(numOrZero(chunk[0].rankPos) || 0))}°` : 'Ficha histórica del ranking',
-          copy: 'Se repite el contexto justo antes de la ficha para que el ranking continúe sin parecer un bloque nuevo accidental.',
-        })}<div class="print-rank-list">${cards}</div>`, {
-          className: 'print-ranking-fragment',
-          fragment: idx === 0 ? 'ranking-opening' : 'ranking-continuation',
-          label: `Ranking tramo ${idx + 1}`,
-        }),
-        className: idx === 0 ? 'print-section--ranking-major' : 'print-section--ranking-cont print-section--continuation',
-        familyKey: 'global-ranking',
-        familyLabel: 'Ranking global',
+        subtitle: idx === 0 ? 'Fotografía histórica completa al momento del cierre.' : `Continuación ${idx + 1} de ${chunks.length}`,
+        body: `${idx === 0 ? buildPdfRankingOverview(list) : ''}<div class="print-rank-list">${cards}</div>`,
+        className: idx === 0 ? 'print-section--ranking-major' : 'print-section--ranking-cont',
+        breakBefore: idx > 0,
         avoidBreak: false,
       });
     }).join('');
@@ -5384,8 +4478,6 @@ function renderHistorialDetalle(){
         body: `<div class="empty">Todavía no hay suficiente histórico para mostrar impacto comparativo de esta sesión.</div>`,
         subtle: true,
         className: 'print-section--impact-major',
-        familyKey: 'historical-impact-summary',
-        familyLabel: 'Impacto de esta Sesión · resumen',
       });
     }
 
@@ -5393,124 +4485,95 @@ function renderHistorialDetalle(){
     const topEntries = players.filter(item => (Array.isArray(item && item.milestoneLabels) ? item.milestoneLabels : []).some(label => /Top\s*[35]/i.test(String(label || '')))).length;
     const noExtraMilestone = players.filter(item => !(Array.isArray(item && item.recordLabels) && item.recordLabels.length) && !(Array.isArray(item && item.milestoneLabels) && item.milestoneLabels.length)).length;
     const summaryLead = buildPdfImpactSummaryLead(summary, players);
-    const summaryHtml = buildPdfFragment(`
-      <div class="print-impact-summary">
-        <div class="print-impact-summary-top">
-          <div class="print-impact-summary-kicker">Puente entre la noche y la historia</div>
-          <div class="print-impact-summary-lead">${escapeHtml(summaryLead)}</div>
-          <div class="print-impact-summary-copy">Se compara el tablero histórico justo antes del cierre contra el tablero que quedó inmediatamente después. Así el previo → nuevo se mantiene limpio, incluso con sesiones locales, importadas o legacy.</div>
-        </div>
-        <div class="print-impact-summary-grid">
-          <article class="print-impact-summary-card">
-            <div class="k">Participantes analizados</div>
-            <div class="v">${escapeHtml(String(numOrZero(summary.participants)))}</div>
-            <div class="s">Lectura histórica individual de toda la mesa cerrada.</div>
-          </article>
-          <article class="print-impact-summary-card">
-            <div class="k">Balance de movimiento</div>
-            <div class="v">${escapeHtml(String(numOrZero(summary.movedUp)))} ↑ · ${escapeHtml(String(numOrZero(summary.movedDown)))} ↓</div>
-            <div class="s">${escapeHtml(String(numOrZero(summary.debuts)))} debuts · ${escapeHtml(String(numOrZero(summary.unchanged)))} sin giro fuerte.</div>
-          </article>
-          <article class="print-impact-summary-card">
-            <div class="k">Récords y aperturas</div>
-            <div class="v">${escapeHtml(String(numOrZero(summary.recordLabelsTotal)))}</div>
-            <div class="s">${escapeHtml(String(numOrZero(summary.recordBreakers)))} jugadores activaron récord nuevo.</div>
-          </article>
-          <article class="print-impact-summary-card">
-            <div class="k">Otros giros relevantes</div>
-            <div class="v">${escapeHtml(String(topEntries))} entrada${topEntries === 1 ? '' : 's'}</div>
-            <div class="s">Top 3 / Top 5 tocados · ${escapeHtml(String(noExtraMilestone))} sin hito extra.</div>
-          </article>
-        </div>
-      </div>
-    `, { className: 'print-impact-fragment', fragment: 'impact-summary' });
-
-    const renderImpactCard = (item) => {
-      const sessionNet = numOrZero(item.sessionNet);
-      const sessionNetClass = Math.abs(sessionNet) < 0.0001 ? 'ok' : (sessionNet > 0 ? 'pos' : 'neg');
-      const deltaNetClass = Math.abs(numOrZero(item.netDelta)) < 0.0001 ? 'ok' : (numOrZero(item.netDelta) > 0 ? 'pos' : 'neg');
-      const deltaRoiClass = Math.abs(numOrZero(item.roiDelta)) < 0.0001 ? 'ok' : (numOrZero(item.roiDelta) > 0 ? 'pos' : 'neg');
-      const tags = [];
-      (Array.isArray(item.recordLabels) ? item.recordLabels : []).forEach(label => tags.push({ tone: 'gold', text: `Récord: ${label}` }));
-      (Array.isArray(item.milestoneLabels) ? item.milestoneLabels : []).forEach(label => tags.push({ tone: 'blue', text: label }));
-      if (!tags.length) tags.push({ tone: 'muted', text: 'Sin hito extra en esta sesión' });
-      const tagsHtml = tags.map(tag => `<span class="print-impact-tag ${escapeAttr(tag.tone)}">${escapeHtml(tag.text)}</span>`).join('');
-      return `
-        <article class="print-impact-card pdf-avoid-break">
-          <div class="print-impact-top">
-            <div class="print-impact-who">
-              <div class="print-impact-name">${escapeHtml(String(item.display || 'Sin nombre'))}</div>
-              <div class="print-impact-sub">Terminó ${escapeHtml(String(numOrZero(item.sessionPos) || '—'))}° en la sesión · Resultado <span class="net ${sessionNetClass}">${escapeHtml(formatMoney(sessionNet))}</span></div>
-            </div>
-            <div class="print-impact-move ${escapeAttr(item.moveMeta && item.moveMeta.tone || 'flat')}">
-              <div class="print-impact-move-k">Movimiento histórico</div>
-              <div class="print-impact-move-v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</div>
-              <div class="print-impact-move-s">${escapeHtml(item.moveMeta && item.moveMeta.label || 'Sin cambio')}</div>
-            </div>
+    const chunks = chunkList(players, 3);
+    return chunks.map((chunk, idx) => {
+      const summaryHtml = idx === 0 ? `
+        <div class="print-impact-summary">
+          <div class="print-impact-summary-top">
+            <div class="print-impact-summary-kicker">Puente entre la noche y la historia</div>
+            <div class="print-impact-summary-lead">${escapeHtml(summaryLead)}</div>
+            <div class="print-impact-summary-copy">Se compara el tablero histórico justo antes del cierre contra el tablero que quedó inmediatamente después. Así el previo → nuevo se mantiene limpio, incluso con sesiones locales, importadas o legacy.</div>
           </div>
-          <div class="print-impact-grid">
-            <div class="print-impact-stat">
-              <span class="k">Puesto global</span>
-              <span class="v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</span>
-              <span class="sub">${escapeHtml(item.moveMeta && item.moveMeta.detail || 'Sin variación visible.')}</span>
-            </div>
-            <div class="print-impact-stat">
-              <span class="k">Neto global</span>
-              <span class="v">${escapeHtml(formatMoney(numOrZero(item.netBefore)))} → ${escapeHtml(formatMoney(numOrZero(item.netAfter)))}</span>
-              <span class="sub delta ${deltaNetClass}">${escapeHtml(formatSignedMoney(numOrZero(item.netDelta)))}</span>
-            </div>
-            <div class="print-impact-stat">
-              <span class="k">ROI global</span>
-              <span class="v">${escapeHtml(formatPercent(numOrZero(item.roiBefore)))} → ${escapeHtml(formatPercent(numOrZero(item.roiAfter)))}</span>
-              <span class="sub delta ${deltaRoiClass}">${escapeHtml(formatSignedPercent(numOrZero(item.roiDelta)))}</span>
-            </div>
+          <div class="print-impact-summary-grid">
+            <article class="print-impact-summary-card">
+              <div class="k">Participantes analizados</div>
+              <div class="v">${escapeHtml(String(numOrZero(summary.participants)))}</div>
+              <div class="s">Lectura histórica individual de toda la mesa cerrada.</div>
+            </article>
+            <article class="print-impact-summary-card">
+              <div class="k">Balance de movimiento</div>
+              <div class="v">${escapeHtml(String(numOrZero(summary.movedUp)))} ↑ · ${escapeHtml(String(numOrZero(summary.movedDown)))} ↓</div>
+              <div class="s">${escapeHtml(String(numOrZero(summary.debuts)))} debuts · ${escapeHtml(String(numOrZero(summary.unchanged)))} sin giro fuerte.</div>
+            </article>
+            <article class="print-impact-summary-card">
+              <div class="k">Récords y aperturas</div>
+              <div class="v">${escapeHtml(String(numOrZero(summary.recordLabelsTotal)))}</div>
+              <div class="s">${escapeHtml(String(numOrZero(summary.recordBreakers)))} jugadores activaron récord nuevo.</div>
+            </article>
+            <article class="print-impact-summary-card">
+              <div class="k">Otros giros relevantes</div>
+              <div class="v">${escapeHtml(String(topEntries))} entrada${topEntries === 1 ? '' : 's'}</div>
+              <div class="s">Top 3 / Top 5 tocados · ${escapeHtml(String(noExtraMilestone))} sin hito extra.</div>
+            </article>
           </div>
-          <div class="print-impact-narrative"><span class="label">Lectura histórica:</span> ${escapeHtml(item.narrative || 'La sesión actualizó sus acumulados.')}</div>
-          <div class="print-impact-tags">${tagsHtml}</div>
-        </article>
-      `;
-    };
+        </div>
+      ` : '';
 
-    const sections = [buildPdfSection({
-      title: 'Impacto de esta Sesión',
-      subtitle: 'Qué cambió en la historia general de la mesa gracias a este cierre.',
-      body: summaryHtml,
-      className: 'print-section--impact-major',
-      familyKey: 'historical-impact-summary',
-      familyLabel: 'Impacto de esta Sesión · resumen',
-      avoidBreak: false,
-    })];
+      const cards = chunk.map(item => {
+        const sessionNet = numOrZero(item.sessionNet);
+        const sessionNetClass = Math.abs(sessionNet) < 0.0001 ? 'ok' : (sessionNet > 0 ? 'pos' : 'neg');
+        const deltaNetClass = Math.abs(numOrZero(item.netDelta)) < 0.0001 ? 'ok' : (numOrZero(item.netDelta) > 0 ? 'pos' : 'neg');
+        const deltaRoiClass = Math.abs(numOrZero(item.roiDelta)) < 0.0001 ? 'ok' : (numOrZero(item.roiDelta) > 0 ? 'pos' : 'neg');
+        const tags = [];
+        (Array.isArray(item.recordLabels) ? item.recordLabels : []).forEach(label => tags.push({ tone: 'gold', text: `Récord: ${label}` }));
+        (Array.isArray(item.milestoneLabels) ? item.milestoneLabels : []).forEach(label => tags.push({ tone: 'blue', text: label }));
+        if (!tags.length) tags.push({ tone: 'muted', text: 'Sin hito extra en esta sesión' });
+        const tagsHtml = tags.map(tag => `<span class="print-impact-tag ${escapeAttr(tag.tone)}">${escapeHtml(tag.text)}</span>`).join('');
+        return `
+          <article class="print-impact-card pdf-avoid-break">
+            <div class="print-impact-top">
+              <div class="print-impact-who">
+                <div class="print-impact-name">${escapeHtml(String(item.display || 'Sin nombre'))}</div>
+                <div class="print-impact-sub">Terminó ${escapeHtml(String(numOrZero(item.sessionPos) || '—'))}° en la sesión · Resultado <span class="net ${sessionNetClass}">${escapeHtml(formatMoney(sessionNet))}</span></div>
+              </div>
+              <div class="print-impact-move ${escapeAttr(item.moveMeta && item.moveMeta.tone || 'flat')}">
+                <div class="print-impact-move-k">Movimiento histórico</div>
+                <div class="print-impact-move-v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</div>
+                <div class="print-impact-move-s">${escapeHtml(item.moveMeta && item.moveMeta.label || 'Sin cambio')}</div>
+              </div>
+            </div>
+            <div class="print-impact-grid">
+              <div class="print-impact-stat">
+                <span class="k">Puesto global</span>
+                <span class="v">${escapeHtml(item.beforeRankLabel || '—')} → ${escapeHtml(item.afterRankLabel || '—')}</span>
+                <span class="sub">${escapeHtml(item.moveMeta && item.moveMeta.detail || 'Sin variación visible.')}</span>
+              </div>
+              <div class="print-impact-stat">
+                <span class="k">Neto global</span>
+                <span class="v">${escapeHtml(formatMoney(numOrZero(item.netBefore)))} → ${escapeHtml(formatMoney(numOrZero(item.netAfter)))}</span>
+                <span class="sub delta ${deltaNetClass}">${escapeHtml(formatSignedMoney(numOrZero(item.netDelta)))}</span>
+              </div>
+              <div class="print-impact-stat">
+                <span class="k">ROI global</span>
+                <span class="v">${escapeHtml(formatPercent(numOrZero(item.roiBefore)))} → ${escapeHtml(formatPercent(numOrZero(item.roiAfter)))}</span>
+                <span class="sub delta ${deltaRoiClass}">${escapeHtml(formatSignedPercent(numOrZero(item.roiDelta)))}</span>
+              </div>
+            </div>
+            <div class="print-impact-narrative"><span class="label">Lectura histórica:</span> ${escapeHtml(item.narrative || 'La sesión actualizó sus acumulados.')}</div>
+            <div class="print-impact-tags">${tagsHtml}</div>
+          </article>
+        `;
+      }).join('');
 
-    const impactChunks = chunkList(players, PDF_IMPACT_CARDS_PER_SECTION);
-    impactChunks.forEach((chunk, idx) => {
-      const continuation = idx === 0
-        ? '<div class="print-note">Cada ficha histórica conserva el mismo orden editorial del reporte y agrupa a los jugadores en tramos para que la lectura impresa respire mejor.</div>'
-        : buildPdfContinuationNote({
-            label: buildPdfContinuationLabel(['Impacto histórico'], idx + 1, impactChunks.length),
-            copy: 'Sigue la misma lectura histórica individual, con el mismo previo → nuevo y sin cambiar criterio comparativo.',
-          });
-      sections.push(buildPdfSection({
+      return buildPdfSection({
         title: 'Impacto de esta Sesión',
-        subtitle: idx === 0
-          ? 'Lectura histórica individual de toda la mesa cerrada.'
-          : 'Continuación natural de la lectura histórica individual, con el mismo previo → nuevo.',
-        body: buildPdfFragment(`${continuation}${buildPdfFragmentHead({
-          kicker: impactChunks.length > 1 ? `Ficha ${idx + 1} de ${impactChunks.length}` : 'Ficha histórica',
-          title: chunk[0] ? `${safeTrim(chunk[0].display) || 'Jugador'} · sesión ${Math.max(1, Math.floor(numOrZero(chunk[0].sessionPos) || 0))}°` : 'Ficha histórica individual',
-          copy: 'Se repite el contexto mínimo para que el bloque continúe entre páginas sin sentirse cortado ni reiniciado.',
-        })}<div class="print-impact-list">${chunk.map(renderImpactCard).join('')}</div>`, {
-          className: 'print-impact-fragment',
-          fragment: idx === 0 ? 'impact-cards-opening' : 'impact-cards-continuation',
-          label: `Impacto tramo ${idx + 1}`,
-        }),
-        className: 'print-section--impact-cont print-section--continuation',
-        familyKey: 'historical-impact-cards',
-        familyLabel: 'Impacto de esta Sesión',
+        subtitle: idx === 0 ? 'Qué cambió en la historia general de la mesa gracias a este cierre.' : `Continuación ${idx + 1} de ${chunks.length}`,
+        body: `${summaryHtml}<div class="print-impact-list">${cards}</div>`,
+        className: idx === 0 ? 'print-section--impact-major' : 'print-section--impact-cont',
+        breakBefore: idx > 0,
         avoidBreak: false,
-      }));
-    });
-
-    return sections.join('');
+      });
+    }).join('');
   }
 
   function getPdfGlobalBaseData(session, analytics){
@@ -5533,6 +4596,33 @@ function renderHistorialDetalle(){
     };
   }
 
+
+  function buildPdfEditorialGroup(opts){
+    const key = safeTrim(opts && opts.key) || 'group';
+    const label = safeTrim(opts && opts.label) || key;
+    const kicker = safeTrim(opts && opts.kicker);
+    const lead = safeTrim(opts && opts.lead);
+    const copy = safeTrim(opts && opts.copy);
+    const showHeader = !!(opts && opts.showHeader) && (!!kicker || !!lead || !!copy);
+    const sections = Array.isArray(opts && opts.sections) ? opts.sections.filter(Boolean) : [];
+    const classes = ['print-editorial-group'];
+    if (opts && opts.breakBefore) classes.push('pdf-break-before');
+    if (showHeader) classes.push('print-editorial-group--with-head');
+    const headHtml = showHeader ? `
+      <div class="print-editorial-head pdf-avoid-break">
+        ${kicker ? `<div class="print-editorial-kicker">${escapeHtml(kicker)}</div>` : ''}
+        <div class="print-editorial-title">${escapeHtml(label)}</div>
+        ${lead ? `<div class="print-editorial-lead">${escapeHtml(lead)}</div>` : ''}
+        ${copy ? `<div class="print-editorial-copy">${escapeHtml(copy)}</div>` : ''}
+      </div>
+    ` : '';
+    return `
+      <div class="${classes.join(' ')}" data-pdf-group="${escapeAttr(key)}" data-pdf-group-label="${escapeAttr(label)}">
+        ${headHtml}
+        ${sections.join('')}
+      </div>
+    `;
+  }
 
   function resolvePdfSessionSummary(session, analysis, reportName){
     const s = session || {};
@@ -5776,9 +4866,7 @@ function renderHistorialDetalle(){
       subtitle: 'La noche en una sola mirada: contexto, balance y piezas clave antes del podio.',
       body,
       className: 'print-section--session-executive',
-      familyKey: 'session-executive',
-      familyLabel: 'Resumen ejecutivo',
-      avoidBreak: true,
+      avoidBreak: false,
     });
   }
 
@@ -5865,9 +4953,7 @@ function renderHistorialDetalle(){
       subtitle: 'Escalera oficial del cierre ordenada por neto final.',
       body,
       className: 'print-section--session-podium',
-      familyKey: 'session-podium',
-      familyLabel: 'Podio de la sesión',
-      avoidBreak: true,
+      avoidBreak: false,
     });
   }
 
@@ -5900,103 +4986,90 @@ function renderHistorialDetalle(){
 
   function buildPdfPlayerDetailSections(playerRows){
     const rows = Array.isArray(playerRows) ? playerRows : [];
-    const chunks = chunkList(rows, PDF_RESULTS_ROWS_PER_SECTION);
-    const columns = [
-      { label: 'Pos.', className: 'num' },
-      { label: 'Jugador' },
-      { label: 'Jugado', className: 'num' },
-      { label: 'Fichas finales', className: 'num' },
-      { label: 'Neto final', className: 'num' },
-      { label: 'Ganado', className: 'num' },
-      { label: 'Perdido', className: 'num' },
-      { label: 'Rebuys', className: 'num' },
-    ];
-
-    const renderRows = (chunk) => {
-      if (!chunk.length) return [[ '—', '—', '—', '—', '—', '—', '—', '—' ]];
-      return chunk.map(row => {
-        const rowClass = ['print-results-row', `tone-${row.netTone}`];
-        if (row.pos === 1) rowClass.push('is-winner');
-        if (row.lost > 0.0001 && row.pos >= 3) rowClass.push('is-loss');
-        const rowClassName = rowClass.join(' ');
-        return [
-          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(String(row.pos))}°</div>`,
-          `<div class="${rowClassName} print-results-rowcell"><div class="print-results-player"><span class="print-results-name">${escapeHtml(row.display)}</span>${row.pos <= 3 ? `<span class="print-results-badge">Podio</span>` : ''}</div></div>`,
-          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatMoney(row.invested))}</div>`,
-          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatMoney(row.chips))}</div>`,
-          `<div class="${rowClassName} print-results-rowcell num">${buildPdfNetValue(row.net, true)}</div>`,
-          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatMoney(row.gained))}</div>`,
-          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatMoney(row.lost))}</div>`,
-          `<div class="${rowClassName} print-results-rowcell num">${escapeHtml(formatPdfRebuyCell(row))}</div>`,
-        ];
-      });
-    };
-
-    const buildResultFragment = (outerIdx, segment, segIdx, totalSegments) => {
-      const firstPos = segment[0] ? segment[0].pos : '—';
-      const lastPos = segment.length ? segment[segment.length - 1].pos : '—';
-      const rangeLabel = segment.length
-        ? `Posiciones ${firstPos}°${segment.length > 1 ? `–${lastPos}°` : ''}`
-        : 'Sin resultados';
-      const intro = segIdx === 0
-        ? (outerIdx === 0
-          ? '<div class="print-note">Se conserva el detalle completo por jugador y se presenta después del resumen ejecutivo y del podio para contar mejor la noche.</div>'
-          : buildPdfContinuationNote({ label: buildPdfContinuationLabel(['Sesión', 'Resultados'], outerIdx + 1, chunks.length), copy: 'Mismo orden por neto final, misma tabla oficial del cierre y continuación natural del bloque.' }))
-        : '';
-      return buildPdfFragment(`
-        ${intro}
-        ${buildPdfFragmentHead({
-          kicker: totalSegments > 1 ? `Subtramo ${segIdx + 1} de ${totalSegments}` : 'Tramo cerrado',
-          title: rangeLabel,
-          copy: 'Cabecera repetida y tramo cerrado para que el PDF continúe limpio sin cortar filas ni medias líneas.',
-        })}
-        ${buildPdfInlineTable({
-          columns,
-          rows: renderRows(segment),
-          ariaLabel: `Resultados completos de la sesión · ${rangeLabel}`,
-          tableClassName: 'print-results-table',
-        })}
-      `, {
-        className: 'print-results-fragment',
-        fragment: segIdx === 0 ? 'results-opening-segment' : 'results-continuation-segment',
-        label: rangeLabel,
-      });
+    const chunks = chunkList(rows, 16);
+    const renderTable = (chunk) => {
+      if (!chunk.length){
+        return `
+          <div class="print-table-wrap" role="region" aria-label="Resultados completos de la sesión">
+            <table class="print-table print-results-table">
+              <thead>
+                <tr>
+                  <th class="num">Pos.</th>
+                  <th>Jugador</th>
+                  <th class="num">Jugado</th>
+                  <th class="num">Fichas finales</th>
+                  <th class="num">Neto final</th>
+                  <th class="num">Ganado</th>
+                  <th class="num">Perdido</th>
+                  <th class="num">Rebuys</th>
+                </tr>
+              </thead>
+              <tbody><tr><td colspan="8">—</td></tr></tbody>
+            </table>
+          </div>
+        `;
+      }
+      return `
+        <div class="print-table-wrap" role="region" aria-label="Resultados completos de la sesión">
+          <table class="print-table print-results-table">
+            <thead>
+              <tr>
+                <th class="num">Pos.</th>
+                <th>Jugador</th>
+                <th class="num">Jugado</th>
+                <th class="num">Fichas finales</th>
+                <th class="num">Neto final</th>
+                <th class="num">Ganado</th>
+                <th class="num">Perdido</th>
+                <th class="num">Rebuys</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${chunk.map(row => {
+                const rowClass = ['print-results-row', `tone-${row.netTone}`];
+                if (row.pos === 1) rowClass.push('is-winner');
+                if (row.lost > 0.0001 && row.pos >= 3) rowClass.push('is-loss');
+                return `
+                  <tr class="${rowClass.join(' ')}">
+                    <td class="num">${escapeHtml(String(row.pos))}°</td>
+                    <td>
+                      <div class="print-results-player">
+                        <span class="print-results-name">${escapeHtml(row.display)}</span>
+                        ${row.pos <= 3 ? `<span class="print-results-badge">Podio</span>` : ''}
+                      </div>
+                    </td>
+                    <td class="num">${escapeHtml(formatMoney(row.invested))}</td>
+                    <td class="num">${escapeHtml(formatMoney(row.chips))}</td>
+                    <td class="num">${buildPdfNetValue(row.net, true)}</td>
+                    <td class="num">${escapeHtml(formatMoney(row.gained))}</td>
+                    <td class="num">${escapeHtml(formatMoney(row.lost))}</td>
+                    <td class="num">${escapeHtml(formatPdfRebuyCell(row))}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
     };
 
     if (!chunks.length){
       return buildPdfSection({
         title: 'Resultados completos de la sesión',
         subtitle: 'Detalle individual completo, todavía con todas las tripas útiles del cierre.',
-        body: buildPdfFragment(buildPdfInlineTable({
-          columns,
-          rows: renderRows([]),
-          ariaLabel: 'Resultados completos de la sesión',
-          tableClassName: 'print-results-table',
-        }), {
-          className: 'print-results-fragment',
-          fragment: 'results-empty',
-          label: 'Sin resultados',
-        }),
+        body: renderTable([]),
         className: 'print-section--session-detail',
-        familyKey: 'session-results',
-        familyLabel: 'Resultados completos de la sesión',
       });
     }
 
-    return chunks.map((chunk, idx) => {
-      const segments = chunkList(chunk, PDF_RESULTS_ROWS_PER_FRAGMENT);
-      return buildPdfSection({
-        title: 'Resultados completos de la sesión',
-        subtitle: idx === 0
-          ? 'Detalle individual completo, ordenado por neto final.'
-          : 'Continuación natural del mismo orden oficial, sin perder filas ni contexto.',
-        body: segments.map((segment, segIdx) => buildResultFragment(idx, segment, segIdx, segments.length)).join(''),
-        className: idx === 0 ? 'print-section--session-detail' : 'print-section--session-detail-cont print-section--continuation',
-        familyKey: 'session-results',
-        familyLabel: 'Resultados completos de la sesión',
-        avoidBreak: false,
-      });
-    }).join('');
+    return chunks.map((chunk, idx) => buildPdfSection({
+      title: 'Resultados completos de la sesión',
+      subtitle: chunks.length > 1 ? `Bloque ${idx + 1} de ${chunks.length} · ordenado por neto final` : 'Detalle individual completo, ordenado por neto final.',
+      body: `${idx === 0 ? '<div class="print-note">Se conserva el detalle completo por jugador y se presenta después del resumen ejecutivo y del podio para contar mejor la noche.</div>' : ''}${renderTable(chunk)}`,
+      className: idx === 0 ? 'print-section--session-detail' : 'print-section--session-detail-cont',
+      breakBefore: idx > 0,
+      avoidBreak: false,
+    })).join('');
   }
 
   function buildPdfGlobalBaseSection(globalBase, fallbackCloseDateTime){
@@ -6065,886 +5138,9 @@ function renderHistorialDetalle(){
     };
   }
 
-  function buildSharedEditorialGroupMarkup(opts, shellClassName, headClassName){
-    const key = safeTrim(opts && opts.key) || 'group';
-    const label = safeTrim(opts && opts.label) || key;
-    const kicker = safeTrim(opts && opts.kicker);
-    const lead = safeTrim(opts && opts.lead);
-    const copy = safeTrim(opts && opts.copy);
-    const showHeader = !!(opts && opts.showHeader) && (!!kicker || !!lead || !!copy);
-    const sections = Array.isArray(opts && opts.sections) ? opts.sections.filter(Boolean) : [];
-    const classes = String(shellClassName || '').split(/\s+/).filter(Boolean);
-    if (opts && opts.breakBefore) classes.push('pdf-break-before');
-    if (showHeader) classes.push('print-editorial-group--with-head');
-    const headClasses = String(headClassName || '').split(/\s+/).filter(Boolean);
-    const headHtml = showHeader ? `
-      <div class="${headClasses.join(' ')} pdf-avoid-break">
-        ${kicker ? `<div class="print-editorial-kicker">${escapeHtml(kicker)}</div>` : ''}
-        <div class="print-editorial-title">${escapeHtml(label)}</div>
-        ${lead ? `<div class="print-editorial-lead">${escapeHtml(lead)}</div>` : ''}
-        ${copy ? `<div class="print-editorial-copy">${escapeHtml(copy)}</div>` : ''}
-      </div>
-    ` : '';
-    return `
-      <article class="${classes.join(' ')}" data-pdf-group="${escapeAttr(key)}" data-pdf-group-label="${escapeAttr(label)}">
-        ${headHtml}
-        ${sections.join('')}
-      </article>
-    `;
-  }
-
-  function buildPdfEditorialGroup(opts){
-    return buildSharedEditorialGroupMarkup(opts, 'pdf-document-group print-editorial-group', 'pdf-document-group-head print-editorial-head');
-  }
-
-  function buildScreenEditorialGroup(opts){
-    return buildSharedEditorialGroupMarkup(opts, 'report-reader-group print-editorial-group', 'report-reader-group-head print-editorial-head');
-  }
-
-  function buildPdfPrintDocumentSections(model){
+  function buildPdfDocumentSections(model){
     const groups = Array.isArray(model && model.editorialGroups) ? model.editorialGroups : [];
     return groups.map(group => buildPdfEditorialGroup(group)).join('');
-  }
-
-  function buildScreenReportSections(model){
-    const groups = Array.isArray(model && model.editorialGroups) ? model.editorialGroups : [];
-    return groups.map(group => buildScreenEditorialGroup(group)).join('');
-  }
-
-  function buildPdfDocumentSections(model, mode){
-    const modeKey = safeTrim(mode).toLowerCase() === 'screen' ? 'screen' : 'pdf';
-    return modeKey === 'screen' ? buildScreenReportSections(model) : buildPdfPrintDocumentSections(model);
-  }
-
-  function getReportModeMeta(model, mode){
-    const currentModel = model && typeof model === 'object' ? model : {};
-    const summary = currentModel.summary || {};
-    const session = currentModel.session || {};
-    const modeKey = safeTrim(mode).toLowerCase() === 'pdf' ? 'pdf' : 'screen';
-    const sessionTitle = safeTrim(summary.sessionTitle) || buildPdfSessionDisplayTitle(session);
-    const sessionDateLabel = safeTrim(summary.sessionDateLabel) || safeTrim(session.date) || '—';
-    const sessionRef = safeTrim(summary.sessionRef) || pdfSessionReferenceLabel(session);
-    const kicker = modeKey === 'pdf' ? 'PDF exportable oficial' : 'Vista corrida premium';
-    const lead = modeKey === 'pdf'
-      ? 'Documento oficial listo para impresión o guardado, con la misma narrativa base de la vista corrida.'
-      : 'Lectura en pantalla, continua y editorial. El PDF oficial sigue aparte para exportación.';
-    const copy = modeKey === 'pdf'
-      ? 'Este modo prioriza cortes limpios, paginación más sobria y una salida estable al guardar o descargar.'
-      : 'Toda la narrativa premium corre seguida, sin cortes visuales de página y sin perder el archivo histórico completo.';
-    const tags = modeKey === 'pdf'
-      ? ['PDF exportable', 'Impresión / guardado']
-      : ['Pantalla corrida', 'PDF oficial aparte'];
-    return { sessionTitle, sessionDateLabel, sessionRef, kicker, lead, copy, tags, modeKey };
-  }
-
-  function buildReportModePanelMarkup(meta, title){
-    const currentMeta = meta && typeof meta === 'object' ? meta : {};
-    const heading = safeTrim(title) || 'Modo del reporte';
-    const tags = Array.isArray(currentMeta.tags) ? currentMeta.tags.filter(Boolean) : [];
-    return `
-      <div class="panel report-reader-mode-panel print-mode-panel" role="region" aria-label="${escapeAttr(heading)}">
-        <div class="panel-head">
-          <div class="panel-title" style="margin:0">${escapeHtml(heading)}</div>
-          <div class="row panel-actions report-reader-mode-actions print-mode-actions">
-            ${tags.map(tag => `<span class="report-reader-tag print-mode-tag">${escapeHtml(String(tag))}</span>`).join('')}
-          </div>
-        </div>
-        <div class="report-reader-mode-copy print-mode-copy">
-          <p class="report-reader-mode-lead print-mode-lead">${escapeHtml(safeTrim(currentMeta.copy) || '—')}</p>
-          <p class="report-reader-mode-sub print-mode-sub">Referencia de sesión: ${escapeHtml(safeTrim(currentMeta.sessionRef) || '—')}.</p>
-        </div>
-      </div>
-    `;
-  }
-
-  function buildPdfDocumentHeadMarkup(meta){
-    const currentMeta = meta && typeof meta === 'object' ? meta : {};
-    return `
-      <div class="pdf-document-head">
-        <div class="print-head print-head--report-mode pdf-document-brandbar">
-          <div class="print-brand">
-            <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
-            <span>POKERITO</span>
-          </div>
-          <div class="pdf-document-chip">PDF oficial</div>
-        </div>
-
-        <div class="print-reader-head pdf-document-reader-head">
-          <div class="print-reader-kicker">${escapeHtml(safeTrim(currentMeta.kicker) || 'PDF exportable oficial')}</div>
-          <div class="print-reader-title">${escapeHtml(safeTrim(currentMeta.sessionTitle) || 'Sesión')} <span class="badge">${escapeHtml(safeTrim(currentMeta.sessionDateLabel) || '—')}</span></div>
-          <div class="print-reader-sub">${escapeHtml(safeTrim(currentMeta.lead) || 'Documento oficial listo para impresión o guardado.')}</div>
-        </div>
-
-        ${buildReportModePanelMarkup(currentMeta, 'Exportación PDF')}
-      </div>
-    `;
-  }
-
-  function buildPdfPageShell(meta, pageNumber, totalPages){
-    const currentMeta = meta && typeof meta === 'object' ? meta : {};
-    const currentPage = Math.max(1, Math.floor(numOrZero(pageNumber) || 1));
-    const pageTotal = Math.max(currentPage, Math.floor(numOrZero(totalPages) || currentPage));
-    return el(`
-      <section class="pdf-page" data-pdf-page="${escapeAttr(String(currentPage))}">
-        <div class="pdf-page-frame">
-          <header class="pdf-page-header">
-            <div class="pdf-page-brand">
-              <div class="print-brand">
-                <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
-                <span>POKERITO</span>
-              </div>
-              <div class="pdf-page-kicker">Documento oficial</div>
-            </div>
-            <div class="pdf-page-session-meta">
-              <div class="pdf-page-session-title">${escapeHtml(safeTrim(currentMeta.sessionTitle) || 'Sesión')}</div>
-              <div class="pdf-page-session-ref">${escapeHtml(safeTrim(currentMeta.sessionRef) || '—')}</div>
-            </div>
-            <div class="pdf-page-counter">Página ${escapeHtml(String(currentPage))}/${escapeHtml(String(pageTotal))}</div>
-          </header>
-          <div class="pdf-page-body"></div>
-          <footer class="pdf-page-footer">
-            <div class="pdf-page-footer-left">${escapeHtml(safeTrim(currentMeta.sessionDateLabel) || '—')}</div>
-            <div class="pdf-page-footer-center">Pokerito · PDF oficial</div>
-            <div class="pdf-page-footer-right">${escapeHtml(String(currentPage))}/${escapeHtml(String(pageTotal))}</div>
-          </footer>
-        </div>
-      </section>
-    `);
-  }
-
-  function clonePdfNode(node){
-    if (!node) return null;
-    try{ return node.cloneNode(true); }catch(e){}
-    try{
-      const html = safeTrim(node.outerHTML) || `<div>${escapeHtml(node.textContent || '')}</div>`;
-      return el(html);
-    }catch(e){
-      return null;
-    }
-  }
-
-  function createPdfBlockWrapper(className, sourceNodes, meta){
-    const wrapper = document.createElement('div');
-    wrapper.className = ['pdf-page-unit', safeTrim(className)].filter(Boolean).join(' ');
-    const sourceList = Array.isArray(sourceNodes) ? sourceNodes : [sourceNodes];
-    if (meta && meta.groupKey) wrapper.dataset.pdfGroup = meta.groupKey;
-    if (meta && meta.groupLabel) wrapper.dataset.pdfGroupLabel = meta.groupLabel;
-    if (meta && meta.blockKey) wrapper.dataset.pdfBlockKey = meta.blockKey;
-    if (meta && meta.blockKind) wrapper.dataset.pdfBlockKind = meta.blockKind;
-    if (meta && meta.fragmentLabel) wrapper.dataset.pdfFragmentLabel = meta.fragmentLabel;
-    sourceList.forEach(node => {
-      const clone = clonePdfNode(node);
-      if (clone) wrapper.appendChild(clone);
-    });
-    return wrapper;
-  }
-
-  function buildPdfSectionBlockNode(section, bodyNodes, options){
-    if (!section) return null;
-    const opts = options && typeof options === 'object' ? options : {};
-    const clone = document.createElement('section');
-    clone.className = safeTrim(section.className) || 'print-section';
-    clone.classList.add('pdf-page-block-section');
-    if (opts.continuation){
-      clone.classList.add('print-section--paged-continuation', 'print-section--continuation');
-    }
-    if (Number.isFinite(opts.fragmentIndex)) clone.dataset.pdfSectionFragmentIndex = String(Math.max(0, Math.floor(opts.fragmentIndex)));
-    if (Number.isFinite(opts.fragmentTotal)) clone.dataset.pdfSectionFragmentTotal = String(Math.max(1, Math.floor(opts.fragmentTotal)));
-    if (safeTrim(opts.reason)) clone.dataset.pdfSectionFragmentReason = safeTrim(opts.reason);
-    const head = getSectionHeadNode(section);
-    if (head){
-      const headClone = clonePdfNode(head);
-      if (headClone) clone.appendChild(headClone);
-    }
-    const body = document.createElement('div');
-    body.className = 'print-section-body';
-    const nodes = Array.isArray(bodyNodes) ? bodyNodes.filter(Boolean) : [];
-    if (!nodes.length){
-      const originalBody = section.querySelector ? section.querySelector('.print-section-body') : null;
-      if (originalBody){
-        const bodyClone = clonePdfNode(originalBody);
-        if (bodyClone) return bodyClone.tagName === 'DIV' ? (clone.appendChild(bodyClone), clone) : (body.appendChild(bodyClone), clone.appendChild(body), clone);
-      }
-    }
-    nodes.forEach(node => {
-      const bodyClone = clonePdfNode(node);
-      if (bodyClone) body.appendChild(bodyClone);
-    });
-    clone.appendChild(body);
-    return clone;
-  }
-
-  function getPdfSectionBlockGroups(section){
-    const body = section && section.querySelector ? section.querySelector('.print-section-body') : null;
-    if (!body) return [{ wholeSection: true, nodes: [], reason: 'section' }];
-    const explicitFragments = getTopLevelPdfFragments(body);
-    if (explicitFragments.length){
-      return explicitFragments.map((node, idx) => ({
-        nodes: [node],
-        reason: (node.dataset && safeTrim(node.dataset.pdfFragment)) || `fragment-${idx + 1}`,
-        fragmentLabel: (node.dataset && safeTrim(node.dataset.pdfFragmentLabel)) || '',
-      }));
-    }
-
-    const bodyChildren = getSectionBodyDirectChildren(section);
-    if (bodyChildren.length <= 1) return [{ wholeSection: true, nodes: bodyChildren, reason: 'section' }];
-
-    const groups = [];
-    const consumed = new Set();
-    for (let i = 0; i < bodyChildren.length; i += 1){
-      if (consumed.has(i)) continue;
-      const child = bodyChildren[i];
-      if (!child) continue;
-      const next = bodyChildren[i + 1] || null;
-
-      if (child.classList && child.classList.contains('print-note') && next && next.classList){
-        if (next.classList.contains('print-impact-list') || next.classList.contains('print-rank-list')){
-          const cards = Array.from(next.children || []).filter(Boolean);
-          if (cards.length){
-            groups.push({ nodes: [child, cards[0]], reason: 'note-with-first-card' });
-            cards.slice(1).forEach(card => {
-              groups.push({ nodes: [card], reason: next.classList.contains('print-impact-list') ? 'impact-card' : 'rank-card' });
-            });
-            consumed.add(i);
-            consumed.add(i + 1);
-            continue;
-          }
-        }
-        if (!isSemanticSupportBlock(next)){
-          groups.push({ nodes: [child, next], reason: 'note-with-following-block' });
-          consumed.add(i);
-          consumed.add(i + 1);
-          continue;
-        }
-      }
-
-      if (child.classList && (child.classList.contains('print-impact-list') || child.classList.contains('print-rank-list'))){
-        const cards = Array.from(child.children || []).filter(Boolean);
-        if (cards.length){
-          cards.forEach(card => {
-            groups.push({ nodes: [card], reason: child.classList.contains('print-impact-list') ? 'impact-card' : 'rank-card' });
-          });
-          consumed.add(i);
-          continue;
-        }
-      }
-
-      groups.push({
-        nodes: [child],
-        reason: isSemanticSupportBlock(child) ? 'support-block' : 'body-block',
-      });
-      consumed.add(i);
-    }
-
-    return groups.length ? groups : [{ wholeSection: true, nodes: bodyChildren, reason: 'section' }];
-  }
-
-  function getPdfSectionTitleText(section){
-    const node = section && section.querySelector ? section.querySelector('.print-section-title') : null;
-    return safeTrim(node && node.textContent) || '';
-  }
-
-  function getPdfSectionSubtitleText(section){
-    const node = section && section.querySelector ? section.querySelector('.print-section-sub') : null;
-    return safeTrim(node && node.textContent) || '';
-  }
-
-  function getPdfSectionFamilyMeta(section, options){
-    const sectionTitle = getPdfSectionTitleText(section) || 'Sección';
-    const sectionSubtitle = getPdfSectionSubtitleText(section);
-    const dataFamilyKey = safeTrim(section && section.dataset && section.dataset.pdfFamilyKey);
-    const dataFamilyLabel = safeTrim(section && section.dataset && section.dataset.pdfFamilyLabel);
-    const familyKey = dataFamilyKey || `${safeTrim(options && options.groupKey) || 'group'}-${toPdfFamilySlug(sectionTitle) || 'section'}`;
-    return {
-      familyKey,
-      familyLabel: dataFamilyLabel || sectionTitle,
-      sectionTitle,
-      sectionSubtitle,
-    };
-  }
-
-  function createPdfPageBlockDescriptor(node, meta){
-    return {
-      node,
-      blockKey: safeTrim(meta && meta.blockKey) || '',
-      kind: safeTrim(meta && meta.blockKind) || 'content',
-      groupKey: safeTrim(meta && meta.groupKey) || '',
-      groupLabel: safeTrim(meta && meta.groupLabel) || '',
-      forceBreakBefore: !!(meta && meta.forceBreakBefore),
-      fragmentable: !!(meta && meta.fragmentable),
-      fragmentLabel: safeTrim(meta && meta.fragmentLabel) || '',
-      renderMode: safeTrim(meta && meta.renderMode) || 'atomic',
-      sectionFamilyKey: safeTrim(meta && meta.sectionFamilyKey) || '',
-      sectionFamilyLabel: safeTrim(meta && meta.sectionFamilyLabel) || '',
-      sectionTitle: safeTrim(meta && meta.sectionTitle) || '',
-      sectionSubtitle: safeTrim(meta && meta.sectionSubtitle) || '',
-      sectionNode: meta && meta.sectionNode ? meta.sectionNode : null,
-      bodySourceNodes: Array.isArray(meta && meta.bodySourceNodes) ? meta.bodySourceNodes.filter(Boolean) : [],
-      groupLeadNode: meta && meta.groupLeadNode ? meta.groupLeadNode : null,
-      sectionContinuation: !!(meta && meta.sectionContinuation),
-      fragmentIndex: Math.max(0, Math.floor(numOrZero(meta && meta.fragmentIndex) || 0)),
-      fragmentTotal: Math.max(1, Math.floor(numOrZero(meta && meta.fragmentTotal) || 1)),
-      bodyHeightPx: 0,
-      heightPx: 0,
-    };
-  }
-
-  function buildPdfSectionBlockDescriptors(section, meta){
-    const options = meta && typeof meta === 'object' ? meta : {};
-    const sectionIndex = Math.max(1, Math.floor(numOrZero(options.sectionIndex) || 1));
-    const groups = getPdfSectionBlockGroups(section);
-    const familyMeta = getPdfSectionFamilyMeta(section, options);
-    const firstBlockNodes = [];
-    if (options.groupLead) firstBlockNodes.push(options.groupLead);
-
-    if (groups.length === 1 && groups[0] && groups[0].wholeSection){
-      firstBlockNodes.push(section);
-      return [createPdfPageBlockDescriptor(
-        createPdfBlockWrapper(options.groupLead ? 'pdf-page-unit--group-opening pdf-page-unit--section' : 'pdf-page-unit--section', firstBlockNodes, {
-          groupKey: options.groupKey,
-          groupLabel: options.groupLabel,
-          blockKey: `${options.groupKey || 'group'}-section-${sectionIndex}`,
-          blockKind: options.groupLead ? 'group-opening-section' : 'section',
-          fragmentLabel: groups[0].fragmentLabel || '',
-        }),
-        {
-          groupKey: options.groupKey,
-          groupLabel: options.groupLabel,
-          blockKey: `${options.groupKey || 'group'}-section-${sectionIndex}`,
-          blockKind: options.groupLead ? 'group-opening-section' : 'section',
-          forceBreakBefore: !!(section.classList && section.classList.contains('pdf-break-before')),
-          fragmentable: false,
-          renderMode: 'atomic',
-          sectionFamilyKey: familyMeta.familyKey,
-          sectionFamilyLabel: familyMeta.familyLabel,
-          sectionTitle: familyMeta.sectionTitle,
-          sectionSubtitle: familyMeta.sectionSubtitle,
-        }
-      )];
-    }
-
-    return groups.map((group, idx) => {
-      const sourceNodes = [];
-      if (idx === 0 && options.groupLead) sourceNodes.push(options.groupLead);
-      const sectionBlock = buildPdfSectionBlockNode(section, group.nodes, {
-        continuation: idx > 0,
-        fragmentIndex: idx,
-        fragmentTotal: groups.length,
-        reason: group.reason,
-      });
-      if (sectionBlock) sourceNodes.push(sectionBlock);
-      const blockKey = `${options.groupKey || 'group'}-section-${sectionIndex}-part-${idx + 1}`;
-      return createPdfPageBlockDescriptor(
-        createPdfBlockWrapper(idx === 0 && options.groupLead ? 'pdf-page-unit--group-opening pdf-page-unit--section' : 'pdf-page-unit--section', sourceNodes, {
-          groupKey: options.groupKey,
-          groupLabel: options.groupLabel,
-          blockKey,
-          blockKind: idx === 0 ? (options.groupLead ? 'group-opening-section-fragment' : 'section-fragment') : 'section-continuation',
-          fragmentLabel: group.fragmentLabel || '',
-        }),
-        {
-          groupKey: options.groupKey,
-          groupLabel: options.groupLabel,
-          blockKey,
-          blockKind: idx === 0 ? (options.groupLead ? 'group-opening-section-fragment' : 'section-fragment') : 'section-continuation',
-          forceBreakBefore: idx === 0 && !!(section.classList && section.classList.contains('pdf-break-before')),
-          fragmentable: true,
-          fragmentLabel: group.fragmentLabel || '',
-          renderMode: 'section-fragment',
-          sectionFamilyKey: familyMeta.familyKey,
-          sectionFamilyLabel: familyMeta.familyLabel,
-          sectionTitle: familyMeta.sectionTitle,
-          sectionSubtitle: familyMeta.sectionSubtitle,
-          sectionNode: section,
-          bodySourceNodes: group.nodes,
-          groupLeadNode: idx === 0 ? options.groupLead : null,
-          sectionContinuation: idx > 0,
-          fragmentIndex: idx,
-          fragmentTotal: groups.length,
-        }
-      );
-    }).filter(Boolean);
-  }
-
-  function createPdfAtomicBlockDescriptor(node, meta){
-    const options = meta && typeof meta === 'object' ? meta : {};
-    const sourceNodes = [];
-    if (options.groupLead) sourceNodes.push(options.groupLead);
-    if (node) sourceNodes.push(node);
-    const blockKey = safeTrim(options.blockKey) || `${options.groupKey || 'group'}-content-${Math.max(1, Math.floor(numOrZero(options.contentIndex) || 1))}`;
-    return createPdfPageBlockDescriptor(
-      createPdfBlockWrapper(options.groupLead ? 'pdf-page-unit--group-opening pdf-page-unit--content' : 'pdf-page-unit--content', sourceNodes, {
-        groupKey: options.groupKey,
-        groupLabel: options.groupLabel,
-        blockKey,
-        blockKind: options.groupLead ? 'group-opening-content' : 'content',
-      }),
-      {
-        groupKey: options.groupKey,
-        groupLabel: options.groupLabel,
-        blockKey,
-        blockKind: options.groupLead ? 'group-opening-content' : 'content',
-        forceBreakBefore: !!(node && node.classList && node.classList.contains('pdf-break-before')),
-        fragmentable: false,
-      }
-    );
-  }
-
-  function collectPdfPageBlocksFromFlow(flowRoot){
-    const blocks = [];
-    if (!flowRoot || !flowRoot.querySelector) return blocks;
-    const head = flowRoot.querySelector('.pdf-document-head');
-    if (head){
-      blocks.push(createPdfPageBlockDescriptor(
-        createPdfBlockWrapper('pdf-page-unit--document-head', head, {
-          groupKey: 'document-head',
-          groupLabel: 'Documento oficial',
-          blockKey: 'document-head',
-          blockKind: 'document-head',
-        }),
-        {
-          groupKey: 'document-head',
-          groupLabel: 'Documento oficial',
-          blockKey: 'document-head',
-          blockKind: 'document-head',
-          fragmentable: false,
-        }
-      ));
-    }
-
-    const content = flowRoot.querySelector('.pdf-document-content');
-    const groups = Array.from(content && content.children ? content.children : []).filter(Boolean);
-    groups.forEach((group, groupIndex) => {
-      const groupKey = safeTrim(group.dataset && group.dataset.pdfGroup) || `group-${groupIndex + 1}`;
-      const groupLabel = safeTrim(group.dataset && group.dataset.pdfGroupLabel) || `Grupo ${groupIndex + 1}`;
-      const children = Array.from(group.children || []).filter(Boolean);
-      let pendingGroupLead = null;
-      let sectionCounter = 0;
-      let contentCounter = 0;
-
-      children.forEach(child => {
-        if (!child || !child.classList) return;
-        if (child.classList.contains('print-editorial-head')){
-          pendingGroupLead = child;
-          return;
-        }
-        if (child.classList.contains('print-section')){
-          sectionCounter += 1;
-          const sectionBlocks = buildPdfSectionBlockDescriptors(child, {
-            groupKey,
-            groupLabel,
-            groupLead: pendingGroupLead,
-            sectionIndex: sectionCounter,
-          });
-          sectionBlocks.forEach(block => blocks.push(block));
-          pendingGroupLead = null;
-          return;
-        }
-        contentCounter += 1;
-        blocks.push(createPdfAtomicBlockDescriptor(child, {
-          groupKey,
-          groupLabel,
-          groupLead: pendingGroupLead,
-          contentIndex: contentCounter,
-        }));
-        pendingGroupLead = null;
-      });
-
-      if (pendingGroupLead){
-        contentCounter += 1;
-        blocks.push(createPdfAtomicBlockDescriptor(pendingGroupLead, {
-          groupKey,
-          groupLabel,
-          contentIndex: contentCounter,
-          blockKey: `${groupKey}-lead-${contentCounter}`,
-        }));
-      }
-    });
-    return blocks;
-  }
-
-  function createPdfMeasureLab(root, meta){
-    if (!root) return null;
-    let lab = root.querySelector('#pdfPagingLab');
-    if (lab) return lab;
-    lab = document.createElement('div');
-    lab.className = 'pdf-paging-lab';
-    lab.id = 'pdfPagingLab';
-    try{ lab.setAttribute('aria-hidden', 'true'); }catch(e){}
-    const page = buildPdfPageShell(meta, 1, 1);
-    try{ page.classList.add('pdf-page--measure'); }catch(e){}
-    const body = page.querySelector('.pdf-page-body');
-    if (body) body.id = 'pdfPageMeasureBody';
-    lab.appendChild(page);
-    root.appendChild(lab);
-    return lab;
-  }
-
-  function getPdfPageBodyGapPx(body){
-    if (!body || !window.getComputedStyle) return 8;
-    try{
-      const styles = window.getComputedStyle(body);
-      const raw = parseFloat(styles.rowGap || styles.gap || '8');
-      return Number.isFinite(raw) && raw >= 0 ? raw : 8;
-    }catch(e){
-      return 8;
-    }
-  }
-
-  function getPdfSectionBodyGapPx(measureBody){
-    if (!measureBody || !window.getComputedStyle) return 8;
-    const probe = document.createElement('div');
-    probe.className = 'print-section-body';
-    probe.style.visibility = 'hidden';
-    probe.style.pointerEvents = 'none';
-    measureBody.innerHTML = '';
-    measureBody.appendChild(probe);
-    try{
-      const styles = window.getComputedStyle(probe);
-      const raw = parseFloat(styles.rowGap || styles.gap || '8');
-      return Number.isFinite(raw) && raw >= 0 ? raw : 8;
-    }catch(e){
-      return 8;
-    }finally{
-      try{ measureBody.innerHTML = ''; }catch(err){}
-    }
-  }
-
-  async function measurePdfUnitHeight(unit, measureBody, signal){
-    if (!unit || !measureBody) return 0;
-    measureBody.innerHTML = '';
-    const clone = clonePdfNode(unit);
-    if (!clone) return 0;
-    measureBody.appendChild(clone);
-    await nextPaint(signal);
-    const rect = clone.getBoundingClientRect ? clone.getBoundingClientRect() : null;
-    return Math.max(
-      1,
-      Math.round(numOrZero(rect && rect.height)),
-      Math.round(numOrZero(clone.scrollHeight)),
-      Math.round(numOrZero(clone.offsetHeight))
-    );
-  }
-
-  function buildPdfSectionBodyMeasureNode(block){
-    if (!block || !Array.isArray(block.bodySourceNodes) || !block.bodySourceNodes.length) return block && block.node ? block.node : null;
-    const body = document.createElement('div');
-    body.className = 'print-section-body pdf-page-merge-measure';
-    block.bodySourceNodes.forEach(node => {
-      const clone = clonePdfNode(node);
-      if (clone) body.appendChild(clone);
-    });
-    return body;
-  }
-
-  function buildPdfPageBudget(measureBody){
-    if (!measureBody) return null;
-    const page = measureBody.closest ? measureBody.closest('.pdf-page') : null;
-    const frame = page && page.querySelector ? page.querySelector('.pdf-page-frame') : null;
-    const header = page && page.querySelector ? page.querySelector('.pdf-page-header') : null;
-    const footer = page && page.querySelector ? page.querySelector('.pdf-page-footer') : null;
-    const bodyRect = measureBody.getBoundingClientRect ? measureBody.getBoundingClientRect() : null;
-    const frameRect = frame && frame.getBoundingClientRect ? frame.getBoundingClientRect() : null;
-    const headerRect = header && header.getBoundingClientRect ? header.getBoundingClientRect() : null;
-    const footerRect = footer && footer.getBoundingClientRect ? footer.getBoundingClientRect() : null;
-    const bodyHeightPx = Math.max(
-      1,
-      Math.round(numOrZero(bodyRect && bodyRect.height)),
-      Math.round(numOrZero(measureBody.clientHeight)),
-      Math.round(numOrZero(measureBody.scrollHeight))
-    );
-    const gapPx = getPdfPageBodyGapPx(measureBody);
-    const bottomReservePx = Math.max(gapPx + 4, Math.round(bodyHeightPx * 0.028));
-    return {
-      frameHeightPx: Math.max(1, Math.round(numOrZero(frameRect && frameRect.height))),
-      headerHeightPx: Math.max(0, Math.round(numOrZero(headerRect && headerRect.height))),
-      footerHeightPx: Math.max(0, Math.round(numOrZero(footerRect && footerRect.height))),
-      bodyHeightPx,
-      gapPx,
-      sectionBodyGapPx: getPdfSectionBodyGapPx(measureBody),
-      topReservePx: Math.max(gapPx, Math.round(bodyHeightPx * 0.014)),
-      bottomReservePx,
-      softBottomReservePx: Math.max(8, Math.round(bodyHeightPx * 0.012)),
-      rebalanceBottomReservePx: Math.max(gapPx + 2, Math.round(bottomReservePx * 0.72)),
-      oversizedTolerancePx: Math.max(10, Math.round(bodyHeightPx * 0.018)),
-    };
-  }
-
-  function createPdfPageBucket(pageNumber){
-    return {
-      pageNumber: Math.max(1, Math.floor(numOrZero(pageNumber) || 1)),
-      entries: [],
-      usedPx: 0,
-    };
-  }
-
-  function canMergePdfBlockWithPageEntry(entry, block){
-    if (!entry || !block) return false;
-    if (safeTrim(entry.renderMode) !== 'section-fragment' || safeTrim(block.renderMode) !== 'section-fragment') return false;
-    if (block.forceBreakBefore || entry.hasGroupLead || !!block.groupLeadNode) return false;
-    const entryFamily = safeTrim(entry.sectionFamilyKey);
-    const blockFamily = safeTrim(block.sectionFamilyKey);
-    return !!entryFamily && entryFamily === blockFamily;
-  }
-
-  function createPdfPageEntryFromBlock(block){
-    return {
-      renderMode: safeTrim(block && block.renderMode) || 'atomic',
-      sectionFamilyKey: safeTrim(block && block.sectionFamilyKey) || '',
-      sectionFamilyLabel: safeTrim(block && block.sectionFamilyLabel) || '',
-      blocks: [block],
-      heightPx: Math.max(1, numOrZero(block && block.heightPx)),
-      hasGroupLead: !!(block && block.groupLeadNode),
-    };
-  }
-
-  function canMergePdfPageEntries(entry, incomingEntry){
-    if (!entry || !incomingEntry) return false;
-    if (safeTrim(entry.renderMode) !== 'section-fragment' || safeTrim(incomingEntry.renderMode) !== 'section-fragment') return false;
-    if (entry.hasGroupLead || incomingEntry.hasGroupLead) return false;
-    const entryFamily = safeTrim(entry.sectionFamilyKey);
-    const incomingFamily = safeTrim(incomingEntry.sectionFamilyKey);
-    return !!entryFamily && entryFamily === incomingFamily;
-  }
-
-  function getPdfMergedEntryAddedHeight(entry, budget){
-    if (!entry || !budget) return 0;
-    return (Array.isArray(entry.blocks) ? entry.blocks : []).reduce((sum, block) => {
-      const blockHeight = Math.max(1, numOrZero(block && block.bodyHeightPx) || numOrZero(block && block.heightPx));
-      return sum + Math.max(0, numOrZero(budget.sectionBodyGapPx)) + blockHeight;
-    }, 0);
-  }
-
-  function getPdfPageEntryAddedHeight(pageBucket, entry, budget){
-    if (!pageBucket || !entry || !budget) return 0;
-    const lastEntry = pageBucket.entries[pageBucket.entries.length - 1] || null;
-    if (canMergePdfPageEntries(lastEntry, entry)) return getPdfMergedEntryAddedHeight(entry, budget);
-    const gapPx = pageBucket.entries.length ? numOrZero(budget.gapPx) : 0;
-    return gapPx + Math.max(1, numOrZero(entry.heightPx));
-  }
-
-  function canFitPdfPageEntryOnPage(pageBucket, entry, budget){
-    if (!pageBucket || !entry || !budget) return false;
-    const reservePx = pageBucket.entries.length
-      ? Math.max(numOrZero(budget.softBottomReservePx), numOrZero(budget.rebalanceBottomReservePx) || numOrZero(budget.bottomReservePx))
-      : numOrZero(budget.softBottomReservePx);
-    const addedHeight = getPdfPageEntryAddedHeight(pageBucket, entry, budget);
-    return (numOrZero(pageBucket.usedPx) + addedHeight) <= (numOrZero(budget.bodyHeightPx) - reservePx);
-  }
-
-  function addPdfEntryToPage(pageBucket, entry, budget){
-    if (!pageBucket || !entry || !budget) return;
-    const lastEntry = pageBucket.entries[pageBucket.entries.length - 1] || null;
-    if (canMergePdfPageEntries(lastEntry, entry)) {
-      const addedHeight = getPdfMergedEntryAddedHeight(entry, budget);
-      lastEntry.blocks.push(...(Array.isArray(entry.blocks) ? entry.blocks : []));
-      lastEntry.heightPx += addedHeight;
-      pageBucket.usedPx += addedHeight;
-      return;
-    }
-    const extraGap = pageBucket.entries.length ? numOrZero(budget.gapPx) : 0;
-    pageBucket.entries.push(entry);
-    pageBucket.usedPx += extraGap + Math.max(1, numOrZero(entry.heightPx));
-  }
-
-  function recalcPdfPageBucketUsage(pageBucket, budget){
-    if (!pageBucket || !budget) return 0;
-    let used = 0;
-    const entries = Array.isArray(pageBucket.entries) ? pageBucket.entries : [];
-    entries.forEach((entry, idx) => {
-      used += (idx ? numOrZero(budget.gapPx) : 0) + Math.max(1, numOrZero(entry && entry.heightPx));
-    });
-    pageBucket.usedPx = used;
-    return used;
-  }
-
-  function rebalancePdfPages(pages, budget){
-    if (!Array.isArray(pages) || pages.length < 2 || !budget) return 0;
-    let moved = 0;
-    const maxPasses = Math.max(2, pages.length * 3);
-    for (let pass = 0; pass < maxPasses; pass += 1){
-      let changed = false;
-      for (let i = 1; i < pages.length; i += 1){
-        const prevPage = pages[i - 1];
-        const page = pages[i];
-        if (!prevPage || !page || !Array.isArray(page.entries) || !page.entries.length) continue;
-        while (page.entries.length){
-          const entry = page.entries[0];
-          const primary = entry && Array.isArray(entry.blocks) ? entry.blocks[0] : null;
-          if (!entry || entry.hasGroupLead || (primary && primary.forceBreakBefore)) break;
-          if (!canFitPdfPageEntryOnPage(prevPage, entry, budget)) break;
-          page.entries.shift();
-          recalcPdfPageBucketUsage(page, budget);
-          addPdfEntryToPage(prevPage, entry, budget);
-          moved += 1;
-          changed = true;
-        }
-        if (!page.entries.length){
-          pages.splice(i, 1);
-          i -= 1;
-        }
-      }
-      if (!changed) break;
-    }
-    pages.forEach((page, idx) => {
-      if (page) page.pageNumber = idx + 1;
-    });
-    return moved;
-  }
-
-  function getPdfBlockAddedHeight(pageBucket, block, budget){
-    if (!pageBucket || !block || !budget) return 0;
-    const lastEntry = pageBucket.entries[pageBucket.entries.length - 1] || null;
-    if (canMergePdfBlockWithPageEntry(lastEntry, block)){
-      return Math.max(0, numOrZero(budget.sectionBodyGapPx)) + Math.max(1, numOrZero(block.bodyHeightPx) || numOrZero(block.heightPx));
-    }
-    const gapPx = pageBucket.entries.length ? numOrZero(budget.gapPx) : 0;
-    return gapPx + Math.max(1, numOrZero(block.heightPx));
-  }
-
-  function canFitPdfBlockOnPage(pageBucket, block, budget){
-    if (!pageBucket || !block || !budget) return false;
-    const reservePx = pageBucket.entries.length ? numOrZero(budget.bottomReservePx) : numOrZero(budget.softBottomReservePx);
-    const addedHeight = getPdfBlockAddedHeight(pageBucket, block, budget);
-    return (numOrZero(pageBucket.usedPx) + addedHeight) <= (numOrZero(budget.bodyHeightPx) - reservePx);
-  }
-
-  function addPdfBlockToPage(pageBucket, block, budget){
-    if (!pageBucket || !block || !budget) return;
-    const lastEntry = pageBucket.entries[pageBucket.entries.length - 1] || null;
-    if (canMergePdfBlockWithPageEntry(lastEntry, block)){
-      const addedHeight = Math.max(0, numOrZero(budget.sectionBodyGapPx)) + Math.max(1, numOrZero(block.bodyHeightPx) || numOrZero(block.heightPx));
-      lastEntry.blocks.push(block);
-      lastEntry.heightPx += addedHeight;
-      pageBucket.usedPx += addedHeight;
-      return;
-    }
-    const extraGap = pageBucket.entries.length ? numOrZero(budget.gapPx) : 0;
-    const entry = createPdfPageEntryFromBlock(block);
-    pageBucket.entries.push(entry);
-    pageBucket.usedPx += extraGap + entry.heightPx;
-  }
-
-  function buildPdfMergedSectionEntryNode(entry){
-    const primary = entry && Array.isArray(entry.blocks) ? entry.blocks[0] : null;
-    if (!primary || !primary.sectionNode) return primary ? clonePdfNode(primary.node) : null;
-    const wrapper = document.createElement('div');
-    wrapper.className = ['pdf-page-unit', primary.groupLeadNode ? 'pdf-page-unit--group-opening pdf-page-unit--section' : 'pdf-page-unit--section'].join(' ');
-    if (primary.groupKey) wrapper.dataset.pdfGroup = primary.groupKey;
-    if (primary.groupLabel) wrapper.dataset.pdfGroupLabel = primary.groupLabel;
-    if (primary.blockKey) wrapper.dataset.pdfBlockKey = primary.blockKey;
-    wrapper.dataset.pdfBlockKind = 'section-family';
-    if (entry.sectionFamilyKey) wrapper.dataset.pdfContinuationFamily = entry.sectionFamilyKey;
-    if (entry.sectionFamilyLabel) wrapper.dataset.pdfContinuationLabel = entry.sectionFamilyLabel;
-    if (primary.groupLeadNode){
-      const leadClone = clonePdfNode(primary.groupLeadNode);
-      if (leadClone) wrapper.appendChild(leadClone);
-    }
-    const sectionBlock = buildPdfSectionBlockNode(primary.sectionNode, primary.bodySourceNodes, {
-      continuation: !!primary.sectionContinuation,
-      fragmentIndex: primary.fragmentIndex,
-      fragmentTotal: primary.fragmentTotal,
-      reason: primary.kind || 'section-fragment',
-    });
-    if (!sectionBlock) return clonePdfNode(primary.node);
-    if (entry.sectionFamilyKey) sectionBlock.dataset.pdfContinuationFamily = entry.sectionFamilyKey;
-    if (entry.sectionFamilyLabel) sectionBlock.dataset.pdfContinuationLabel = entry.sectionFamilyLabel;
-    if (entry.blocks.length > 1){
-      sectionBlock.classList.add('pdf-page-block-section--merged');
-      sectionBlock.dataset.pdfMergedFragments = String(entry.blocks.length);
-      const body = sectionBlock.querySelector('.print-section-body');
-      entry.blocks.slice(1).forEach(block => {
-        (Array.isArray(block.bodySourceNodes) ? block.bodySourceNodes : []).forEach(node => {
-          const clone = clonePdfNode(node);
-          if (clone && body) body.appendChild(clone);
-        });
-      });
-    }
-    wrapper.appendChild(sectionBlock);
-    return wrapper;
-  }
-
-  function buildPdfPageEntryNode(entry){
-    if (!entry) return null;
-    if (safeTrim(entry.renderMode) === 'section-fragment') return buildPdfMergedSectionEntryNode(entry);
-    const primary = Array.isArray(entry.blocks) ? entry.blocks[0] : null;
-    return primary ? clonePdfNode(primary.node) : null;
-  }
-
-  async function buildDomPagedPdf(root, model, signal){
-    const host = root && root.querySelector ? root.querySelector('#pdfPageStage') : null;
-    const flow = root && root.querySelector ? root.querySelector('#pdfFlowMeasure') : null;
-    if (!host || !flow) return false;
-    const meta = getReportModeMeta(model, 'pdf');
-    const lab = createPdfMeasureLab(root, meta);
-    const measureBody = lab && lab.querySelector ? (lab.querySelector('#pdfPageMeasureBody') || lab.querySelector('.pdf-page-body')) : null;
-    if (!measureBody) return false;
-
-    setPrintStatus(root, 'Midiendo bloques editoriales…', 'loading');
-    await waitForPrintReady(flow, signal);
-    await nextPaint(signal);
-
-    const budget = buildPdfPageBudget(measureBody);
-    if (!budget) return false;
-    const blocks = collectPdfPageBlocksFromFlow(flow);
-    for (const block of blocks){
-      throwIfAborted(signal);
-      block.heightPx = await measurePdfUnitHeight(block.node, measureBody, signal);
-      block.bodyHeightPx = safeTrim(block.renderMode) === 'section-fragment'
-        ? await measurePdfUnitHeight(buildPdfSectionBodyMeasureNode(block), measureBody, signal)
-        : numOrZero(block.heightPx);
-    }
-
-    setPrintStatus(root, 'Tejiendo continuidades editoriales entre páginas DOM…', 'loading');
-    const pages = [];
-    let currentPage = createPdfPageBucket(1);
-
-    for (const block of blocks){
-      throwIfAborted(signal);
-      if (block.forceBreakBefore && currentPage.entries.length){
-        pages.push(currentPage);
-        currentPage = createPdfPageBucket(pages.length + 1);
-      }
-      if (currentPage.entries.length && !canFitPdfBlockOnPage(currentPage, block, budget)){
-        pages.push(currentPage);
-        currentPage = createPdfPageBucket(pages.length + 1);
-      }
-      addPdfBlockToPage(currentPage, block, budget);
-    }
-    if (currentPage.entries.length || !pages.length) pages.push(currentPage);
-
-    setPrintStatus(root, 'Ajustando densidad editorial y remates finales…', 'loading');
-    const rebalancedMoves = rebalancePdfPages(pages, budget);
-
-    host.innerHTML = '';
-    const totalPages = Math.max(1, pages.length);
-    pages.forEach((pageBucket, pageIndex) => {
-      const page = buildPdfPageShell(meta, pageIndex + 1, totalPages);
-      const body = page.querySelector('.pdf-page-body');
-      if (body){
-        pageBucket.entries.forEach(entry => {
-          const clone = buildPdfPageEntryNode(entry);
-          if (clone) body.appendChild(clone);
-        });
-      }
-      host.appendChild(page);
-    });
-
-    root.dataset.pdfPaged = 'ready';
-    root.dataset.pdfPageCount = String(totalPages);
-    root.dataset.pdfPagingEngine = 'route2-final-stage4';
-    root.dataset.pdfRebalancedMoves = String(Math.max(0, Math.floor(numOrZero(rebalancedMoves))));
-    root.dataset.pdfPageBudgetPx = String(Math.max(1, Math.floor(numOrZero(budget.bodyHeightPx))));
-    root.dataset.pdfPageGapPx = String(Math.max(0, Math.floor(numOrZero(budget.gapPx))));
-    root.dataset.pdfSectionGapPx = String(Math.max(0, Math.floor(numOrZero(budget.sectionBodyGapPx))));
-    root.dataset.pdfHeaderReservePx = String(Math.max(0, Math.floor(numOrZero(budget.headerHeightPx))));
-    root.dataset.pdfFooterReservePx = String(Math.max(0, Math.floor(numOrZero(budget.footerHeightPx))));
-    root.dataset.pdfRebalanceReservePx = String(Math.max(0, Math.floor(numOrZero(budget.rebalanceBottomReservePx))));
-
-    measureBody.innerHTML = '';
-    setPrintStatus(root, rebalancedMoves ? `Documento repartido por páginas DOM con compactación editorial (${rebalancedMoves} ajuste${rebalancedMoves === 1 ? '' : 's'}).` : 'Documento repartido por páginas DOM con presupuesto real.', 'loading');
-    await waitForPrintReady(host, signal);
-    return true;
   }
 
   function mountPdfRoot(root){
@@ -6956,93 +5152,32 @@ function renderHistorialDetalle(){
 
   function renderPdfNotFound(){
     const root = el(`
-      <section class="pdf-document-shell print-screen" aria-label="Reporte PDF oficial" data-pdf-layout="dom-pages">
-        <div class="pdf-document-stage pdf-page-stage">
-          <section class="pdf-page" data-pdf-page="1">
-            <div class="pdf-page-frame">
-              <header class="pdf-page-header">
-                <div class="pdf-page-brand">
-                  <div class="print-brand">
-                    <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
-                    <span>POKERITO</span>
-                  </div>
-                  <div class="pdf-page-kicker">Documento oficial</div>
-                </div>
-                <div class="pdf-page-session-meta">
-                  <div class="pdf-page-session-title">Sesión no encontrada</div>
-                  <div class="pdf-page-session-ref">PDF oficial</div>
-                </div>
-                <div class="pdf-page-counter">Página 1/1</div>
-              </header>
-              <div class="pdf-page-body"><div class="empty">Sesión no encontrada.</div></div>
-              <footer class="pdf-page-footer">
-                <div class="pdf-page-footer-left">—</div>
-                <div class="pdf-page-footer-center">Pokerito · PDF oficial</div>
-                <div class="pdf-page-footer-right">1/1</div>
-              </footer>
-            </div>
-          </section>
-        </div>
+      <section class="print-screen" aria-label="Reporte PDF">
+        <div class="empty">Sesión no encontrada.</div>
       </section>
     `);
     mountPdfRoot(root);
   }
 
   function buildPdfScreenRoot(model){
-    const meta = getReportModeMeta(model, 'pdf');
-    const content = buildPdfDocumentSections(model, 'pdf');
+    const content = buildPdfDocumentSections(model);
     return el(`
-      <section class="pdf-document-shell print-screen" aria-label="Reporte PDF oficial" data-pdf-layout="dom-pages">
+      <section class="print-screen" aria-label="Reporte PDF">
         <div class="print-actions">
-          <div class="print-status" id="printStatus" role="status" aria-live="polite" data-tone="muted">Preparando páginas oficiales…</div>
+          <div class="print-status" id="printStatus" role="status" aria-live="polite" data-tone="muted">Preparando documento…</div>
           <div class="print-action-buttons">
-            <button class="btn primary" type="button" id="printBtn" disabled>Imprimir / Guardar PDF oficial</button>
+            <button class="btn primary" type="button" id="printBtn" disabled>Imprimir / Guardar PDF</button>
           </div>
         </div>
 
-        <div class="pdf-document-stage pdf-page-stage" id="pdfPageStage"></div>
-
-        <div class="pdf-document-flow-sandbox" id="pdfFlowSandbox" aria-hidden="true">
-          <div class="pdf-document-sheet pdf-document-flow" id="pdfFlowMeasure">
-            ${buildPdfDocumentHeadMarkup(meta)}
-            <div class="pdf-document-content print-content">${content}</div>
-          </div>
-        </div>
-      </section>
-    `);
-  }
-
-
-  function buildScreenReportReaderRoot(model){
-    const meta = getReportModeMeta(model, 'screen');
-    const content = buildPdfDocumentSections(model, 'screen');
-    return el(`
-      <section class="screen screen--historial-detail screen--report-reader" aria-label="Reporte premium en pantalla">
-        <div class="mesa-head report-reader-head">
-          <div class="mesa-title">
-            <div class="report-reader-kicker">${escapeHtml(meta.kicker)}</div>
-            <div class="mesa-h1">${escapeHtml(meta.sessionTitle)} <span class="badge">${escapeHtml(meta.sessionDateLabel)}</span></div>
-            <div class="mesa-sub">${escapeHtml(meta.lead)}</div>
-          </div>
-          <div class="row panel-actions history-detail-actions report-reader-actions">
-            <button class="btn primary" type="button" id="screenReportPdfBtn">Exportar PDF oficial</button>
-            <button class="btn" type="button" id="screenReportMesaBtn">Ver mesa</button>
+        <div class="print-head">
+          <div class="print-brand">
+            <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
+            <span>POKERITO</span>
           </div>
         </div>
 
-        ${buildReportModePanelMarkup(meta, 'Lectura en pantalla')}
-
-        <div class="report-reader-shell" aria-label="Reporte premium continuo">
-          <div class="report-reader-brandbar">
-            <div class="print-brand">
-              <img class="print-logo" src="assets/icons/icon-192.png" alt="" />
-              <span>POKERITO</span>
-            </div>
-            <div class="report-reader-chip">Modo pantalla</div>
-          </div>
-
-          <div class="report-reader-content print-content">${content}</div>
-        </div>
+        <div class="print-content">${content}</div>
       </section>
     `);
   }
@@ -7060,11 +5195,8 @@ function renderHistorialDetalle(){
       if (printInFlight) return printInFlight;
       printInFlight = (async () => {
         try{
-          setPrintStatus(root, 'Preparando páginas oficiales…', 'loading');
+          setPrintStatus(root, 'Preparando documento…', 'loading');
           if (printBtn) printBtn.disabled = true;
-          await buildDomPagedPdf(root, options.model || null, signal);
-          if (isStalePrintRender()) return false;
-          setPrintStatus(root, 'Documento listo en páginas DOM presupuestadas.', 'loading');
           await waitForPrintReady(root, signal);
           if (isStalePrintRender()) return false;
           try{ window.scrollTo(0, 0); }catch(e){}
@@ -7124,7 +5256,7 @@ function renderHistorialDetalle(){
     const prevTitle = document.title;
     const ddmmyyyy = sessionDDMMYYYY(s);
     const seqNum = (Number.isFinite(s.pdfSeq) && Math.floor(s.pdfSeq) >= 1) ? Math.floor(s.pdfSeq) : 0;
-    const printTitle = `${pad3(seqNum)}_Pokerito_${ddmmyyyy}`;
+    const printTitle = `${pad3(seqNum)}- Pokerito ${ddmmyyyy}`;
     const renderSerial = ++pdfRenderSerial;
     const printAbort = (typeof AbortController !== 'undefined') ? new AbortController() : { signal: { aborted: false }, abort(){ this.signal.aborted = true; } };
 
@@ -7136,7 +5268,6 @@ function renderHistorialDetalle(){
       try{ document.title = printTitle; }catch(e){}
     }
     function restoreTitle(){
-      try{ clearSemanticPdfPagination($printRoot || document.getElementById('printRoot')); }catch(e){}
       try{ document.title = prevTitle; }catch(e){}
     }
 
@@ -7152,7 +5283,6 @@ function renderHistorialDetalle(){
       signal: printAbort.signal,
       isStalePrintRender,
       setPrintTitle,
-      model,
     });
   }
 
@@ -7683,29 +5813,6 @@ function renderAdministracion(){
           </div>
         </div>
 
-        <div class="panel admin-utility-panel admin-update-panel" id="adminUpdateSection" role="region" aria-label="Versión y actualización" style="margin-top:14px">
-          <div class="panel-head">
-            <div class="panel-title" style="margin:0">Versión y actualización</div>
-            <button class="btn secondary" type="button" id="checkUpdateBtn">Buscar actualización</button>
-          </div>
-          <div class="small-note" style="margin-top:10px">Confirma qué edición visible está abierta, revisa si ya hay una más reciente y aplícala desde este mismo flujo cuando esté lista.</div>
-          <div class="admin-update-strip">
-            <div class="admin-update-card admin-update-card--version">
-              <div class="admin-update-kicker">Versión visible</div>
-              <div class="admin-update-version" id="adminVisibleVersion">—</div>
-              <div class="admin-update-build" id="adminVisibleBuild"></div>
-            </div>
-            <div class="admin-update-card admin-update-card--status">
-              <div class="admin-update-status-head">
-                <span class="pill admin-update-pill is-neutral" id="adminUpdateStatusPill">Pendiente</span>
-              </div>
-              <div class="small-note admin-update-copy" id="adminUpdateStatusText" style="margin-top:10px"></div>
-              <div class="small-note admin-update-compare" id="adminUpdateCompare" style="margin-top:8px; display:none"></div>
-              <div class="small-note admin-update-checked" id="adminUpdateCheckedAt" style="margin-top:8px; display:none"></div>
-            </div>
-          </div>
-        </div>
-
       </section>
     `);
 
@@ -7727,7 +5834,6 @@ function renderAdministracion(){
 
     document.getElementById('exportExcelBtn').addEventListener('click', () => exportExcel());
     wireAdminUtilities();
-    renderAdminUpdateUi();
 
     // Players
     const $pgrid = document.getElementById('playerGrid');
@@ -10466,22 +8572,13 @@ function formatMoney(n){
     });
   }
 
+
   function wireAdminUtilities(){
     // wire theme selector
     $app.querySelectorAll('.seg[data-theme]').forEach(b => {
       b.addEventListener('click', () => setThemePref(b.getAttribute('data-theme')));
     });
     syncSupportThemeUI();
-    renderAdminUpdateUi();
-
-    const $checkUpdateBtn = document.getElementById('checkUpdateBtn');
-    if ($checkUpdateBtn){
-      $checkUpdateBtn.addEventListener('click', () => {
-        const stateObj = normalizeUpdateUiState(updateUiState);
-        const job = stateObj.state === 'available' ? applyAppUpdate() : checkForAppUpdate();
-        Promise.resolve(job).catch(() => {});
-      });
-    }
 
     // Backup
     const $file = document.getElementById('importFile');
@@ -11006,11 +9103,7 @@ La base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register(SW_URL, { updateViaCache: 'none' })
-        .then((reg) => {
-          swRegistrationRef = reg;
-          bindServiceWorkerLifecycle(reg);
-          return reg.update().catch(() => {});
-        })
+        .then((reg) => reg.update().catch(() => {}))
         .catch(() => {});
     });
   }
@@ -11034,7 +9127,6 @@ La base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true
     // ensure default route
     if (!window.location.hash) window.location.hash = '#/inicio';
     applyTheme();
-    hydratePostUpdateUiState();
     onRoute();
   });
 
