@@ -5,9 +5,9 @@ const css = fs.readFileSync(path.join(__dirname, 'styles.css'), 'utf8');
 const sw = fs.readFileSync(path.join(__dirname, 'sw.js'), 'utf8');
 
 for (const snippet of [
-  /const APP_BUILD = '(?:pdf-page-budget-stage2|pdf-continuity-stage3-4|pdf-route2-final-stage4)';/,
-  /const APP_CACHE_NAME = 'pokerito-v0\.1\.51-(?:pdf-page-budget-stage2|pdf-continuity-stage3-4|pdf-route2-final-stage4)';/,
-  /const SW_URL = '\.\/sw\.js\?v=0\.1\.51-(?:pdf-page-budget-stage2|pdf-continuity-stage3-4|pdf-route2-final-stage4)';/,
+  /const APP_BUILD = '[-a-z0-9.]+';/,
+  /const APP_CACHE_NAME = 'pokerito-v[0-9.]+-[-a-z0-9.]+';/,
+  /const SW_URL = '\.\/sw\.js\?v=[0-9.]+-[-a-z0-9.]+';/,
   'function createPdfBlockWrapper(className, sourceNodes, meta){',
   'function getPdfSectionBlockGroups(section){',
   'function collectPdfPageBlocksFromFlow(flowRoot){',

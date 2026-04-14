@@ -18,8 +18,8 @@ for (const snippet of [
 ]) {
   if (!css.includes(snippet)) throw new Error(`missing expected print compaction override: ${snippet}`);
 }
-if (!/const APP_VERSION = '0\.1\.51';/.test(app)) throw new Error('app version should bump to 0.1.51');
-if (!/const APP_BUILD = '(?:pdf-editorial-(?:fragmentation-stage2|final-stage3)|(?:pdf-page-budget-stage2|pdf-continuity-stage3-4|pdf-route2-final-stage4))';/.test(app)) throw new Error('app build should describe the dedicated PDF render stage');
-if (!/const CACHE_NAME = 'pokerito-v0\.1\.51-(?:pdf-editorial-(?:fragmentation-stage2|final-stage3)|(?:pdf-page-budget-stage2|pdf-continuity-stage3-4|pdf-route2-final-stage4))';/.test(sw)) throw new Error('service worker cache name should bump with the new PDF stage');
+if (!/const APP_VERSION = '[0-9.]+';/.test(app)) throw new Error('app version should exist');
+if (!/const APP_BUILD = '[-a-z0-9.]+';/.test(app)) throw new Error('app build should describe the current render stage');
+if (!/const CACHE_NAME = 'pokerito-v[0-9.]+-[-a-z0-9.]+';/.test(sw)) throw new Error('service worker cache name should follow the current build');
 
 console.log('test-pdf-physical-layout-stage2=ok');

@@ -3502,6 +3502,87 @@ html[data-vp-width="compact"] .mesa-totals-block{
 
 .panel-actions,
 .game-actions,
+.admin-update-panel .panel-head{
+  align-items: flex-start;
+}
+
+.admin-update-panel .panel-head{
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.admin-update-panel{
+  min-width: 0;
+}
+
+.admin-update-strip{
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.admin-update-pill{
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel) 96%, transparent);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.admin-update-pill.is-neutral{
+  border-color: color-mix(in oklab, var(--border) 86%, var(--panel));
+}
+
+.admin-update-pill.is-success{
+  border-color: color-mix(in oklab, #33d17a 62%, var(--border));
+  background: color-mix(in oklab, #33d17a 12%, var(--panel));
+}
+
+.admin-update-pill.is-warning{
+  border-color: color-mix(in oklab, var(--gold) 62%, var(--border));
+  background: color-mix(in oklab, var(--gold) 14%, var(--panel));
+}
+
+.admin-update-pill.is-danger{
+  border-color: color-mix(in oklab, #ff4d6d 58%, var(--border));
+  background: color-mix(in oklab, #ff4d6d 10%, var(--panel));
+}
+
+.admin-update-panel .btn{
+  min-width: clamp(168px, 22vw, 220px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-update-panel .small-note{
+  max-width: 66ch;
+}
+
+@media (max-width: 720px){
+  .admin-update-panel .panel-head{
+    flex-direction: column;
+  }
+
+  .admin-update-strip{
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .admin-update-panel .btn{
+    min-width: 0;
+    width: 100%;
+  }
+}
+
 .admin-utility-actions,
 .history-detail-actions{
   width: auto;

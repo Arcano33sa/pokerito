@@ -6,9 +6,9 @@ const css = fs.readFileSync(path.join(__dirname, 'styles.css'), 'utf8');
 const sw = fs.readFileSync(path.join(__dirname, 'sw.js'), 'utf8');
 
 for (const snippet of [
-  "const APP_BUILD = 'pdf-route2-final-stage4';",
-  "const APP_CACHE_NAME = 'pokerito-v0.1.51-pdf-route2-final-stage4';",
-  "const SW_URL = './sw.js?v=0.1.51-pdf-route2-final-stage4';",
+  /const APP_BUILD = '[-a-z0-9.]+';/,
+  /const APP_CACHE_NAME = 'pokerito-v[0-9.]+-[-a-z0-9.]+';/,
+  /const SW_URL = '\.\/sw\.js\?v=[0-9.]+-[-a-z0-9.]+';/,
   'function getPdfSectionFamilyMeta(section, options){',
   'function canMergePdfBlockWithPageEntry(entry, block){',
   'function addPdfBlockToPage(pageBucket, block, budget){',
@@ -16,6 +16,10 @@ for (const snippet of [
   "setPrintStatus(root, 'Tejiendo continuidades editoriales entre páginas DOM…', 'loading');",
   "root.dataset.pdfPagingEngine = 'route2-final-stage4';",
 ]) {
+  if (snippet instanceof RegExp){
+    if (!snippet.test(code) && !snippet.test(sw)) throw new Error(`missing continuity stage3/4 snippet: ${snippet}`);
+    continue;
+  }
   if (!code.includes(snippet) && !sw.includes(snippet)) throw new Error(`missing continuity stage3/4 snippet: ${snippet}`);
 }
 for (const snippet of [

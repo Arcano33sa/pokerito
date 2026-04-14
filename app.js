@@ -1,4 +1,4 @@
-/* Pokerito — limpieza final y caché saneada */
+/* Pokerito — actualización manual PWA restaurada */
 (function(){
   const $app = document.getElementById('app');
   const $printRoot = document.getElementById('printRoot');
@@ -12,10 +12,13 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.47';
-  const APP_BUILD = 'major-combos-stage5';
-  const APP_CACHE_NAME = 'pokerito-v0.1.47-major-combos-stage5';
-  const SW_URL = './sw.js?v=0.1.47-major-combos-stage5';
+  const APP_VERSION = '0.1.48';
+  const APP_BUILD = 'pwa-manual-update-stage2';
+  const APP_CACHE_NAME = 'pokerito-v0.1.48-pwa-manual-update-stage2';
+  const SW_URL = './sw.js?v=0.1.48-pwa-manual-update-stage2';
+
+  const UPDATE_UI_KEY = 'pokerito_update_ui';
+  const UPDATE_BOOT_KEY = 'pokerito_update_boot';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -76,6 +79,10 @@
   const $root = document.documentElement;
 
   let viewportSyncTimer = 0;
+  let swRegistrationRef = null;
+  let updateReloadArmed = false;
+  let updateReloadFallbackTimer = 0;
+  let updateActionInFlight = false;
 
   function queueViewportSync(delay){
     if (viewportSyncTimer) clearTimeout(viewportSyncTimer);
@@ -6355,6 +6362,556 @@ function renderHistorialDetalle(){
   }
 
   
+
+  function getDefaultUpdateUiState(){
+    return {
+      state: 'idle',
+      title: 'Actualización manual PWA',
+      detail: 'Listo para comprobar si hay una nueva versión.',
+      pill: 'Listo',
+      tone: 'neutral',
+      button: 'Buscar actualización',
+      checkedAt: 0,
+      updatedAt: Date.now(),
+    };
+  }
+
+  function getUpdateStateMeta(state){
+    const map = {
+      idle: { state: 'idle', pill: 'Listo', tone: 'neutral', detail: 'Listo para comprobar si hay una nueva versión.', button: 'Buscar actualización' },
+      checking: { state: 'checking', pill: 'Comprobando', tone: 'neutral', detail: 'Buscando una versión nueva para esta instalación.', button: 'Comprobando…' },
+      current: { state: 'current', pill: 'Actualizada', tone: 'success', detail: 'Esta app ya está al día en este dispositivo.', button: 'Buscar actualización' },
+      available: { state: 'available', pill: 'Disponible', tone: 'warning', detail: 'Hay una nueva versión lista para aplicarse.', button: 'Actualizar ahora' },
+      applying: { state: 'applying', pill: 'Aplicando', tone: 'warning', detail: 'Activando la nueva versión. La app se recargará sola.', button: 'Aplicando…' },
+      error: { state: 'error', pill: 'Error', tone: 'danger', detail: 'No se pudo completar la comprobación o la actualización.', button: 'Reintentar' },
+    };
+    return map[state] || map.idle;
+  }
+
+  function normalizeUpdateUiState(raw){
+    const base = getDefaultUpdateUiState();
+    const state = safeTrim(raw && raw.state) || base.state;
+    const known = getUpdateStateMeta(state);
+    return {
+      state: known.state,
+      title: safeTrim(raw && raw.title) || base.title,
+      detail: safeTrim(raw && raw.detail) || known.detail,
+      pill: safeTrim(raw && raw.pill) || known.pill,
+      tone: safeTrim(raw && raw.tone) || known.tone,
+      button: safeTrim(raw && raw.button) || known.button,
+      checkedAt: numOrZero(raw && raw.checkedAt),
+      updatedAt: numOrZero(raw && raw.updatedAt) || Date.now(),
+    };
+  }
+
+  function readUpdateUiState(){
+    const fallback = getDefaultUpdateUiState();
+    try{
+      const raw = localStorage.getItem(UPDATE_UI_KEY);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return fallback;
+      return normalizeUpdateUiState(parsed);
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function persistUpdateUiState(raw){
+    const next = normalizeUpdateUiState(raw);
+    try{ localStorage.setItem(UPDATE_UI_KEY, JSON.stringify(next)); }catch(e){}
+    return next;
+  }
+
+  function setUpdateUiState(patch){
+    const prev = readUpdateUiState();
+    const next = normalizeUpdateUiState(Object.assign({}, prev, patch || {}, { updatedAt: Date.now() }));
+    persistUpdateUiState(next);
+    renderAdminUpdateSection();
+    return next;
+  }
+
+  function readUpdateBootMark(){
+    try{
+      const raw = localStorage.getItem(UPDATE_BOOT_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function persistUpdateBootMark(payload){
+    const next = Object.assign({
+      pending: false,
+      startedAt: 0,
+      finishedAt: 0,
+      version: APP_VERSION,
+      build: APP_BUILD,
+      targetScriptUrl: '',
+      controllerScriptUrl: '',
+    }, payload || {});
+    try{ localStorage.setItem(UPDATE_BOOT_KEY, JSON.stringify(next)); }catch(e){}
+    return next;
+  }
+
+  function clearUpdateBootMark(){
+    try{ localStorage.removeItem(UPDATE_BOOT_KEY); }catch(e){}
+  }
+
+  function formatUpdateCheckedAt(ts){
+    const safeTs = numOrZero(ts);
+    if (!safeTs) return 'Aún no se ha comprobado manualmente.';
+    return `Última comprobación: ${formatDateTimeShort(safeTs)}.`;
+  }
+
+  function renderAdminUpdateSection(){
+    const stateObj = readUpdateUiState();
+    const section = document.getElementById('adminUpdateSection');
+    if (!section) return;
+    const pill = document.getElementById('adminUpdatePill');
+    const detail = document.getElementById('adminUpdateDetail');
+    const meta = document.getElementById('adminUpdateMeta');
+    const btn = document.getElementById('checkUpdateBtn');
+    if (pill){
+      pill.textContent = stateObj.pill;
+      pill.className = `admin-update-pill is-${stateObj.tone || 'neutral'}`;
+    }
+    if (detail) detail.textContent = stateObj.detail;
+    if (meta) meta.textContent = formatUpdateCheckedAt(stateObj.checkedAt);
+    if (btn){
+      const isBusy = updateActionInFlight || stateObj.state === 'checking' || stateObj.state === 'applying';
+      btn.textContent = stateObj.button;
+      btn.disabled = isBusy;
+      btn.classList.toggle('primary', stateObj.state === 'available');
+      btn.classList.toggle('danger', stateObj.state === 'error');
+      btn.setAttribute('data-update-state', stateObj.state);
+      btn.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+    }
+  }
+
+  function captureWorkerScriptUrl(worker){
+    return safeTrim(worker && worker.scriptURL);
+  }
+
+  async function getLiveServiceWorkerSnapshot(reg){
+    if (!('serviceWorker' in navigator)) {
+      return {
+        supported: false,
+        registration: null,
+        waiting: null,
+        waitingScriptUrl: '',
+        active: null,
+        activeScriptUrl: '',
+        controller: null,
+        controllerScriptUrl: '',
+        installing: null,
+        installingState: '',
+      };
+    }
+    const finalReg = reg || await getAppServiceWorkerRegistration();
+    if (finalReg) bindServiceWorkerLifecycle(finalReg);
+    const waiting = finalReg && finalReg.waiting ? finalReg.waiting : null;
+    const active = finalReg && finalReg.active ? finalReg.active : null;
+    const installing = finalReg && finalReg.installing ? finalReg.installing : null;
+    const controller = navigator.serviceWorker.controller || null;
+    return {
+      supported: true,
+      registration: finalReg || null,
+      waiting,
+      waitingScriptUrl: captureWorkerScriptUrl(waiting),
+      active,
+      activeScriptUrl: captureWorkerScriptUrl(active),
+      controller,
+      controllerScriptUrl: captureWorkerScriptUrl(controller),
+      installing,
+      installingState: safeTrim(installing && installing.state),
+    };
+  }
+
+  function deriveUpdateUiStateFromLive(current, live, options){
+    const opts = Object.assign({
+      checkedAt: numOrZero(current && current.checkedAt),
+      preserveTransient: false,
+    }, options || {});
+    const checkedAt = numOrZero(opts.checkedAt) || numOrZero(current && current.checkedAt);
+    const boot = readUpdateBootMark();
+
+    if (!live || !live.supported) {
+      return normalizeUpdateUiState({
+        state: 'error',
+        detail: 'Este navegador no permite gestión manual de actualización PWA.',
+        checkedAt,
+      });
+    }
+
+    if (live.waiting) {
+      return normalizeUpdateUiState({
+        state: 'available',
+        detail: 'Hay una nueva versión lista para aplicarse.',
+        checkedAt: checkedAt || Date.now(),
+      });
+    }
+
+    if (opts.preserveTransient && current && (current.state === 'checking' || current.state === 'applying')) {
+      return normalizeUpdateUiState(Object.assign({}, current, { checkedAt }));
+    }
+
+    if (current && current.state === 'checking' && live.installingState && live.installingState !== 'redundant') {
+      return normalizeUpdateUiState({
+        state: 'checking',
+        detail: 'Buscando una versión nueva para esta instalación.',
+        checkedAt: checkedAt || Date.now(),
+      });
+    }
+
+    if (current && current.state === 'applying' && boot && boot.pending) {
+      return normalizeUpdateUiState({
+        state: 'applying',
+        detail: 'Activando la nueva versión. La app se recargará sola.',
+        checkedAt: checkedAt || Date.now(),
+      });
+    }
+
+    if (checkedAt && (live.registration || live.active || live.controller)) {
+      return normalizeUpdateUiState({
+        state: 'current',
+        detail: 'Esta app ya está al día en este dispositivo.',
+        checkedAt,
+      });
+    }
+
+    return normalizeUpdateUiState({
+      state: 'idle',
+      detail: 'Listo para comprobar si hay una nueva versión.',
+      checkedAt: 0,
+    });
+  }
+
+  async function syncUpdateUiStateFromServiceWorker(options){
+    const opts = Object.assign({}, options || {});
+    const current = readUpdateUiState();
+    const reg = opts.reg || await getAppServiceWorkerRegistration();
+    const live = await getLiveServiceWorkerSnapshot(reg);
+    const next = deriveUpdateUiStateFromLive(current, live, opts);
+    persistUpdateUiState(Object.assign({}, current, next, { updatedAt: Date.now() }));
+    renderAdminUpdateSection();
+    return next;
+  }
+
+  async function hydratePostUpdateUiState(){
+    const boot = readUpdateBootMark();
+    const current = readUpdateUiState();
+    const live = await getLiveServiceWorkerSnapshot();
+
+    if (!boot || !boot.pending) {
+      if (current.state === 'applying') {
+        persistUpdateUiState({
+          state: 'idle',
+          detail: 'La app volvió a estado estable. Puedes comprobar otra vez cuando quieras.',
+          checkedAt: numOrZero(current.checkedAt),
+        });
+      }
+      await syncUpdateUiStateFromServiceWorker({ checkedAt: numOrZero(current.checkedAt) });
+      return;
+    }
+
+    const startedAt = numOrZero(boot.startedAt);
+    const targetScriptUrl = safeTrim(boot.targetScriptUrl);
+    const activeScriptUrl = live.activeScriptUrl || live.controllerScriptUrl;
+    const targetApplied = !!targetScriptUrl && !!activeScriptUrl && targetScriptUrl === activeScriptUrl;
+
+    if (targetApplied) {
+      persistUpdateUiState({
+        state: 'current',
+        detail: 'La nueva versión quedó aplicada correctamente en este dispositivo.',
+        pill: 'Actualizada',
+        tone: 'success',
+        button: 'Buscar actualización',
+        checkedAt: Date.now(),
+      });
+      persistUpdateBootMark({
+        pending: false,
+        startedAt,
+        finishedAt: Date.now(),
+        version: APP_VERSION,
+        build: APP_BUILD,
+        targetScriptUrl,
+        controllerScriptUrl: activeScriptUrl,
+      });
+      renderAdminUpdateSection();
+      return;
+    }
+
+    if (live.waiting) {
+      persistUpdateUiState({
+        state: 'available',
+        detail: 'Hay una nueva versión lista para aplicarse.',
+        checkedAt: Date.now(),
+      });
+      persistUpdateBootMark({
+        pending: false,
+        startedAt,
+        finishedAt: Date.now(),
+        version: APP_VERSION,
+        build: APP_BUILD,
+        targetScriptUrl,
+        controllerScriptUrl: activeScriptUrl,
+      });
+      renderAdminUpdateSection();
+      return;
+    }
+
+    const fresh = startedAt > 0 && Math.abs(Date.now() - startedAt) <= 120000;
+    persistUpdateUiState({
+      state: 'idle',
+      detail: fresh
+        ? 'La app volvió a estado estable. Puedes comprobar otra vez cuando quieras.'
+        : 'Listo para comprobar si hay una nueva versión.',
+      checkedAt: startedAt || numOrZero(current.checkedAt),
+    });
+    persistUpdateBootMark({
+      pending: false,
+      startedAt,
+      finishedAt: Date.now(),
+      version: APP_VERSION,
+      build: APP_BUILD,
+      targetScriptUrl,
+      controllerScriptUrl: activeScriptUrl,
+    });
+    await syncUpdateUiStateFromServiceWorker({ checkedAt: startedAt || numOrZero(current.checkedAt) });
+  }
+
+  function bindInstallingWorker(worker, reg){
+    if (!worker || worker.__pokeritoBound) return;
+    worker.__pokeritoBound = true;
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'installed') {
+        if (reg && reg.waiting) {
+          setUpdateUiState({
+            state: 'available',
+            detail: 'Hay una nueva versión lista para aplicarse.',
+            checkedAt: Date.now(),
+          });
+          return;
+        }
+        syncUpdateUiStateFromServiceWorker({ checkedAt: Date.now(), preserveTransient: true }).catch(() => {});
+        return;
+      }
+      if (worker.state === 'activating') {
+        const current = readUpdateUiState();
+        if (current.state === 'applying') {
+          setUpdateUiState({
+            state: 'applying',
+            detail: 'Activando la nueva versión. La app se recargará sola.',
+            checkedAt: numOrZero(current.checkedAt) || Date.now(),
+          });
+        }
+        return;
+      }
+      if (worker.state === 'activated') {
+        syncUpdateUiStateFromServiceWorker({ checkedAt: Date.now(), preserveTransient: true }).catch(() => {});
+        return;
+      }
+      if (worker.state === 'redundant') {
+        const current = readUpdateUiState();
+        if (current.state === 'checking' || current.state === 'applying') {
+          setUpdateUiState({
+            state: 'error',
+            detail: 'La comprobación encontró un worker inválido. Puedes intentarlo otra vez.',
+            checkedAt: Date.now(),
+          });
+        }
+      }
+    });
+  }
+
+  function bindServiceWorkerLifecycle(reg){
+    if (!reg) return;
+    swRegistrationRef = reg;
+    if (!reg.__pokeritoBound){
+      reg.__pokeritoBound = true;
+      reg.addEventListener('updatefound', () => bindInstallingWorker(reg.installing, reg));
+    }
+    bindInstallingWorker(reg.installing, reg);
+    if (!navigator.serviceWorker.__pokeritoMessageBound) {
+      navigator.serviceWorker.__pokeritoMessageBound = true;
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        const data = event && event.data ? event.data : {};
+        if (!data || data.type !== 'POKERITO_SW_ACTIVATED') return;
+        const boot = readUpdateBootMark();
+        const scriptUrl = safeTrim(data.scriptURL);
+        if (boot && boot.pending && scriptUrl && safeTrim(boot.targetScriptUrl) === scriptUrl) {
+          persistUpdateBootMark({
+            pending: false,
+            startedAt: numOrZero(boot.startedAt),
+            finishedAt: Date.now(),
+            version: APP_VERSION,
+            build: APP_BUILD,
+            targetScriptUrl: scriptUrl,
+            controllerScriptUrl: scriptUrl,
+          });
+          persistUpdateUiState({
+            state: 'current',
+            detail: 'La nueva versión quedó aplicada correctamente en este dispositivo.',
+            checkedAt: Date.now(),
+          });
+          renderAdminUpdateSection();
+          return;
+        }
+        syncUpdateUiStateFromServiceWorker({ checkedAt: Date.now() }).catch(() => {});
+      });
+    }
+  }
+
+  function delay(ms){
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function getAppServiceWorkerRegistration(){
+    if (!('serviceWorker' in navigator)) return null;
+    if (swRegistrationRef) return swRegistrationRef;
+    try{
+      const direct = await navigator.serviceWorker.getRegistration();
+      if (direct) {
+        bindServiceWorkerLifecycle(direct);
+        return direct;
+      }
+    } catch (e) {}
+    try{
+      const regs = await navigator.serviceWorker.getRegistrations();
+      const match = Array.isArray(regs) ? regs.find(Boolean) : null;
+      if (match) {
+        bindServiceWorkerLifecycle(match);
+        return match;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function waitForRegistrationSettle(reg, timeoutMs){
+    const started = Date.now();
+    let lastInstalling = reg && reg.installing ? reg.installing : null;
+    if (lastInstalling) bindInstallingWorker(lastInstalling, reg);
+    while (Date.now() - started < timeoutMs) {
+      if (!reg) break;
+      if (reg.waiting) return 'available';
+      if (reg.installing && reg.installing !== lastInstalling) {
+        lastInstalling = reg.installing;
+        bindInstallingWorker(lastInstalling, reg);
+      }
+      if (lastInstalling) {
+        const state = safeTrim(lastInstalling.state);
+        if (state === 'installed' && reg.waiting) return 'available';
+        if (state === 'activated') return 'current';
+        if (state === 'redundant') return 'error';
+      }
+      await delay(180);
+    }
+    return reg && reg.waiting ? 'available' : 'current';
+  }
+
+  function releaseUpdateActionLock(){
+    updateActionInFlight = false;
+    renderAdminUpdateSection();
+  }
+
+  async function checkForAppUpdate(){
+    if (updateActionInFlight) return readUpdateUiState().state === 'available';
+    if (!('serviceWorker' in navigator)) {
+      setUpdateUiState({ state: 'error', detail: 'Este navegador no permite gestión manual de actualización PWA.' });
+      return false;
+    }
+    updateActionInFlight = true;
+    setUpdateUiState({ state: 'checking', detail: 'Buscando una versión nueva para esta instalación.', checkedAt: Date.now() });
+    try{
+      let reg = await getAppServiceWorkerRegistration();
+      if (!reg) reg = await navigator.serviceWorker.register(SW_URL, { updateViaCache: 'none' });
+      bindServiceWorkerLifecycle(reg);
+      if (reg.waiting) {
+        setUpdateUiState({ state: 'available', detail: 'Hay una nueva versión lista para aplicarse.', checkedAt: Date.now() });
+        releaseUpdateActionLock();
+        return true;
+      }
+      try{ await reg.update(); }catch(e){}
+      const result = await waitForRegistrationSettle(reg, 4800);
+      if (result === 'error') throw new Error('worker-redundant');
+      const next = await syncUpdateUiStateFromServiceWorker({ reg, checkedAt: Date.now() });
+      releaseUpdateActionLock();
+      return next.state === 'available';
+    } catch (e) {
+      setUpdateUiState({ state: 'error', detail: 'No se pudo comprobar la actualización ahora mismo. Revisa tu conexión e inténtalo de nuevo.', checkedAt: Date.now() });
+      releaseUpdateActionLock();
+      return false;
+    }
+  }
+
+  function armUpdateReloadFlow(){
+    if (updateReloadArmed) return;
+    updateReloadArmed = true;
+    const swApi = navigator.serviceWorker;
+    const onControllerChange = () => {
+      try{ swApi.removeEventListener('controllerchange', onControllerChange); }catch(e){}
+      if (updateReloadFallbackTimer) {
+        clearTimeout(updateReloadFallbackTimer);
+        updateReloadFallbackTimer = 0;
+      }
+      window.location.reload();
+    };
+    try{ swApi.addEventListener('controllerchange', onControllerChange); }catch(e){}
+    updateReloadFallbackTimer = window.setTimeout(() => {
+      updateReloadFallbackTimer = 0;
+      try{ swApi.removeEventListener('controllerchange', onControllerChange); }catch(e){}
+      window.location.reload();
+    }, 6000);
+  }
+
+  async function applyAppUpdate(){
+    if (updateActionInFlight) return false;
+    if (!('serviceWorker' in navigator)) {
+      setUpdateUiState({ state: 'error', detail: 'Este navegador no permite aplicar actualización manual PWA.' });
+      return false;
+    }
+    updateActionInFlight = true;
+    try{
+      let reg = await getAppServiceWorkerRegistration();
+      if (!reg) reg = await navigator.serviceWorker.register(SW_URL, { updateViaCache: 'none' });
+      bindServiceWorkerLifecycle(reg);
+      let worker = reg.waiting;
+      if (!worker) {
+        try{ await reg.update(); }catch(e){}
+        await waitForRegistrationSettle(reg, 4800);
+        reg = await getAppServiceWorkerRegistration();
+        worker = reg && reg.waiting;
+      }
+      if (!worker) {
+        setUpdateUiState({ state: 'current', detail: 'No apareció una versión nueva para aplicar. Esta app sigue al día.', checkedAt: Date.now() });
+        releaseUpdateActionLock();
+        return false;
+      }
+      const targetScriptUrl = captureWorkerScriptUrl(worker);
+      setUpdateUiState({ state: 'applying', detail: 'Activando la nueva versión. La app se recargará sola.', checkedAt: Date.now() });
+      persistUpdateBootMark({
+        pending: true,
+        startedAt: Date.now(),
+        version: APP_VERSION,
+        build: APP_BUILD,
+        targetScriptUrl,
+        controllerScriptUrl: captureWorkerScriptUrl(navigator.serviceWorker.controller),
+      });
+      armUpdateReloadFlow();
+      worker.postMessage({ type: 'POKERITO_SKIP_WAITING' });
+      releaseUpdateActionLock();
+      return true;
+    } catch (e) {
+      clearUpdateBootMark();
+      setUpdateUiState({ state: 'error', detail: 'No se pudo aplicar la nueva versión. Puedes volver a comprobar e intentar otra vez.', checkedAt: Date.now() });
+      releaseUpdateActionLock();
+      return false;
+    }
+  }
+
 function renderAdministracion(){
     const analytics = computeAnalytics();
     const players = getPlayers();
@@ -6478,6 +7035,21 @@ function renderAdministracion(){
           </div>
         </div>
 
+        <div class="panel admin-utility-panel admin-update-panel" id="adminUpdateSection" role="region" aria-label="Actualización manual PWA" style="margin-top:14px">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title" style="margin:0">Actualización manual PWA</div>
+              <div class="small-note" style="margin-top:8px">Comprueba si hay versión nueva y aplícala desde aquí, sin salir a cazar fantasmas por el navegador.</div>
+            </div>
+            <div class="admin-update-strip">
+              <span class="admin-update-pill is-neutral" id="adminUpdatePill">Listo</span>
+              <button class="btn" type="button" id="checkUpdateBtn">Buscar actualización</button>
+            </div>
+          </div>
+          <div class="small-note" id="adminUpdateDetail" style="margin-top:12px">Listo para comprobar si hay una nueva versión.</div>
+          <div class="small-note" id="adminUpdateMeta" style="margin-top:8px">Aún no se ha comprobado manualmente.</div>
+        </div>
+
         <div class="panel admin-utility-panel" id="adminClearSection" role="region" aria-label="Borrar datos locales" style="margin-top:14px">
           <div class="panel-title">Borrar datos locales</div>
           <div class="small-note" style="margin-top:10px">Limpieza total de esta instalación local. No toca otros dispositivos, pero aquí sí borra jugadores, fichas y sesiones.</div>
@@ -6507,6 +7079,7 @@ function renderAdministracion(){
 
     document.getElementById('exportExcelBtn').addEventListener('click', () => exportExcel());
     wireAdminUtilities();
+    renderAdminUpdateSection();
 
     // Players
     const $pgrid = document.getElementById('playerGrid');
@@ -8746,6 +9319,8 @@ function formatMoney(n){
   function resetAllData(){
     try{ localStorage.removeItem(STORE_KEY); }catch(e){}
     try{ localStorage.removeItem(THEME_KEY); }catch(e){}
+    try{ localStorage.removeItem(UPDATE_UI_KEY); }catch(e){}
+    try{ localStorage.removeItem(UPDATE_BOOT_KEY); }catch(e){}
     themePref = 'auto';
     store = initStore();
     applyTheme();
@@ -9414,6 +9989,13 @@ La base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true
       await confirmDialog({ title: 'Listo', body: 'Ranking, récords y estadísticas recalculados desde datos fuente.', okText: 'OK', cancelText: 'Cerrar' });
     });
 
+    const $checkUpdateBtn = document.getElementById('checkUpdateBtn');
+    if ($checkUpdateBtn) $checkUpdateBtn.addEventListener('click', async () => {
+      const stateObj = readUpdateUiState();
+      await (stateObj.state === 'available' ? applyAppUpdate() : checkForAppUpdate());
+      renderAdminUpdateSection();
+    });
+
     const $clearBtn = document.getElementById('clearBtn');
     if ($clearBtn) $clearBtn.addEventListener('click', async () => {
       const ok = await confirmDialog({
@@ -9828,13 +10410,36 @@ La base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true
     });
   }
 
-  // PWA: register Service Worker (offline mínimo)
+  // PWA: register Service Worker (offline mínimo + actualización manual)
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register(SW_URL, { updateViaCache: 'none' })
-        .then((reg) => reg.update().catch(() => {}))
+        .then((reg) => {
+          bindServiceWorkerLifecycle(reg);
+          if (reg.waiting) {
+            setUpdateUiState({ state: 'available', detail: 'Hay una nueva versión lista para aplicarse.', checkedAt: Date.now() });
+          }
+          return reg.update()
+            .catch(() => {})
+            .then(() => syncUpdateUiStateFromServiceWorker({ reg, checkedAt: numOrZero(readUpdateUiState().checkedAt), preserveTransient: true }).catch(() => {}));
+        })
         .catch(() => {});
     });
+
+    window.addEventListener('pageshow', () => {
+      syncUpdateUiStateFromServiceWorker({ checkedAt: numOrZero(readUpdateUiState().checkedAt) }).catch(() => {});
+    });
+
+    window.addEventListener('focus', () => {
+      syncUpdateUiStateFromServiceWorker({ checkedAt: numOrZero(readUpdateUiState().checkedAt) }).catch(() => {});
+    });
+
+    if (document && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        syncUpdateUiStateFromServiceWorker({ checkedAt: numOrZero(readUpdateUiState().checkedAt) }).catch(() => {});
+      });
+    }
   }
 
   // If user is on Auto, keep meta + icon aligned when system theme changes
@@ -9856,6 +10461,7 @@ La base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true
     // ensure default route
     if (!window.location.hash) window.location.hash = '#/inicio';
     applyTheme();
+    hydratePostUpdateUiState();
     onRoute();
   });
 

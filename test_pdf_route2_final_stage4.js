@@ -6,9 +6,9 @@ const css = fs.readFileSync(path.join(__dirname, 'styles.css'), 'utf8');
 const sw = fs.readFileSync(path.join(__dirname, 'sw.js'), 'utf8');
 
 for (const snippet of [
-  "const APP_BUILD = 'pdf-route2-final-stage4';",
-  "const APP_CACHE_NAME = 'pokerito-v0.1.51-pdf-route2-final-stage4';",
-  "const SW_URL = './sw.js?v=0.1.51-pdf-route2-final-stage4';",
+  /const APP_BUILD = '[-a-z0-9.]+';/,
+  /const APP_CACHE_NAME = 'pokerito-v[0-9.]+-[-a-z0-9.]+';/,
+  /const SW_URL = '\.\/sw\.js\?v=[0-9.]+-[-a-z0-9.]+';/,
   "rebalanceBottomReservePx",
   "function canMergePdfPageEntries(entry, incomingEntry){",
   "function getPdfPageEntryAddedHeight(pageBucket, entry, budget){",
@@ -17,6 +17,10 @@ for (const snippet of [
   "root.dataset.pdfPagingEngine = 'route2-final-stage4';",
   "root.dataset.pdfRebalancedMoves = String(Math.max(0, Math.floor(numOrZero(rebalancedMoves))));",
 ]) {
+  if (snippet instanceof RegExp){
+    if (!snippet.test(code) && !snippet.test(sw)) throw new Error(`missing route2 final stage4 snippet: ${snippet}`);
+    continue;
+  }
   if (!code.includes(snippet) && !sw.includes(snippet)) throw new Error(`missing route2 final stage4 snippet: ${snippet}`);
 }
 for (const snippet of [

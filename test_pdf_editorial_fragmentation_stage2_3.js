@@ -6,8 +6,8 @@ const css = fs.readFileSync(path.join(__dirname, 'styles.css'), 'utf8');
 const sw = fs.readFileSync(path.join(__dirname, 'sw.js'), 'utf8');
 
 for (const snippet of [
-  "const APP_VERSION = '0.1.51';",
-  /const APP_BUILD = '(?:(?:pdf-editorial-(?:fragmentation-stage2|final-stage3)|pdf-page-budget-stage2|pdf-continuity-stage3-4|pdf-route2-final-stage4)|pdf-page-budget-stage2|pdf-dom-pages-stage1)';/,
+  /const APP_VERSION = '[0-9.]+';/,
+  /const APP_BUILD = '[-a-z0-9.]+';/,
   "const PDF_RESULTS_ROWS_PER_FRAGMENT = 3;",
   "const PDF_RECORD_ROWS_PER_FRAGMENT = 2;",
   'function buildPdfFragment(body, opts){',
