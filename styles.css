@@ -795,6 +795,15 @@ body{
 .rank-mini-net.pos{ color: color-mix(in oklab, #33d17a 85%, white); }
 .rank-mini-net.neg{ color: color-mix(in oklab, #ff4d6d 85%, white); }
 
+.combo-ranking-pane{ min-width: 0; }
+.combo-ranking-tabs{ flex-wrap: wrap; }
+.combo-rank-mini-row{ grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; }
+.combo-rank-main{ min-width: 0; }
+.combo-rank-note{ margin-top: 4px; font-size: 11px; color: var(--muted); font-weight: 850; overflow-wrap: anywhere; }
+.combo-rank-count{ display: flex; flex-direction: column; align-items: flex-end; justify-content: center; min-width: 82px; text-align: right; }
+.combo-rank-count-k{ font-size: 11px; color: var(--muted); font-weight: 900; text-transform: uppercase; letter-spacing: 0.02em; }
+.combo-rank-count-v{ font-size: 18px; font-weight: 1050; font-variant-numeric: tabular-nums; }
+
 .records-grid{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .record{ border: 1px solid var(--border); background: color-mix(in oklab, var(--panel) 96%, transparent); border-radius: 20px; padding: 12px 14px; }
 .record .k{ font-size: 12px; color: var(--muted); font-weight: 950; letter-spacing: 0.02em; }
@@ -1985,6 +1994,56 @@ body.print-mode .print-root{
 .print-executive-stat-v .net.neg,
 .print-podium-net .net.neg,
 .print-results-table .net.neg{ color: #b4233c; }
+
+.print-major-combos-shell{
+  display: grid;
+  gap: 12px;
+}
+.print-major-combos-summary-grid{
+  display: grid;
+  grid-template-columns: 1.15fr 1fr 1fr;
+  gap: 10px;
+}
+.print-major-combos-card{
+  border: 1px solid rgba(0,0,0,0.14);
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: #fff;
+  display: grid;
+  gap: 6px;
+  min-height: 104px;
+}
+.print-major-combos-card--hero{
+  background: rgba(0,0,0,0.025);
+}
+.print-major-combos-k{
+  font-size: 11px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(0,0,0,0.56);
+}
+.print-major-combos-v{
+  font-size: 22px;
+  line-height: 1.08;
+  font-weight: 1000;
+  letter-spacing: -0.03em;
+}
+.print-major-combos-s{
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.4;
+  color: rgba(0,0,0,0.70);
+}
+.print-major-combos-empty{
+  border: 1px solid rgba(0,0,0,0.14);
+  border-radius: 18px;
+  padding: 16px 18px;
+  background: rgba(0,0,0,0.025);
+  font-size: 17px;
+  line-height: 1.35;
+  font-weight: 900;
+}
 .print-podium-grid{
   display: grid;
   grid-template-columns: 1.2fr 1fr 1fr;
@@ -2107,6 +2166,7 @@ body.print-mode .print-root{
 .print-section--session-executive,
 .print-section--session-podium,
 .print-section--session-detail,
+.print-section--session-major-combos,
 .print-section--impact-major,
 .print-section--ranking-major,
 .print-section--records-major,
@@ -2137,7 +2197,8 @@ body.print-mode .print-root{
 .print-executive-leads,
 .print-podium-grid,
 .print-rank-grid,
-.print-rank-trail{
+.print-rank-trail,
+.print-major-combos-summary-grid{
   break-inside: avoid;
   page-break-inside: avoid;
 }
@@ -3138,6 +3199,132 @@ html[data-vp-width="compact"] .header-right .icon-btn{
   gap: 8px;
 }
 
+.mesa-combo-block{
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklab, var(--line) 88%, transparent);
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--panel) 90%, black 10%);
+}
+
+.mesa-combo-head{
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mesa-combo-title{
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mesa-combo-sub{
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.mesa-combo-entry{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.mesa-combo-field{
+  display: grid;
+  gap: 6px;
+}
+
+.mesa-combo-field > span{
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-weight: 900;
+  color: var(--muted);
+}
+
+.mesa-combo-field select{
+  min-height: 44px;
+  font-weight: 800;
+}
+
+.mesa-combo-entry .btn.small{
+  min-height: 44px;
+  padding-inline: 14px;
+}
+
+.mesa-combo-summary{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mesa-combo-pill{
+  display: grid;
+  gap: 4px;
+  min-height: 64px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--surface) 82%, black 18%);
+  border: 1px solid color-mix(in oklab, var(--line) 80%, transparent);
+}
+
+.mesa-combo-pill .k{
+  font-size: 11px;
+  line-height: 1.25;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.mesa-combo-pill-head{
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mesa-combo-pill--editable{
+  gap: 10px;
+  align-content: space-between;
+}
+
+.mesa-combo-counter{
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.mesa-combo-counter .num-btn,
+.mesa-combo-counter .num{
+  min-height: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+.mesa-combo-counter .num-btn{
+  width: 40px;
+}
+
+.mesa-combo-counter .num{
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-inline: 10px;
+}
+
+.mesa-combo-pill .v{
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 950;
+}
+
 .mesa-chip-row{
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -3254,6 +3441,19 @@ html[data-vp-width="compact"] .mesa-head-actions{
 html[data-vp-width="compact"] .mesa-head-actions .btn{
   flex: 1 1 100%;
 }
+
+html[data-vp-width="compact"] .mesa-combo-entry,
+html[data-vp-width="compact"] .mesa-combo-summary{
+  grid-template-columns: 1fr;
+}
+
+html[data-vp-width="compact"] .mesa-combo-entry .btn.small{
+  width: 100%;
+}
+html[data-vp-width="compact"] .mesa-combo-counter .num{
+  min-width: 52px;
+}
+
 
 html[data-vp-width="compact"] .mesa-player-top,
 html[data-vp-width="compact"] .mesa-chip-row{
@@ -3520,6 +3720,19 @@ html[data-vp-width="compact"] .screen--ranking .rank-right{
 html[data-vp-orientation="portrait"] .screen--ranking .rank-mini,
 html[data-vp-width="compact"] .screen--ranking .rank-mini{
   white-space: normal;
+}
+
+html[data-vp-orientation="portrait"] .combo-rank-mini-row,
+html[data-vp-width="compact"] .combo-rank-mini-row{
+  grid-template-columns: 40px minmax(0, 1fr);
+}
+
+html[data-vp-orientation="portrait"] .combo-rank-count,
+html[data-vp-width="compact"] .combo-rank-count{
+  grid-column: 1 / -1;
+  align-items: flex-start;
+  text-align: left;
+  padding-left: 50px;
 }
 
 html[data-vp-orientation="portrait"] .screen--config .rank-mini-row,
@@ -4340,6 +4553,18 @@ html[data-vp-orientation="landscape"][data-vp-width="wide"] .screen--juego .game
 
 .archive-profile-vitals-grid{
   margin-top: 14px;
+}
+
+.archive-lane--profile-combos{
+  background: linear-gradient(180deg, color-mix(in oklab, var(--panel) 96%, transparent), color-mix(in oklab, var(--accent) 6%, var(--panel)));
+}
+
+.archive-profile-combos-grid{
+  margin-top: 2px;
+}
+
+.archive-profile-combos-footnote{
+  margin-top: auto;
 }
 
 html[data-vp-orientation="portrait"] .archive-summary-grid,
