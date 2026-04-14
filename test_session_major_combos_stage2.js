@@ -3,7 +3,7 @@ const vm = require('vm');
 const path = require('path');
 let code = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
 
-code = code.replace(/\}\)\(\);\s*$/, `window.__TEST_HOOKS = {\n  normalizeStoreObject, createDraftSession, ensureSessionRosterIntegrity, ensurePlayerState,\n  registerSessionPlayerMajorCombo, getSessionPlayerMajorComboCounts,\n  adjustSessionPlayerMajorCombo, setSessionPlayerMajorComboCount,\n  getStore: () => store,\n  setStore: (next) => { store = normalizeStoreObject(next).store; persistStore(store); return store; },\n};})();`);
+code = code.replace(/\}\)\(\);\s*$/, `window.__TEST_HOOKS = {\n  normalizeStoreObject, createDraftSession, ensureSessionRosterIntegrity, ensurePlayerState,\n  registerSessionPlayerMajorCombo, getSessionPlayerMajorComboCounts,\n  adjustSessionPlayerMajorCombo, setSessionPlayerMajorComboCount, correctSessionPlayerMajorCombo,\n  getStore: () => store,\n  setStore: (next) => { store = normalizeStoreObject(next).store; persistStore(store); return store; },\n};})();`);
 
 function makeEl(tag='div'){
   return {
@@ -88,3 +88,23 @@ if (invalidSet.ok) throw new Error('invalid set should fail');
 console.log('test-session-major-combos-edit-delta=ok');
 console.log('test-session-major-combos-edit-floor-clamp=ok');
 console.log('test-session-major-combos-edit-invalid-rejected=ok');
+
+
+result = hooks.registerSessionPlayerMajorCombo(session, anaId, 'royal_flush');
+if (!result.ok) throw new Error('royal_flush should register again for correction test');
+result = hooks.registerSessionPlayerMajorCombo(session, anaId, 'straight_flush');
+if (!result.ok) throw new Error('straight_flush should register for correction test');
+result = hooks.correctSessionPlayerMajorCombo(session, anaId, 'royal_flush', 'four_kind');
+if (!result.ok) throw new Error('correction should move one hit from royal_flush to four_kind');
+counts = hooks.getSessionPlayerMajorComboCounts(hooks.ensurePlayerState(session, anaId));
+if (counts.royal_flush !== 0) throw new Error(`expected royal_flush=0 after correction, got ${counts.royal_flush}`);
+if (counts.straight_flush !== 1) throw new Error(`expected straight_flush=1 after correction setup, got ${counts.straight_flush}`);
+if (counts.four_kind !== 1) throw new Error(`expected four_kind=1 after correction, got ${counts.four_kind}`);
+
+const invalidCorrectionSame = hooks.correctSessionPlayerMajorCombo(session, anaId, 'straight_flush', 'straight_flush');
+if (invalidCorrectionSame.ok || invalidCorrectionSame.reason !== 'same') throw new Error('same-source correction should fail');
+const invalidCorrectionEmpty = hooks.correctSessionPlayerMajorCombo(session, anaId, 'royal_flush', 'full_house');
+if (invalidCorrectionEmpty.ok || invalidCorrectionEmpty.reason !== 'source-empty') throw new Error('empty-source correction should fail');
+
+console.log('test-session-major-combos-editable-replace=ok');
+console.log('test-session-major-combos-editable-invalid-guards=ok');

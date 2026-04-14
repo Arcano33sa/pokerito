@@ -3237,6 +3237,10 @@ html[data-vp-width="compact"] .header-right .icon-btn{
   align-items: end;
 }
 
+.mesa-combo-entry--edit{
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
 .mesa-combo-field{
   display: grid;
   gap: 6px;
@@ -3283,40 +3287,6 @@ html[data-vp-width="compact"] .header-right .icon-btn{
   text-transform: uppercase;
   letter-spacing: 0.02em;
   color: var(--muted);
-}
-
-.mesa-combo-pill-head{
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.mesa-combo-pill--editable{
-  gap: 10px;
-  align-content: space-between;
-}
-
-.mesa-combo-counter{
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.mesa-combo-counter .num-btn,
-.mesa-combo-counter .num{
-  min-height: 40px;
-  height: 40px;
-  border-radius: 12px;
-}
-
-.mesa-combo-counter .num-btn{
-  width: 40px;
-}
-
-.mesa-combo-counter .num{
-  flex: 1 1 auto;
-  min-width: 0;
-  padding-inline: 10px;
 }
 
 .mesa-combo-pill .v{
@@ -3443,15 +3413,14 @@ html[data-vp-width="compact"] .mesa-head-actions .btn{
 }
 
 html[data-vp-width="compact"] .mesa-combo-entry,
+html[data-vp-width="compact"] .mesa-combo-entry--edit,
 html[data-vp-width="compact"] .mesa-combo-summary{
   grid-template-columns: 1fr;
 }
 
-html[data-vp-width="compact"] .mesa-combo-entry .btn.small{
+html[data-vp-width="compact"] .mesa-combo-entry .btn.small,
+html[data-vp-width="compact"] .mesa-combo-entry--edit .btn.small{
   width: 100%;
-}
-html[data-vp-width="compact"] .mesa-combo-counter .num{
-  min-width: 52px;
 }
 
 

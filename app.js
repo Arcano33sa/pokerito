@@ -2013,32 +2013,34 @@ function getSessionMajorComboLeaders(summary){
   };
 }
 
-function renderSessionMajorComboSummaryHtml(rawCounts, opts){
+function renderSessionMajorComboSummaryHtml(rawCounts){
   const counts = normalizeSessionMajorComboCounts(rawCounts);
-  const editable = !!(opts && opts.editable);
   return SESSION_MAJOR_COMBO_DEFS.map(item => {
     const value = Math.max(0, Math.floor(numOrZero(counts[item.key])));
-    if (!editable){
-      return `
-        <div class="mesa-combo-pill" data-combo-key="${escapeAttr(item.key)}">
-          <span class="k">${escapeHtml(item.label)}</span>
-          <span class="v">${escapeHtml(String(value))}</span>
-        </div>
-      `;
-    }
     return `
-      <div class="mesa-combo-pill mesa-combo-pill--editable" data-combo-key="${escapeAttr(item.key)}">
-        <div class="mesa-combo-pill-head">
-          <span class="k">${escapeHtml(item.label)}</span>
-        </div>
-        <div class="counter mesa-combo-counter">
-          <button class="num-btn" type="button" data-act="comboDec" data-combo-key="${escapeAttr(item.key)}" ${value > 0 ? '' : 'disabled'} aria-label="Restar una ${escapeAttr(item.label)}">−</button>
-          <button class="num" type="button" data-act="comboEdit" data-combo-key="${escapeAttr(item.key)}" aria-label="Editar total de ${escapeAttr(item.label)}">${escapeHtml(String(value))}</button>
-          <button class="num-btn" type="button" data-act="comboInc" data-combo-key="${escapeAttr(item.key)}" aria-label="Sumar una ${escapeAttr(item.label)}">+</button>
-        </div>
+      <div class="mesa-combo-pill" data-combo-key="${escapeAttr(item.key)}">
+        <span class="k">${escapeHtml(item.label)}</span>
+        <span class="v">${escapeHtml(String(value))}</span>
       </div>
     `;
   }).join('');
+}
+
+function renderSessionMajorComboEditSourceOptionsHtml(rawCounts){
+  const counts = normalizeSessionMajorComboCounts(rawCounts);
+  return SESSION_MAJOR_COMBO_DEFS
+    .filter(item => Math.max(0, Math.floor(numOrZero(counts[item.key]))) > 0)
+    .map(item => {
+      const value = Math.max(0, Math.floor(numOrZero(counts[item.key])));
+      return `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)} (${escapeHtml(String(value))})</option>`;
+    })
+    .join('');
+}
+
+function renderSessionMajorComboEditTargetOptionsHtml(){
+  return SESSION_MAJOR_COMBO_DEFS
+    .map(item => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`)
+    .join('');
 }
 
 function setSessionPlayerMajorComboCount(session, pid, comboKey, nextValue){
@@ -2065,6 +2067,29 @@ function adjustSessionPlayerMajorCombo(session, pid, comboKey, delta){
 
 function registerSessionPlayerMajorCombo(session, pid, comboKey){
   return adjustSessionPlayerMajorCombo(session, pid, comboKey, 1);
+}
+
+function correctSessionPlayerMajorCombo(session, pid, fromComboKey, toComboKey){
+  const playerId = stableEntityId(pid);
+  const fromKey = normalizeSessionMajorComboKey(fromComboKey);
+  const toKey = normalizeSessionMajorComboKey(toComboKey);
+  if (!session || !playerId || !fromKey || !toKey) return { ok: false, reason: 'invalid' };
+  if (fromKey === toKey) return { ok: false, reason: 'same' };
+  const st = ensurePlayerState(session, playerId);
+  const counts = normalizeSessionMajorComboCounts(st.majorCombos);
+  const fromValue = Math.max(0, Math.floor(numOrZero(counts[fromKey])));
+  if (fromValue <= 0) return { ok: false, reason: 'source-empty', key: fromKey, label: getSessionMajorComboLabel(fromKey) };
+  counts[fromKey] = Math.max(0, fromValue - 1);
+  counts[toKey] = Math.max(0, Math.floor(numOrZero(counts[toKey])) + 1);
+  st.majorCombos = counts;
+  return {
+    ok: true,
+    fromKey,
+    toKey,
+    fromLabel: getSessionMajorComboLabel(fromKey),
+    toLabel: getSessionMajorComboLabel(toKey),
+    counts: cloneJson(counts) || counts,
+  };
 }
 
 function sessionMergeComparable(session){
@@ -6059,7 +6084,7 @@ function renderHistorialDetalle(){
                   <div class="mesa-combo-head">
                     <div>
                       <div class="mesa-combo-title">Combinación</div>
-                      <div class="mesa-combo-sub">Mayores ganadas en esta sesión. Corrige con + / − o toca el número.</div>
+                      <div class="mesa-combo-sub">Mayores ganadas en esta sesión. Registra nuevas o corrige una ya cargada desde Editable.</div>
                     </div>
                   </div>
                   ${canMutateSession ? `
@@ -6073,8 +6098,25 @@ function renderHistorialDetalle(){
                       </label>
                       <button class="btn small" type="button" data-act="comboAccept">Aceptar</button>
                     </div>
+                    <div class="mesa-combo-entry mesa-combo-entry--edit">
+                      <label class="field compact mesa-combo-field">
+                        <span>Editable</span>
+                        <select data-role="majorComboEditFrom">
+                          <option value="">Seleccionar</option>
+                          ${renderSessionMajorComboEditSourceOptionsHtml(majorCombos)}
+                        </select>
+                      </label>
+                      <label class="field compact mesa-combo-field">
+                        <span>Por</span>
+                        <select data-role="majorComboEditTo">
+                          <option value="">Seleccionar</option>
+                          ${renderSessionMajorComboEditTargetOptionsHtml()}
+                        </select>
+                      </label>
+                      <button class="btn small" type="button" data-act="comboEditAccept">Aceptar</button>
+                    </div>
                   ` : ''}
-                  <div class="mesa-combo-summary" data-role="majorCombosSummary">${renderSessionMajorComboSummaryHtml(majorCombos, { editable: canMutateSession })}</div>
+                  <div class="mesa-combo-summary" data-role="majorCombosSummary">${renderSessionMajorComboSummaryHtml(majorCombos)}</div>
                 </div>
 
                 <div class="totals-block mesa-totals-block">
@@ -6204,45 +6246,40 @@ function renderHistorialDetalle(){
           touchSession(s);
           saveSession(s);
           refreshMajorComboSummary(card, ensurePlayerState(s, pid));
+          refreshMajorComboEditFields(card, ensurePlayerState(s, pid));
           if ($select) $select.value = '';
           return;
         }
 
-        if (act === 'comboInc' || act === 'comboDec' || act === 'comboEdit'){
-          const comboKey = normalizeSessionMajorComboKey(btn.getAttribute('data-combo-key') || (btn.closest('[data-combo-key]') && btn.closest('[data-combo-key]').getAttribute('data-combo-key')));
-          if (!comboKey) return;
-
-          if (act === 'comboEdit'){
-            if (sessionDialogBusy) return;
-            sessionDialogBusy = true;
-            try{
-              const currentCounts = getSessionPlayerMajorComboCounts(ensurePlayerState(s, pid));
-              const amt = await numberInputDialog({
-                title: getSessionMajorComboLabel(comboKey) || 'Editar combinación',
-                body: 'Escribe el total exacto acumulado para esta sesión.',
-                value: String(Math.max(0, Math.floor(numOrZero(currentCounts[comboKey])))),
-                placeholder: '0',
-                okText: 'Guardar',
-                cancelText: 'Cancelar'
-              });
-              if (amt === null) return;
-              const result = setSessionPlayerMajorComboCount(s, pid, comboKey, amt);
-              if (!result.ok) return;
-              touchSession(s);
-              saveSession(s);
-              refreshMajorComboSummary(card, ensurePlayerState(s, pid));
-              return;
-            } finally {
-              sessionDialogBusy = false;
-            }
+        if (act === 'comboEditAccept'){
+          const $from = card.querySelector('[data-role="majorComboEditFrom"]');
+          const $to = card.querySelector('[data-role="majorComboEditTo"]');
+          const fromKey = normalizeSessionMajorComboKey($from && $from.value);
+          const toKey = normalizeSessionMajorComboKey($to && $to.value);
+          if (!fromKey){
+            showToast({ tone: 'info', title: 'Selecciona una combinación registrada', body: 'En Editable elige primero cuál combinación ya cargada quieres corregir.' });
+            return;
           }
-
-          const delta = (act === 'comboInc') ? 1 : -1;
-          const result = adjustSessionPlayerMajorCombo(s, pid, comboKey, delta);
-          if (!result.ok) return;
+          if (!toKey){
+            showToast({ tone: 'info', title: 'Selecciona la nueva combinación', body: 'Elige por cuál combinación quieres reemplazar el registro actual antes de aceptar.' });
+            return;
+          }
+          if (fromKey === toKey){
+            showToast({ tone: 'info', title: 'Sin cambios', body: 'La combinación original y la nueva son la misma. Elige una corrección distinta.' });
+            return;
+          }
+          const result = correctSessionPlayerMajorCombo(s, pid, fromKey, toKey);
+          if (!result.ok){
+            if (result.reason === 'source-empty'){
+              showToast({ tone: 'info', title: 'Nada que corregir', body: `${result.label || 'Esa combinación'} ya no tiene registros disponibles para corregir en esta sesión.` });
+              refreshMajorComboEditFields(card, ensurePlayerState(s, pid));
+            }
+            return;
+          }
           touchSession(s);
           saveSession(s);
           refreshMajorComboSummary(card, ensurePlayerState(s, pid));
+          refreshMajorComboEditFields(card, ensurePlayerState(s, pid));
           return;
         }
 
@@ -6328,7 +6365,15 @@ function renderHistorialDetalle(){
 
     function refreshMajorComboSummary(card, st){
       const $summary = card.querySelector('[data-role="majorCombosSummary"]');
-      if ($summary) $summary.innerHTML = renderSessionMajorComboSummaryHtml(st && st.majorCombos, { editable: canMutateSession });
+      if ($summary) $summary.innerHTML = renderSessionMajorComboSummaryHtml(st && st.majorCombos);
+    }
+
+    function refreshMajorComboEditFields(card, st){
+      const counts = getSessionPlayerMajorComboCounts(st);
+      const $from = card.querySelector('[data-role="majorComboEditFrom"]');
+      if ($from) $from.innerHTML = `<option value="">Seleccionar</option>${renderSessionMajorComboEditSourceOptionsHtml(counts)}`;
+      const $to = card.querySelector('[data-role="majorComboEditTo"]');
+      if ($to) $to.innerHTML = `<option value="">Seleccionar</option>${renderSessionMajorComboEditTargetOptionsHtml()}`;
     }
 
     function refreshTotalsForPlayer(card, st, chipValueMap){
