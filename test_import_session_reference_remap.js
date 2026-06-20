@@ -1,4 +1,3 @@
-
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -82,36 +81,25 @@ hooks.setStore(localBrokenStore);
 
 (async () => {
   const preview = hooks.buildMergedStoreNonDestructive(hooks.getStore(), clone(hooks.getStore()));
-  if (preview.summary.sourceCanonicalReferenceGroups !== 1) throw new Error('should detect one strong local canonical remap group');
-  if (preview.summary.sourceDuplicatePlayersRemapped !== 1) throw new Error('should remap one duplicate player id');
-  if (preview.summary.sourceSessionsRemapped !== 1) throw new Error('should touch one historical session');
-  if (!hooks.importSummaryHasChanges(preview.summary)) throw new Error('source remap must count as import change');
+  if ((preview.mergedStore.players || []).length !== 2) throw new Error('safe import preview must preserve player cards');
+  if ((preview.mergedStore.sessions || []).length !== 2) throw new Error('safe import preview must preserve sessions');
+  if (preview.summary.sourcePlayerCardsConsolidated !== 0) throw new Error('safe import must not collapse local player cards');
+  if (preview.summary.sourceSessionsRemapped !== 0) throw new Error('safe import must not remap local historical sessions');
 
   W.__confirmQueue = [true, true];
   W.__dialogs = [];
-  await hooks.importBackupJson({ text: JSON.stringify(hooks.buildPortableBackupPayload(clone(hooks.getStore()), 'auto')), fileName: 'self-heal.json', fileSize: 444 });
+  await hooks.importBackupJson({ text: JSON.stringify(hooks.buildPortableBackupPayload(clone(hooks.getStore()), 'auto')), fileName: 'self-safe.json', fileSize: 444 });
 
   const store = hooks.getStore();
+  if ((store.players || []).length !== 2) throw new Error('safe import deleted/collapsed player cards');
+  if ((store.sessions || []).length !== 2) throw new Error('safe import deleted sessions');
   const sessDup = (store.sessions || []).find(s => s.id === 'sess_old_dup');
   if (!sessDup) throw new Error('duplicate historical session missing');
-  if (String(sessDup.playerIds[0]) !== 'p_canon') throw new Error('historical playerIds not remapped');
-  if (String(sessDup.playersSnapshot[0].id) !== 'p_canon') throw new Error('historical playersSnapshot not remapped');
-  if (String(sessDup.game.players[0].id) !== 'p_canon') throw new Error('historical game.players not remapped');
-  if (!sessDup.historicalImpact || !Array.isArray(sessDup.historicalImpact.players) || !sessDup.historicalImpact.players.length) throw new Error('historicalImpact should be regenerated on touched session');
-  if (!String(sessDup.historicalImpact.contextKey || '').trim()) throw new Error('regenerated historicalImpact should include contextKey');
-  if ((sessDup.historicalImpact.players || []).some(player => String(player && player.id) !== 'p_canon')) throw new Error('regenerated historicalImpact should use canonical player id');
+  if (String(sessDup.playerIds[0]) !== 'p_dup') throw new Error('safe import should not rewrite local playerIds');
+  if (String(sessDup.playersSnapshot[0].id) !== 'p_dup') throw new Error('safe import should not rewrite local playersSnapshot');
+  if (String(sessDup.game.players[0].id) !== 'p_dup') throw new Error('safe import should not rewrite local game.players');
 
-  const analytics = hooks.computeAnalytics();
-  if ((analytics.ranking || []).length !== 1) throw new Error('ranking should consolidate into one player after source remap');
-  const row = (analytics.ranking || [])[0];
-  if (!row || row.id !== 'p_canon' || row.games !== 2) throw new Error('ranking row should use canonical id with combined games');
-
-  const preflight = W.__dialogs.find(d => d.title === 'Importar JSON');
-  if (!preflight || !String(preflight.body).includes('Grupos históricos locales remapeados al canónico: 1')) throw new Error('preflight should mention local source remap');
-  const success = W.__dialogs.find(d => d.title === 'Importación completa');
-  if (!success || !String(success.body).includes('Sesiones históricas remapeadas: 1')) throw new Error('success summary should mention historical remap');
-
-  console.log('test-local-historical-session-remap=ok');
-  console.log('test-ranking-consolidated-after-source-remap=ok');
-  console.log('test-import-self-heal-is-visible=ok');
+  console.log('test-import-preview-preserves-local-cards=ok');
+  console.log('test-import-apply-preserves-local-sessions=ok');
+  console.log('test-import-no-destructive-self-heal=ok');
 })().catch(err => { console.error(err); process.exit(1); });

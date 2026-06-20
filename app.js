@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.46';
-  const APP_BUILD = 'major-combos-archive-v1';
-  const APP_CACHE_NAME = 'pokerito-v0.1.46-major-combos-archive-v1';
-  const SW_URL = './sw.js?v=0.1.46-major-combos-archive-v1';
+  const APP_VERSION = '0.1.47';
+  const APP_BUILD = 'json-import-safe-v1';
+  const APP_CACHE_NAME = 'pokerito-v0.1.47-json-import-safe-v1';
+  const SW_URL = './sw.js?v=0.1.47-json-import-safe-v1';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -1258,32 +1258,10 @@ function rebuildStoreDerivedData(baseStore){
 }
 
 function applyStartupForensicSelfHeal(baseStore){
-  const normalized = normalizeStoreObject(baseStore).store;
-  const consolidated = remapStoreCanonicalPlayerReferences(normalized);
-  const summary = isPlainObject(consolidated && consolidated.summary) ? consolidated.summary : {};
-  const changed = [
-    'groups',
-    'duplicatePlayers',
-    'sessionsTouched',
-    'refsChanged',
-    'playersCollapsed',
-  ].some(key => numOrZero(summary[key]) > 0);
-  if (!changed) return normalized;
-  const nextStore = rebuildStoreDerivedData(consolidated.store);
-  const nextUi = Object.assign({}, isPlainObject(nextStore.ui) ? cloneJson(nextStore.ui) || {} : {}, {
-    startupForensicSelfHeal: {
-      appliedAt: Date.now(),
-      groups: numOrZero(summary.groups),
-      duplicatePlayers: numOrZero(summary.duplicatePlayers),
-      sessionsTouched: numOrZero(summary.sessionsTouched),
-      refsChanged: numOrZero(summary.refsChanged),
-      playersCollapsed: numOrZero(summary.playersCollapsed),
-      structuresTouched: cloneJson(summary.structuresTouched) || [],
-    }
-  });
-  const finalStore = normalizeStoreObject(Object.assign({}, nextStore, { ui: nextUi, updatedAt: Date.now() })).store;
-  persistStore(finalStore);
-  return finalStore;
+  // Import/arranque seguro: no consolidar ni colapsar jugadores automáticamente.
+  // Una autocorrección que reduzca fichas, jugadores o sesiones puede sentirse como borrado.
+  // La normalización conserva estructura y compatibilidad, pero deja intactos los datos visibles.
+  return normalizeStoreObject(baseStore).store;
 }
 
 function remapIncomingStorePlayersByCanonical(currentStore, incomingStore){
@@ -2282,16 +2260,14 @@ function resolveSessionConflict(localSession, incomingSession){
       reason = 'local-draft-newer';
     }
   } else if (incomingTs && localTs && incomingTs !== localTs){
-    if (incomingTs > localTs){
-      decision = 'replace-local';
-      reason = 'incoming-newer';
-    } else {
-      decision = 'keep-local';
-      reason = 'incoming-older';
-    }
+    // Importación no destructiva: una sesión local cerrada o ya trabajada no se reemplaza
+    // solo porque el respaldo entrante tenga un timestamp más nuevo.
+    // Evita que un JSON parcial/viejo sobrescriba jugadores, fichas, majorCombos o resultados.
+    decision = 'keep-local';
+    reason = incomingTs > localTs ? 'incoming-newer-kept-local-safe-import' : 'incoming-older';
   } else if (incomingTs && !localTs){
-    decision = 'replace-local';
-    reason = 'incoming-has-timestamp';
+    decision = 'keep-local';
+    reason = 'incoming-has-timestamp-kept-local-safe-import';
   } else if (!incomingTs && localTs){
     decision = 'keep-local';
     reason = 'local-has-timestamp';
@@ -2509,13 +2485,14 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
     summary.sessionsAdded += 1;
   });
 
-  const dedupedSessions = dedupeSessionsBySignature(sessions);
-  if (dedupedSessions.removed > 0){
-    summary.duplicatesSkipped += dedupedSessions.removed;
-    summary.duplicateSessionsCollapsed += dedupedSessions.removed;
-  }
-  const finalSessions = dedupedSessions.sessions;
-  const sourceReferenceRemap = remapStoreCanonicalPlayerReferences({
+  // Importación segura: no colapsar sesiones locales existentes al importar.
+  // Las duplicadas entrantes ya se omiten por firma antes de agregarse; aquí se conserva lo local.
+  const finalSessions = sessions;
+  summary.duplicateSessionsCollapsed = 0;
+  // Merge seguro de importación: conservar tarjetas maestras, fichas y sesiones locales.
+  // La reconciliación canónica de incoming ya ocurrió antes; aquí NO se colapsan jugadores locales,
+  // porque eso puede parecer borrado al usuario aunque técnicamente sea consolidación.
+  const canonicalizedStore = normalizeStoreObject(Object.assign({}, cur, {
     chips,
     players,
     sessions: finalSessions,
@@ -2523,18 +2500,15 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
     draftSessionId: firstNonEmpty(cur.draftSessionId, incoming.draftSessionId),
     updatedAt: Date.now(),
     ui: Object.assign({}, isPlainObject(cur.ui) ? cloneJson(cur.ui) || {} : {}),
-  });
-  const canonicalizedStore = sourceReferenceRemap.store;
-  const remapSummary = isPlainObject(sourceReferenceRemap && sourceReferenceRemap.summary) ? sourceReferenceRemap.summary : {};
-  const remapPlan = sourceReferenceRemap && sourceReferenceRemap.plan ? sourceReferenceRemap.plan : null;
+  })).store;
 
-  summary.sourceCanonicalReferenceGroups = numOrZero(remapSummary.groups);
-  summary.sourceDuplicatePlayersRemapped = numOrZero(remapSummary.duplicatePlayers);
-  summary.sourceSessionsRemapped = numOrZero(remapSummary.sessionsTouched);
-  summary.sourcePlayerRefsRemapped = numOrZero(remapSummary.refsChanged);
-  summary.sourcePlayerCardsConsolidated = numOrZero(remapSummary.playersCollapsed);
-  summary.sourceStructuresRemapped = uniqStrings(remapSummary.structuresTouched || []);
-  summary.sourceReferenceRemapGroups = Array.isArray(remapPlan && remapPlan.groups) ? (cloneJson(remapPlan.groups) || []).slice(0, 50) : [];
+  summary.sourceCanonicalReferenceGroups = 0;
+  summary.sourceDuplicatePlayersRemapped = 0;
+  summary.sourceSessionsRemapped = 0;
+  summary.sourcePlayerRefsRemapped = 0;
+  summary.sourcePlayerCardsConsolidated = 0;
+  summary.sourceStructuresRemapped = [];
+  summary.sourceReferenceRemapGroups = [];
 
   const finalSessionsCanonical = Array.isArray(canonicalizedStore.sessions) ? canonicalizedStore.sessions : [];
   const finalSessionById = new Map();
@@ -2601,39 +2575,14 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
 
 
 function purgeLegacyStorageResidue(){
-  const keep = new Set([STORE_KEY, THEME_KEY]);
-
-  try{
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++){
-      const key = localStorage.key(i);
-      if (!key || keep.has(key)) continue;
-      keys.push(key);
-    }
-    keys.forEach(key => localStorage.removeItem(key));
-  }catch(e){}
-
-  try{
-    const keys = [];
-    for (let i = 0; i < sessionStorage.length; i++){
-      const key = sessionStorage.key(i);
-      if (!key || keep.has(key)) continue;
-      keys.push(key);
-    }
-    keys.forEach(key => sessionStorage.removeItem(key));
-  }catch(e){}
+  // Limpieza segura: no borrar localStorage/sessionStorage automáticamente.
+  // Los respaldos, bases antiguas o snapshots de importación pueden vivir en claves distintas.
+  // Borrarlas al cargar la app era demasiado agresivo para un flujo de import/export.
 }
 
 async function purgeLegacyCaches(){
-  if (!('caches' in window)) return;
-
-  try{
-    const names = await caches.keys();
-    await Promise.all(names.map((name) => {
-      if (name !== APP_CACHE_NAME) return caches.delete(name);
-      return Promise.resolve();
-    }));
-  }catch(e){}
+  // No limpiar cachés automáticamente durante arranque/importación.
+  // La actualización PWA manual se encarga de traer la versión nueva sin tocar datos locales.
 }
 
 function purgeLegacyClientResidue(){

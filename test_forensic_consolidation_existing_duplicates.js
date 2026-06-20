@@ -87,11 +87,9 @@ if (!remappedSession) throw new Error('remapped session missing');
 if (String(remappedSession.playerIds[0]) !== 'p_canon') throw new Error('preview should remap duplicate session to canonical player');
 
 const healed = hooks.applyStartupForensicSelfHeal(clone(broken));
-if ((healed.players || []).length !== 1) throw new Error('startup self-heal should leave one canonical player');
-const ranking = (healed.statsGlobal && healed.statsGlobal.ranking) || [];
-if (ranking.length !== 1) throw new Error('startup self-heal should rebuild unified ranking');
-if (ranking[0].id !== 'p_canon' || ranking[0].games !== 2) throw new Error('startup self-heal should preserve combined games on canonical player');
-if (!healed.ui || !healed.ui.startupForensicSelfHeal || healed.ui.startupForensicSelfHeal.playersCollapsed !== 1) throw new Error('startup self-heal summary missing');
+if ((healed.players || []).length !== 2) throw new Error('startup safe heal must not delete/collapse player cards');
+if ((healed.sessions || []).length !== 2) throw new Error('startup safe heal must not delete sessions');
+if (healed.ui && healed.ui.startupForensicSelfHeal) throw new Error('startup safe heal should not apply destructive consolidation summary');
 
-console.log('test-forensic-preview-collapses-player-cards=ok');
-console.log('test-startup-self-heal-rebuilds-derived-data=ok');
+console.log('test-forensic-preview-can-still-detect-duplicates=ok');
+console.log('test-startup-safe-heal-does-not-delete-data=ok');
