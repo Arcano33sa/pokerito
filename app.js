@@ -12,9 +12,9 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.49';
+  const APP_VERSION = '0.1.50';
   const APP_BUILD = 'json-import-major-combos-v2';
-  const APP_CACHE_NAME = 'pokerito-v0.1.49-json-import-major-combos-v2';
+  const APP_CACHE_NAME = 'pokerito-v0.1.50-chip-values-import-fix';
   const SW_URL = './sw.js?v=0.1.49-json-import-major-combos-v2';
 
   const ICON_SUN = `
@@ -147,19 +147,23 @@ const STORE_VERSION = 1;
 const PORTABLE_APP = 'Pokerito';
 const PORTABLE_SCHEMA_VERSION = 2;
 const IMPORT_SAFETY_BACKUP_KEY = 'pokerito_import_safety_backup_v1';
-let store = loadStore();
-store = applyStartupForensicSelfHeal(store);
 
 // Chips defaults (Etapa 3)
+const DEFAULT_CHIP_DEFS = Object.freeze([
+  Object.freeze({ id: 'chip_white', name: 'Blanca', value: 1,   color: '#ffffff', active: true }),
+  Object.freeze({ id: 'chip_red',   name: 'Roja',   value: 5,   color: '#d94141', active: true }),
+  Object.freeze({ id: 'chip_green', name: 'Verde',  value: 25,  color: '#2cbf6e', active: true }),
+  Object.freeze({ id: 'chip_black', name: 'Negra',  value: 100, color: '#111116', active: true }),
+  Object.freeze({ id: 'chip_blue',  name: 'Azul',   value: 500, color: '#2f6fff', active: true }),
+]);
+const DEFAULT_CHIP_BY_ID = Object.freeze(DEFAULT_CHIP_DEFS.reduce((acc, chip) => {
+  acc[chip.id] = chip;
+  return acc;
+}, {}));
+
 function defaultChips(){
   const now = Date.now();
-  return [
-    { id: 'chip_white', name: 'Blanca', value: 1,   color: '#ffffff', active: true, createdAt: now, updatedAt: now },
-    { id: 'chip_red',   name: 'Roja',   value: 5,   color: '#d94141', active: true, createdAt: now, updatedAt: now },
-    { id: 'chip_green', name: 'Verde',  value: 25,  color: '#2cbf6e', active: true, createdAt: now, updatedAt: now },
-    { id: 'chip_black', name: 'Negra',  value: 100, color: '#111116', active: true, createdAt: now, updatedAt: now },
-    { id: 'chip_blue',  name: 'Azul',   value: 500, color: '#2f6fff', active: true, createdAt: now, updatedAt: now },
-  ];
+  return DEFAULT_CHIP_DEFS.map(chip => Object.assign({}, chip, { createdAt: now, updatedAt: now }));
 }
 
 
@@ -172,6 +176,9 @@ function defaultPlayers(){
 function defaultSessions(){
   return [];
 }
+
+let store = loadStore();
+store = applyStartupForensicSelfHeal(store);
 
 const SESSION_MAJOR_COMBOS = Object.freeze([
   Object.freeze({ key: 'royal_flush', label: 'Escalera real' }),
@@ -2201,14 +2208,37 @@ function preferNumber(localValue, incomingValue, preferIncoming, fallback){
   return preferIncoming ? incomingValue : localValue;
 }
 
+function isBuiltinDefaultChipValue(chip){
+  const id = stableEntityId(chip);
+  const def = id ? DEFAULT_CHIP_BY_ID[id] : null;
+  if (!def) return false;
+  return Number.isFinite(numOrZero(chip && chip.value)) && numOrZero(chip && chip.value) === numOrZero(def.value);
+}
+
+function shouldPreferIncomingChipValue(localChip, incomingChip, preferIncomingByTimestamp){
+  const incomingHasValue = Number.isFinite(numOrZero(incomingChip && incomingChip.value));
+  if (!incomingHasValue) return false;
+  const localHasValue = Number.isFinite(numOrZero(localChip && localChip.value));
+  if (!localHasValue) return true;
+  const localValue = numOrZero(localChip && localChip.value);
+  const incomingValue = numOrZero(incomingChip && incomingChip.value);
+  if (localValue === incomingValue) return preferIncomingByTimestamp;
+
+  const sameKnownDefaultId = stableEntityId(localChip) && stableEntityId(localChip) === stableEntityId(incomingChip) && !!DEFAULT_CHIP_BY_ID[stableEntityId(localChip)];
+  if (sameKnownDefaultId && isBuiltinDefaultChipValue(localChip) && !isBuiltinDefaultChipValue(incomingChip)) return true;
+
+  return preferIncomingByTimestamp;
+}
+
 function mergeChipEntity(localChip, incomingChip){
   const local = isPlainObject(localChip) ? localChip : {};
   const incoming = isPlainObject(incomingChip) ? incomingChip : {};
   const preferIncoming = numOrZero(incoming.updatedAt) > numOrZero(local.updatedAt);
+  const preferIncomingValue = shouldPreferIncomingChipValue(local, incoming, preferIncoming);
   return {
     id: stableEntityId(local) || stableEntityId(incoming),
     name: preferString(local.name, incoming.name, preferIncoming),
-    value: preferNumber(numOrZero(local.value), numOrZero(incoming.value), preferIncoming, 0),
+    value: preferNumber(numOrZero(local.value), numOrZero(incoming.value), preferIncomingValue, 0),
     color: preferString(local.color, incoming.color, preferIncoming) || '#808080',
     active: preferBool(local.active, incoming.active, preferIncoming),
     order: preferNumber(local.order, incoming.order, preferIncoming, undefined),

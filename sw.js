@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.49 json-import-major-combos-v2 */
-const CACHE_NAME = 'pokerito-v0.1.49-json-import-major-combos-v2';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.50 chip-values-import-fix */
+const CACHE_NAME = 'pokerito-v0.1.50-chip-values-import-fix';
 const CORE_ASSETS = [
   './',
   './index.html',
