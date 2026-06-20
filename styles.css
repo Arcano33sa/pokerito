@@ -4600,3 +4600,201 @@ html[data-vp-width="compact"] .mesa-player-invested-box{
 html[data-vp-width="compact"] .mesa-player-invested-box strong{
   font-size: 15px;
 }
+
+/* ===== Administración: Jugadores y Fichas compactos con desplegable ===== */
+.admin-compact-card{
+  padding: 0 !important;
+  display: block !important;
+  overflow: hidden;
+}
+
+.admin-compact-details{
+  display: block;
+  min-width: 0;
+}
+
+.admin-compact-summary{
+  list-style: none;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  min-width: 0;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.admin-compact-summary::-webkit-details-marker{
+  display: none;
+}
+
+.admin-compact-summary-main{
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.admin-player-summary-main{
+  grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
+}
+
+.admin-chip-summary-main{
+  grid-template-columns: minmax(0, 1fr) minmax(86px, auto) auto;
+}
+
+.admin-compact-ident{
+  min-width: 0;
+}
+
+.admin-compact-label,
+.admin-compact-metric span,
+.admin-compact-detail-label{
+  display: block;
+  font-size: 10px;
+  line-height: 1.1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 950;
+}
+
+.admin-compact-title{
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-compact-sub{
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-compact-sub span{
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 950;
+  margin-right: 4px;
+}
+
+.admin-compact-metric{
+  justify-self: end;
+  text-align: right;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 8px 10px;
+  background: color-mix(in oklab, var(--panel-2) 84%, transparent);
+  min-width: 86px;
+}
+
+.admin-player-net-box{
+  min-width: 112px;
+}
+
+.admin-compact-metric strong{
+  display: block;
+  margin-top: 2px;
+  font-size: 16px;
+  line-height: 1.12;
+  font-weight: 950;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.admin-compact-status-compact{
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.admin-compact-chevron{
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel-2) 88%, transparent);
+  font-size: 19px;
+  line-height: 1;
+  font-weight: 950;
+  transition: transform 160ms ease, background 160ms ease;
+  flex: 0 0 auto;
+}
+
+.admin-compact-details[open] .admin-compact-chevron{
+  transform: rotate(180deg);
+}
+
+.admin-compact-details[open] .admin-compact-summary{
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-compact-body{
+  display: grid;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  min-width: 0;
+}
+
+.admin-compact-status-row{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.admin-compact-stats{
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.admin-compact-actions{
+  padding-top: 2px;
+}
+
+.admin-chip-detail-top{
+  align-items: center;
+}
+
+.admin-chip-detail-value{
+  margin-top: 0;
+}
+
+html[data-vp-width="compact"] .admin-compact-summary{
+  padding: 12px;
+}
+
+html[data-vp-width="compact"] .admin-compact-body{
+  padding: 12px;
+}
+
+html[data-vp-width="compact"] .admin-player-summary-main{
+  grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+}
+
+html[data-vp-width="compact"] .admin-player-net-box{
+  min-width: 104px;
+  padding: 7px 8px;
+}
+
+html[data-vp-width="compact"] .admin-compact-metric strong{
+  font-size: 15px;
+}
+
+html[data-vp-width="compact"] .admin-chip-summary-main{
+  grid-template-columns: minmax(0, 1fr) minmax(78px, auto);
+}
+
+html[data-vp-width="compact"] .admin-chip-summary-main .admin-compact-status-compact{
+  grid-column: 1 / -1;
+  justify-self: start;
+}

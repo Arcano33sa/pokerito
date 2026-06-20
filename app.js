@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.42';
-  const APP_BUILD = 'mesa-compacta-desplegable-v1';
-  const APP_CACHE_NAME = 'pokerito-v0.1.42-mesa-compacta-desplegable-v1';
-  const SW_URL = './sw.js?v=0.1.42-mesa-compacta-desplegable-v1';
+  const APP_VERSION = '0.1.43';
+  const APP_BUILD = 'admin-compactos-desplegable-v1';
+  const APP_CACHE_NAME = 'pokerito-v0.1.43-admin-compactos-desplegable-v1';
+  const SW_URL = './sw.js?v=0.1.43-admin-compactos-desplegable-v1';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -5875,6 +5875,7 @@ function renderAdministracion(){
         const actionLabel = p.active ? 'Desactivar' : 'Activar';
 
         const name = (p.name || '').trim();
+        const nick = (p.nick || '').trim();
         const display = playerDisplayName(p);
 
         const st = statsMap.get(p.id) || { netTotal: 0, games: 0, wins1: 0, best: null, worst: null };
@@ -5885,32 +5886,46 @@ function renderAdministracion(){
         const worstDate = st.worst ? (st.worst.date || '—') : '—';
 
         return `
-          <article class="player-card ${p.active ? '' : 'inactive'}" data-id="${p.id}">
-            <div class="player-top">
-              <div class="player-meta">
-                <div class="player-nick">${escapeHtml(display)}</div>
-                <div class="player-name">${escapeHtml(name || '')}</div>
-              </div>
-              <div class="player-status">
-                <span class="pill ${statusClass}">${status}</span>
-              </div>
-            </div>
+          <article class="player-card admin-compact-card admin-player-card ${p.active ? '' : 'inactive'}" data-id="${escapeAttr(p.id)}">
+            <details class="admin-compact-details admin-player-details">
+              <summary class="admin-compact-summary admin-player-summary" aria-label="Ver detalle de jugador ${escapeAttr(display)}">
+                <div class="admin-compact-summary-main admin-player-summary-main">
+                  <div class="admin-compact-ident admin-player-ident">
+                    <div class="admin-compact-label">Apodo</div>
+                    <div class="player-nick admin-compact-title">${escapeHtml(nick || display || 'Sin apodo')}</div>
+                    <div class="player-name admin-compact-sub"><span>Nombre</span> ${escapeHtml(name || 'Sin nombre registrado')}</div>
+                  </div>
+                  <div class="admin-compact-metric admin-player-net-box">
+                    <span>Neto</span>
+                    <strong class="net ${netClass}">${escapeHtml(formatMoney(st.netTotal))}</strong>
+                  </div>
+                </div>
+                <span class="admin-compact-chevron" aria-hidden="true">⌄</span>
+              </summary>
 
-            <div class="player-stats">
-              <div class="player-stats-title">Estadísticas</div>
-              <div class="stats-mini-grid stats-extended">
-                <div class="stat-mini"><span class="k">Neto</span><span class="v net ${netClass}">${escapeHtml(formatMoney(st.netTotal))}</span></div>
-                <div class="stat-mini"><span class="k">Partidas</span><span class="v">${escapeHtml(String(st.games||0))}</span></div>
-                <div class="stat-mini"><span class="k">Veces #1</span><span class="v">${escapeHtml(String(st.wins1||0))}</span></div>
-                <div class="stat-mini stack"><span class="k">Mejor noche</span><span class="v">${escapeHtml(bestAmt)}</span><span class="sub">${escapeHtml(bestDate)}</span></div>
-                <div class="stat-mini stack"><span class="k">Peor noche</span><span class="v">${escapeHtml(worstAmt)}</span><span class="sub">${escapeHtml(worstDate)}</span></div>
-              </div>
-            </div>
+              <div class="admin-compact-body admin-player-body">
+                <div class="admin-compact-status-row">
+                  <span class="admin-compact-detail-label">Estado</span>
+                  <span class="pill ${statusClass}">${status}</span>
+                </div>
 
-            <div class="player-actions">
-              <button class="btn" type="button" data-act="edit">Editar</button>
-              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
-            </div>
+                <div class="player-stats admin-compact-stats">
+                  <div class="player-stats-title">Estadísticas</div>
+                  <div class="stats-mini-grid stats-extended">
+                    <div class="stat-mini"><span class="k">Neto</span><span class="v net ${netClass}">${escapeHtml(formatMoney(st.netTotal))}</span></div>
+                    <div class="stat-mini"><span class="k">Partidas</span><span class="v">${escapeHtml(String(st.games||0))}</span></div>
+                    <div class="stat-mini"><span class="k">Veces #1</span><span class="v">${escapeHtml(String(st.wins1||0))}</span></div>
+                    <div class="stat-mini stack"><span class="k">Mejor noche</span><span class="v">${escapeHtml(bestAmt)}</span><span class="sub">${escapeHtml(bestDate)}</span></div>
+                    <div class="stat-mini stack"><span class="k">Peor noche</span><span class="v">${escapeHtml(worstAmt)}</span><span class="sub">${escapeHtml(worstDate)}</span></div>
+                  </div>
+                </div>
+
+                <div class="player-actions admin-compact-actions">
+                  <button class="btn" type="button" data-act="edit">Editar</button>
+                  <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
+                </div>
+              </div>
+            </details>
           </article>
         `;
       }).join('');
@@ -5962,32 +5977,54 @@ function renderAdministracion(){
         const actionLabel = c.active ? 'Desactivar' : 'Activar';
         const value = (c.value === 0 || c.value) ? String(c.value) : '';
         const color = normHex(c.color) || '#888888';
+        const chipName = c.name || 'Sin nombre';
 
         return `
-          <article class="chip-card ${c.active ? '' : 'inactive'}" data-id="${c.id}">
-            <div class="chip-card-top">
-              <div class="chip-icon">${chipIconSvg(color, 46)}</div>
-              <div class="chip-meta">
-                <div class="chip-name">${escapeHtml(c.name || 'Sin nombre')}</div>
-                <div class="chip-sub">
-                  <span class="chip-color-dot" style="background:${color}"></span>
-                  <span class="chip-color-hex">${color.toUpperCase()}</span>
+          <article class="chip-card admin-compact-card admin-chip-card ${c.active ? '' : 'inactive'}" data-id="${escapeAttr(c.id)}">
+            <details class="admin-compact-details admin-chip-details">
+              <summary class="admin-compact-summary admin-chip-summary" aria-label="Ver detalle de ficha ${escapeAttr(chipName)}">
+                <div class="admin-compact-summary-main admin-chip-summary-main">
+                  <div class="admin-compact-ident chip-meta admin-chip-ident">
+                    <div class="admin-compact-label">Color</div>
+                    <div class="chip-name admin-compact-title">${escapeHtml(chipName)}</div>
+                  </div>
+                  <div class="admin-compact-metric admin-chip-value-box">
+                    <span>Valor</span>
+                    <strong>${escapeHtml(value)}</strong>
+                  </div>
+                  <div class="admin-compact-status-compact chip-status">
+                    <span class="pill ${statusClass}">${status}</span>
+                  </div>
+                </div>
+                <span class="admin-compact-chevron" aria-hidden="true">⌄</span>
+              </summary>
+
+              <div class="admin-compact-body admin-chip-body">
+                <div class="chip-card-top admin-chip-detail-top">
+                  <div class="chip-icon">${chipIconSvg(color, 46)}</div>
+                  <div class="chip-meta">
+                    <div class="chip-name">${escapeHtml(chipName)}</div>
+                    <div class="chip-sub">
+                      <span class="chip-color-dot" style="background:${color}"></span>
+                      <span class="chip-color-hex">${escapeHtml(color.toUpperCase())}</span>
+                    </div>
+                  </div>
+                  <div class="chip-status">
+                    <span class="pill ${statusClass}">${status}</span>
+                  </div>
+                </div>
+
+                <div class="chip-value admin-chip-detail-value">
+                  <span class="chip-value-label">Valor</span>
+                  <span class="chip-value-num">${escapeHtml(value)}</span>
+                </div>
+
+                <div class="chip-actions admin-compact-actions">
+                  <button class="btn" type="button" data-act="edit">Editar</button>
+                  <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
                 </div>
               </div>
-              <div class="chip-status">
-                <span class="pill ${statusClass}">${status}</span>
-              </div>
-            </div>
-
-            <div class="chip-value">
-              <span class="chip-value-label">Valor</span>
-              <span class="chip-value-num">${escapeHtml(value)}</span>
-            </div>
-
-            <div class="chip-actions">
-              <button class="btn" type="button" data-act="edit">Editar</button>
-              <button class="btn" type="button" data-act="toggle">${actionLabel}</button>
-            </div>
+            </details>
           </article>
         `;
       }).join('');

@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.42 mesa-compacta-desplegable-v1 */
-const CACHE_NAME = 'pokerito-v0.1.42-mesa-compacta-desplegable-v1';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.43 admin-compactos-desplegable-v1 */
+const CACHE_NAME = 'pokerito-v0.1.43-admin-compactos-desplegable-v1';
 const CORE_ASSETS = [
   './',
   './index.html',
