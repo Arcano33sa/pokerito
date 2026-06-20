@@ -99,6 +99,7 @@ delete legacy.sessions[0].game.players[0].majorCombos;
 delete legacy.sessions[0].game.players[1].majorCombos;
 delete legacy.sessions[0].results[0].majorCombos;
 delete legacy.sessions[0].results[1].majorCombos;
+delete legacy.sessions[0].majorCombosSummary;
 hooks.setStore(legacy);
 const legacyAnalytics = hooks.computeAnalytics();
 if ((legacyAnalytics.majorCombosRanking || []).length !== 0) throw new Error('legacy session without majorCombos should not create fake ranking');
@@ -107,3 +108,43 @@ if (legacySummary.hasData || legacySummary.totalRegistradas !== 0) throw new Err
 const legacyPdfText = hooks.buildPdfDocumentSections(hooks.buildPdfDocumentModel(hooks.getStore().sessions[0]));
 if (legacyPdfText.includes('Total registradas')) throw new Error('legacy PDF should not render populated Combinaciones Mayores block');
 console.log('test-major-combos-legacy-safe=ok');
+
+const summaryOnlyStore = Object.assign({}, base, {
+  players: [
+    { id: 'p1', name: 'Ana Rivera', nick: 'Ana', active: true, stats: {}, createdAt: 1, updatedAt: 1 },
+    { id: 'p2', name: 'Beto Solís', nick: 'Beto', active: true, stats: {}, createdAt: 2, updatedAt: 2 },
+  ],
+  sessions: [{
+    id: 's-summary-only', status: 'closed', date: '2026-06-20', createdAt: 200, updatedAt: 210, closedAt: 220,
+    playerIds: ['p1', 'p2'],
+    playersSnapshot: [
+      { id: 'p1', name: 'Ana Rivera', nick: 'Ana', display: 'Ana' },
+      { id: 'p2', name: 'Beto Solís', nick: 'Beto', display: 'Beto' },
+    ],
+    chipsSnapshot: [chip],
+    game: { players: [
+      { id: 'p1', buyIn: 100, rebuys: [], counts: { [chip.id]: 200 } },
+      { id: 'p2', buyIn: 100, rebuys: [], counts: { [chip.id]: 250 } },
+    ] },
+    majorCombosSummary: {
+      totalRegistradas: 5,
+      hasData: true,
+      rows: [
+        { id: 'p1', player: 'Ana', combos: { royal_flush: 1, straight_flush: 0, four_kind: 1, full_house: 0 }, total: 2 },
+        { id: 'p2', player: 'Beto', combos: { royal_flush: 0, straight_flush: 1, four_kind: 0, full_house: 2 }, total: 3 },
+      ],
+    },
+  }],
+  draftSessionId: null,
+});
+hooks.setStore(summaryOnlyStore);
+const summaryFallback = hooks.buildSessionMajorCombosSummary(hooks.getStore().sessions[0]);
+if (!summaryFallback.hasData || summaryFallback.totalRegistradas !== 5) throw new Error('summary fallback should read imported majorCombosSummary');
+const fallbackAnalytics = hooks.computeAnalytics();
+const fallbackBeto = fallbackAnalytics.byPlayer && fallbackAnalytics.byPlayer.get('p2');
+if (!fallbackBeto || fallbackBeto.majorCombos.full_house !== 2 || fallbackBeto.majorCombosTotal !== 3) throw new Error('analytics should use majorCombosSummary as fallback for imported sessions');
+const fallbackPdfText = hooks.buildPdfDocumentSections(hooks.buildPdfDocumentModel(hooks.getStore().sessions[0]));
+['Combinaciones Mayores', 'Total registradas', 'Total sesión', 'Beto'].forEach(txt => {
+  if (!fallbackPdfText.includes(txt)) throw new Error('summary fallback PDF missing ' + txt);
+});
+console.log('test-major-combos-imported-summary-fallback=ok');

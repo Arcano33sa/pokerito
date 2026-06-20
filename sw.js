@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.47 json-import-safe-v1 */
-const CACHE_NAME = 'pokerito-v0.1.47-json-import-safe-v1';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.49 json-import-major-combos-v2 */
+const CACHE_NAME = 'pokerito-v0.1.49-json-import-major-combos-v2';
 const CORE_ASSETS = [
   './',
   './index.html',

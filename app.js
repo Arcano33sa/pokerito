@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.47';
-  const APP_BUILD = 'json-import-safe-v1';
-  const APP_CACHE_NAME = 'pokerito-v0.1.47-json-import-safe-v1';
-  const SW_URL = './sw.js?v=0.1.47-json-import-safe-v1';
+  const APP_VERSION = '0.1.49';
+  const APP_BUILD = 'json-import-major-combos-v2';
+  const APP_CACHE_NAME = 'pokerito-v0.1.49-json-import-major-combos-v2';
+  const SW_URL = './sw.js?v=0.1.49-json-import-major-combos-v2';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -236,6 +236,196 @@ function mergeMajorCombos(baseCombos, extraCombos){
   return out;
 }
 
+function maxMajorCombos(baseCombos, extraCombos){
+  const base = normalizeMajorCombos(baseCombos);
+  const extra = normalizeMajorCombos(extraCombos);
+  const out = majorComboDefaultState();
+  SESSION_MAJOR_COMBO_KEYS.forEach(key => { out[key] = Math.max(majorComboInt(base[key]), majorComboInt(extra[key])); });
+  return out;
+}
+
+function majorCombosNonZeroKeys(raw){
+  const combos = normalizeMajorCombos(raw);
+  return SESSION_MAJOR_COMBO_KEYS.filter(key => majorComboInt(combos[key]) > 0).length;
+}
+
+function majorCombosHasData(raw){
+  return majorCombosTotal(raw) > 0;
+}
+
+function majorCombosCompletenessScore(raw){
+  const combos = normalizeMajorCombos(raw);
+  return (majorCombosTotal(combos) * 10) + majorCombosNonZeroKeys(combos);
+}
+
+function sessionSummaryRowsForMajorCombos(rawSummary){
+  if (!isPlainObject(rawSummary)) return [];
+  if (Array.isArray(rawSummary.rows)) return rawSummary.rows;
+  if (Array.isArray(rawSummary.rowsWithData)) return rawSummary.rowsWithData;
+  if (Array.isArray(rawSummary.players)) return rawSummary.players;
+  return [];
+}
+
+function sessionMajorCombosMapFromSummary(rawSummary){
+  const out = new Map();
+  if (!isPlainObject(rawSummary)) return out;
+  sessionSummaryRowsForMajorCombos(rawSummary).forEach(row => {
+    if (!isPlainObject(row)) return;
+    const id = stableEntityId(row) || stableEntityId(row.playerId) || stableEntityId(row.id);
+    if (!id) return;
+    const combos = normalizeMajorCombos(row.combos || row.majorCombos || row);
+    if (!majorCombosHasData(combos)) return;
+    out.set(id, maxMajorCombos(out.get(id), combos));
+  });
+  return out;
+}
+
+function sessionMajorCombosMapFromGame(session){
+  const s = isPlainObject(session) ? session : {};
+  const out = new Map();
+  const players = (s.game && Array.isArray(s.game.players)) ? s.game.players : [];
+  players.forEach(st => {
+    const id = stableEntityId(st);
+    if (!id) return;
+    const combos = normalizeMajorCombos(st && st.majorCombos);
+    if (!majorCombosHasData(combos)) return;
+    out.set(id, maxMajorCombos(out.get(id), combos));
+  });
+  return out;
+}
+
+function effectiveSessionMajorCombosMap(session){
+  const out = sessionMajorCombosMapFromGame(session);
+  const summaryMap = sessionMajorCombosMapFromSummary(session && session.majorCombosSummary);
+  summaryMap.forEach((combos, id) => {
+    out.set(id, maxMajorCombos(out.get(id), combos));
+  });
+  return out;
+}
+
+function sessionMajorCombosCompletenessScore(session){
+  let score = 0;
+  const map = effectiveSessionMajorCombosMap(session);
+  map.forEach(combos => { score += majorCombosCompletenessScore(combos); });
+  if (isPlainObject(session && session.majorCombosSummary) && (numOrZero(session.majorCombosSummary.totalRegistradas) > 0 || map.size > 0)) score += 1;
+  return score;
+}
+
+function buildStoredMajorCombosSummary(session){
+  const s = isPlainObject(session) ? session : {};
+  const players = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
+  const gamePlayers = (s.game && Array.isArray(s.game.players)) ? s.game.players : [];
+  const summaryRows = sessionSummaryRowsForMajorCombos(s.majorCombosSummary);
+  const pStateMap = new Map(gamePlayers.map(st => [stableEntityId(st), st]));
+  const effectiveMap = effectiveSessionMajorCombosMap(s);
+  const labelMap = new Map();
+
+  players.forEach(p => {
+    const pid = stableEntityId(p);
+    if (!pid) return;
+    labelMap.set(pid, safeTrim(p && (p.display || p.nick || p.name)) || pid);
+  });
+  summaryRows.forEach(row => {
+    const pid = stableEntityId(row);
+    if (!pid || labelMap.has(pid)) return;
+    labelMap.set(pid, safeTrim(row && (row.player || row.display || row.nick || row.name)) || pid);
+  });
+
+  const orderedIds = uniqStrings([
+    ...players.map(stableEntityId),
+    ...gamePlayers.map(stableEntityId),
+    ...Array.from(effectiveMap.keys()),
+  ].filter(Boolean));
+  const totalsByCombo = majorComboDefaultState();
+  const rows = orderedIds.map((pid, idx) => {
+    const st = pStateMap.get(pid) || {};
+    const combos = normalizeMajorCombos(effectiveMap.get(pid) || st.majorCombos);
+    SESSION_MAJOR_COMBO_KEYS.forEach(key => { totalsByCombo[key] += majorComboInt(combos[key]); });
+    const total = majorCombosTotal(combos);
+    return {
+      id: pid,
+      player: labelMap.get(pid) || pid || 'Jugador',
+      order: idx,
+      combos,
+      total,
+    };
+  });
+  const totalRegistradas = SESSION_MAJOR_COMBO_KEYS.reduce((acc, key) => acc + majorComboInt(totalsByCombo[key]), 0);
+  const sortedRows = rows.slice().sort((a, b) => {
+    const dt = majorComboInt(b.total) - majorComboInt(a.total);
+    if (dt) return dt;
+    return String(a.player || '').localeCompare(String(b.player || ''), 'es', { sensitivity: 'base' });
+  });
+  return {
+    totalRegistradas,
+    hasData: totalRegistradas > 0,
+    totalsByCombo,
+    rows: sortedRows,
+    rowsWithData: sortedRows.filter(row => majorComboInt(row.total) > 0),
+  };
+}
+
+function ensureStoredMajorCombosSummary(session){
+  const s = isPlainObject(session) ? session : {};
+  const summary = buildStoredMajorCombosSummary(s);
+  if (summary.hasData){
+    const existing = isPlainObject(s.majorCombosSummary) ? (cloneJson(s.majorCombosSummary) || {}) : {};
+    s.majorCombosSummary = Object.assign({}, existing, summary);
+  } else if (!isPlainObject(s.majorCombosSummary)){
+    delete s.majorCombosSummary;
+  }
+  return s;
+}
+
+function mergeSessionMajorCombosOnly(localSession, incomingSession){
+  const resolved = cloneJson(localSession) || {};
+  const localEffective = effectiveSessionMajorCombosMap(localSession);
+  const incomingEffective = effectiveSessionMajorCombosMap(incomingSession);
+  const incomingScore = sessionMajorCombosCompletenessScore(incomingSession);
+  const localScore = sessionMajorCombosCompletenessScore(localSession);
+  if (!incomingEffective.size && incomingScore <= 0){
+    return { changed: false, session: resolved, reason: 'incoming-without-major-combos', localScore, incomingScore };
+  }
+
+  if (!isPlainObject(resolved.game)) resolved.game = {};
+  if (!Array.isArray(resolved.game.players)) resolved.game.players = [];
+
+  let changed = false;
+  resolved.game.players = resolved.game.players.map(state => {
+    const nextState = cloneJson(state) || {};
+    const id = stableEntityId(nextState);
+    if (!id) return nextState;
+    const localCombos = localEffective.get(id) || nextState.majorCombos;
+    const incomingCombos = incomingEffective.get(id);
+    if (!incomingCombos) {
+      const normalizedLocal = normalizeMajorCombos(localCombos);
+      if (canonicalJson(normalizedLocal) !== canonicalJson(isPlainObject(nextState.majorCombos) ? nextState.majorCombos : null)){
+        nextState.majorCombos = normalizedLocal;
+        changed = true;
+      }
+      return nextState;
+    }
+    const mergedCombos = maxMajorCombos(localCombos, incomingCombos);
+    if (canonicalJson(mergedCombos) !== canonicalJson(normalizeMajorCombos(nextState.majorCombos))){
+      nextState.majorCombos = mergedCombos;
+      changed = true;
+    }
+    return nextState;
+  });
+
+  const beforeSummary = canonicalJson(resolved.majorCombosSummary || null);
+  ensureStoredMajorCombosSummary(resolved);
+  if (canonicalJson(resolved.majorCombosSummary || null) !== beforeSummary) changed = true;
+
+  return {
+    changed,
+    session: resolved,
+    reason: changed ? 'major-combos-merged-by-max' : 'major-combos-already-complete',
+    localScore,
+    incomingScore,
+  };
+}
+
 function majorCombosTotal(raw){
   const combos = normalizeMajorCombos(raw);
   return SESSION_MAJOR_COMBO_KEYS.reduce((acc, key) => acc + majorComboInt(combos[key]), 0);
@@ -297,16 +487,35 @@ function buildSessionMajorCombosSummary(session, reportName){
   const resolver = (typeof reportName === 'function') ? reportName : makeReportNameResolver(s);
   const players = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
   const states = (s.game && Array.isArray(s.game.players)) ? s.game.players : [];
+  const summaryRows = sessionSummaryRowsForMajorCombos(s.majorCombosSummary);
   const pStateMap = new Map(states.map(st => [stableEntityId(st), st]));
+  const effectiveMap = effectiveSessionMajorCombosMap(s);
+  const labelMap = new Map();
+
+  players.forEach(p => {
+    const pid = stableEntityId(p);
+    if (!pid) return;
+    labelMap.set(pid, (p && (p.display || p.nick || p.name)) || pid || 'Jugador');
+  });
+  summaryRows.forEach(row => {
+    const pid = stableEntityId(row);
+    if (!pid || labelMap.has(pid)) return;
+    labelMap.set(pid, (row && (row.player || row.display || row.nick || row.name)) || pid || 'Jugador');
+  });
+
+  const orderedIds = uniqStrings([
+    ...players.map(stableEntityId),
+    ...states.map(stableEntityId),
+    ...Array.from(effectiveMap.keys()),
+  ].filter(Boolean));
   const totalsByCombo = majorComboDefaultState();
 
-  const rows = players.map((p, idx) => {
-    const pid = stableEntityId(p);
+  const rows = orderedIds.map((pid, idx) => {
     const st = pStateMap.get(pid) || {};
-    const combos = normalizeMajorCombos(st.majorCombos);
+    const combos = normalizeMajorCombos(effectiveMap.get(pid) || st.majorCombos);
     SESSION_MAJOR_COMBO_KEYS.forEach(key => { totalsByCombo[key] += majorComboInt(combos[key]); });
     const total = majorCombosTotal(combos);
-    const fallback = (p && (p.display || p.nick || p.name)) || pid || 'Jugador';
+    const fallback = labelMap.get(pid) || pid || 'Jugador';
     return {
       id: pid,
       player: resolver(pid, fallback),
@@ -1601,7 +1810,7 @@ function normalizeSessionEntity(session, index, refs, usedIds, ctx){
     ctx.changed = true;
   }
 
-  return Object.assign({}, src, {
+  const normalizedSession = Object.assign({}, src, {
     id,
     status,
     date,
@@ -1613,6 +1822,10 @@ function normalizeSessionEntity(session, index, refs, usedIds, ctx){
     chipsSnapshot,
     game,
   });
+  const beforeMajorCombosSummary = canonicalJson(normalizedSession.majorCombosSummary || null);
+  ensureStoredMajorCombosSummary(normalizedSession);
+  if (canonicalJson(normalizedSession.majorCombosSummary || null) !== beforeMajorCombosSummary) ctx.changed = true;
+  return normalizedSession;
 }
 
 function normalizeSessionList(list, refs, ctx){
@@ -2447,12 +2660,32 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
     if (localById){
       const localSignature = sessionMergeSignature(localById);
       if (localSignature === signature){
+        const comboResolution = mergeSessionMajorCombosOnly(localById, candidate);
+        if (comboResolution.changed){
+          const resolved = comboResolution.session;
+          const idx = sessions.indexOf(localById);
+          if (idx >= 0) sessions[idx] = resolved;
+          if (id) sessionById.set(id, resolved);
+          if (localSignature) sessionBySignature.set(localSignature, resolved);
+          summary.sessionsUpdated += 1;
+          summary.conflicts.push({
+            id: id || stableEntityId(localById) || '',
+            date: resolved.date || candidate.date || localById.date || '',
+            decision: 'update-major-combos-only',
+            reason: comboResolution.reason,
+          });
+          return;
+        }
         summary.duplicatesSkipped += 1;
         return;
       }
 
       const resolution = resolveSessionConflict(localById, candidate);
-      const resolved = resolution.resolvedSession;
+      let resolved = resolution.resolvedSession;
+      const comboSource = resolution.decision === 'replace-local' ? localById : candidate;
+      const comboResolution = mergeSessionMajorCombosOnly(resolved, comboSource);
+      if (comboResolution.changed) resolved = comboResolution.session;
+      else ensureStoredMajorCombosSummary(resolved);
       const idx = sessions.indexOf(localById);
       if (idx >= 0) sessions[idx] = resolved;
 
@@ -2463,18 +2696,35 @@ function buildMergedStoreNonDestructive(currentStore, incomingStore){
 
       summary.conflictsDetected += 1;
       summary.conflictsResolved += 1;
-      if (resolution.decision === 'replace-local') summary.sessionsUpdated += 1;
+      if (resolution.decision === 'replace-local' || comboResolution.changed) summary.sessionsUpdated += 1;
       else summary.sessionsKeptLocal += 1;
       summary.conflicts.push({
         id: id || stableEntityId(localById) || '',
         date: resolved.date || candidate.date || localById.date || '',
-        decision: resolution.decision,
-        reason: resolution.reason,
+        decision: comboResolution.changed ? `${resolution.decision}+major-combos-only` : resolution.decision,
+        reason: comboResolution.changed ? `${resolution.reason}; ${comboResolution.reason}` : resolution.reason,
       });
       return;
     }
 
     if (localBySignature){
+      const comboResolution = mergeSessionMajorCombosOnly(localBySignature, candidate);
+      if (comboResolution.changed){
+        const resolved = comboResolution.session;
+        const localId = stableEntityId(localBySignature);
+        const idx = sessions.indexOf(localBySignature);
+        if (idx >= 0) sessions[idx] = resolved;
+        if (localId) sessionById.set(localId, resolved);
+        if (signature) sessionBySignature.set(signature, resolved);
+        summary.sessionsUpdated += 1;
+        summary.conflicts.push({
+          id: localId || id || '',
+          date: resolved.date || candidate.date || localBySignature.date || '',
+          decision: 'update-major-combos-only',
+          reason: comboResolution.reason,
+        });
+        return;
+      }
       summary.duplicatesSkipped += 1;
       return;
     }
@@ -3186,6 +3436,8 @@ function setPlayerActive(id, active){
                 const sum = calcSessionSummary(s);
                 const delta = sum.delta;
                 const deltaClass = Math.abs(delta) < 0.0001 ? 'ok' : (delta > 0 ? 'pos' : 'neg');
+                const comboSummary = buildSessionMajorCombosSummary(s);
+                const comboInfo = comboSummary && comboSummary.hasData ? ` · Comb. mayores ${escapeHtml(String(comboSummary.totalRegistradas))}` : '';
                 return `
                   <div class="hist-item" data-id="${escapeAttr(s.id)}">
                     <div class="hist-main">
@@ -3467,7 +3719,7 @@ function setPlayerActive(id, active){
             <div class="hist-item" data-id="${escapeAttr(s.id)}">
               <div class="hist-main">
                 <div class="hist-title">${escapeHtml(String(s.date || ''))}</div>
-                <div class="hist-sub">${escapeHtml(String(sum.playersCount))} jugadores · Invertido ${escapeHtml(formatMoney(sum.totalInvested))} · Fichas ${escapeHtml(formatMoney(sum.totalChipsValue))}</div>
+                <div class="hist-sub">${escapeHtml(String(sum.playersCount))} jugadores · Invertido ${escapeHtml(formatMoney(sum.totalInvested))} · Fichas ${escapeHtml(formatMoney(sum.totalChipsValue))}${comboInfo}</div>
               </div>
               <div class="hist-right">
                 <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
@@ -8240,13 +8492,14 @@ function formatMoney(n){
     const chipsSnap = Array.isArray(s.chipsSnapshot) ? s.chipsSnapshot : [];
     const chipValueMap = new Map(chipsSnap.map(c => [c.id, numOrZero(c.value)]));
     const pStateMap = new Map((s.game && Array.isArray(s.game.players) ? s.game.players : []).map(p => [p.id, p]));
+    const effectiveCombosMap = effectiveSessionMajorCombosMap(s);
 
     const masterPlayers = new Map(getPlayers().map(p => [p.id, p]));
     const rows = playersSnap.map(p => {
       const pid = p.id;
       const st = pStateMap.get(pid) || { id: pid, buyIn: 0, rebuys: [], counts: {}, majorCombos: majorComboDefaultState() };
       const totals = calcPlayerTotals(st, chipValueMap);
-      const combos = normalizeMajorCombos(st.majorCombos);
+      const combos = normalizeMajorCombos(effectiveCombosMap.get(pid) || st.majorCombos);
       const combosTotal = majorCombosTotal(combos);
       const mp = masterPlayers.get(pid);
       const display = mp ? playerDisplayName(mp) : (p.display || p.nick || p.name || pid);
