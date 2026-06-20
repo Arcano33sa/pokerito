@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.48 pwa-manual-update-stage2 */
-const CACHE_NAME = 'pokerito-v0.1.48-pwa-manual-update-stage2';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.42 mesa-compacta-desplegable-v1 */
+const CACHE_NAME = 'pokerito-v0.1.42-mesa-compacta-desplegable-v1';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -33,19 +33,12 @@ const CORE_ASSETS = [
 ];
 const RUNTIME_ASSET_RE = /\.(?:js|css|svg|png|webp|jpg|jpeg)$/i;
 
-async function notifyClients(payload){
-  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-  clients.forEach((client) => {
-    try{ client.postMessage(payload); }catch(e){}
-  });
-}
-
 self.addEventListener('install', (event) => {
-  event.waitUntil((async () => {
-    const cache = await caches.open(CACHE_NAME);
-    await cache.addAll(CORE_ASSETS.map((u) => new Request(u, { cache: 'reload' })));
-    if (!self.registration.active) await self.skipWaiting();
-  })());
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(CORE_ASSETS.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -57,11 +50,6 @@ self.addEventListener('activate', (event) => {
     }));
 
     await self.clients.claim();
-    await notifyClients({
-      type: 'POKERITO_SW_ACTIVATED',
-      cacheName: CACHE_NAME,
-      scriptURL: self.location.href,
-    });
   })());
 });
 
@@ -96,12 +84,4 @@ self.addEventListener('fetch', (event) => {
       }).catch(() => cached);
     })
   );
-});
-
-
-self.addEventListener('message', (event) => {
-  const data = event && event.data ? event.data : {};
-  if (data.type === 'POKERITO_SKIP_WAITING') {
-    event.waitUntil(self.skipWaiting());
-  }
 });
