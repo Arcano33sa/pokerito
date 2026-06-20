@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.44 pwa-update-admin-v1 */
-const CACHE_NAME = 'pokerito-v0.1.44-pwa-update-admin-v1';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.46 major-combos-archive-v1 */
+const CACHE_NAME = 'pokerito-v0.1.46-major-combos-archive-v1';
 const CORE_ASSETS = [
   './',
   './index.html',

@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.44';
-  const APP_BUILD = 'pwa-update-admin-v1';
-  const APP_CACHE_NAME = 'pokerito-v0.1.44-pwa-update-admin-v1';
-  const SW_URL = './sw.js?v=0.1.44-pwa-update-admin-v1';
+  const APP_VERSION = '0.1.46';
+  const APP_BUILD = 'major-combos-archive-v1';
+  const APP_CACHE_NAME = 'pokerito-v0.1.46-major-combos-archive-v1';
+  const SW_URL = './sw.js?v=0.1.46-major-combos-archive-v1';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -173,6 +173,14 @@ function defaultSessions(){
   return [];
 }
 
+const SESSION_MAJOR_COMBOS = Object.freeze([
+  Object.freeze({ key: 'royal_flush', label: 'Escalera real' }),
+  Object.freeze({ key: 'straight_flush', label: 'Escalera de color' }),
+  Object.freeze({ key: 'four_kind', label: 'Póker' }),
+  Object.freeze({ key: 'full_house', label: 'Full house' }),
+]);
+const SESSION_MAJOR_COMBO_KEYS = Object.freeze(SESSION_MAJOR_COMBOS.map(item => item.key));
+
 function isPlainObject(v){
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
@@ -196,6 +204,235 @@ function normalizeIdentityText(value){
 
 function cloneJson(v){
   try{ return JSON.parse(JSON.stringify(v)); }catch(e){ return null; }
+}
+
+function majorComboDefaultState(){
+  const out = {};
+  SESSION_MAJOR_COMBO_KEYS.forEach(key => { out[key] = 0; });
+  return out;
+}
+
+function majorComboInt(value){
+  const n = Math.floor(numOrZero(value));
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+function normalizeMajorCombos(raw){
+  const src = isPlainObject(raw) ? raw : {};
+  const out = majorComboDefaultState();
+  SESSION_MAJOR_COMBOS.forEach(item => {
+    const direct = src[item.key];
+    const byLabel = src[item.label];
+    out[item.key] = majorComboInt(direct != null ? direct : byLabel);
+  });
+  return out;
+}
+
+function mergeMajorCombos(baseCombos, extraCombos){
+  const base = normalizeMajorCombos(baseCombos);
+  const extra = normalizeMajorCombos(extraCombos);
+  const out = majorComboDefaultState();
+  SESSION_MAJOR_COMBO_KEYS.forEach(key => { out[key] = majorComboInt(base[key]) + majorComboInt(extra[key]); });
+  return out;
+}
+
+function majorCombosTotal(raw){
+  const combos = normalizeMajorCombos(raw);
+  return SESSION_MAJOR_COMBO_KEYS.reduce((acc, key) => acc + majorComboInt(combos[key]), 0);
+}
+
+function majorCombosSummary(raw){
+  const combos = normalizeMajorCombos(raw);
+  const parts = SESSION_MAJOR_COMBOS
+    .map(item => ({ label: item.label, value: majorComboInt(combos[item.key]) }))
+    .filter(item => item.value > 0)
+    .map(item => `${item.label}: ${item.value}`);
+  return parts.length ? parts.join(' · ') : 'Sin combinaciones registradas.';
+}
+
+function majorComboLabel(key){
+  const found = SESSION_MAJOR_COMBOS.find(item => item.key === key) || null;
+  return found ? found.label : String(key || '');
+}
+
+function majorComboShortLabel(key){
+  if (key === 'royal_flush') return 'ER';
+  if (key === 'straight_flush') return 'EC';
+  if (key === 'four_kind') return 'PK';
+  if (key === 'full_house') return 'FH';
+  return majorComboLabel(key);
+}
+
+function compactMajorComboLabels(labels, limit){
+  const safe = uniqStrings((Array.isArray(labels) ? labels : []).map(safeTrim).filter(Boolean));
+  const max = Math.max(1, Math.floor(numOrZero(limit) || 3));
+  if (!safe.length) return '—';
+  if (safe.length <= max) return safe.join(' · ');
+  return `${safe.slice(0, max).join(' · ')} +${safe.length - max}`;
+}
+
+function addMajorCombos(target, raw){
+  const out = normalizeMajorCombos(target);
+  const next = normalizeMajorCombos(raw);
+  SESSION_MAJOR_COMBO_KEYS.forEach(key => { out[key] = majorComboInt(out[key]) + majorComboInt(next[key]); });
+  return out;
+}
+
+function buildSessionMajorCombosSummary(session, reportName){
+  const s = session && typeof session === 'object' ? ensureSessionRosterIntegrity(session) : null;
+  if (!s) {
+    return {
+      totalRegistradas: 0,
+      hasData: false,
+      rows: [],
+      rowsWithData: [],
+      totalsByCombo: majorComboDefaultState(),
+      topCombo: null,
+      topComboLabel: '—',
+      featuredPlayers: [],
+      featuredPlayerLabel: '—',
+    };
+  }
+  ensureSessionGame(s);
+  const resolver = (typeof reportName === 'function') ? reportName : makeReportNameResolver(s);
+  const players = Array.isArray(s.playersSnapshot) ? s.playersSnapshot : [];
+  const states = (s.game && Array.isArray(s.game.players)) ? s.game.players : [];
+  const pStateMap = new Map(states.map(st => [stableEntityId(st), st]));
+  const totalsByCombo = majorComboDefaultState();
+
+  const rows = players.map((p, idx) => {
+    const pid = stableEntityId(p);
+    const st = pStateMap.get(pid) || {};
+    const combos = normalizeMajorCombos(st.majorCombos);
+    SESSION_MAJOR_COMBO_KEYS.forEach(key => { totalsByCombo[key] += majorComboInt(combos[key]); });
+    const total = majorCombosTotal(combos);
+    const fallback = (p && (p.display || p.nick || p.name)) || pid || 'Jugador';
+    return {
+      id: pid,
+      player: resolver(pid, fallback),
+      order: idx,
+      combos,
+      total,
+    };
+  });
+
+  const totalRegistradas = SESSION_MAJOR_COMBO_KEYS.reduce((acc, key) => acc + majorComboInt(totalsByCombo[key]), 0);
+  const topComboCount = Math.max(0, ...SESSION_MAJOR_COMBO_KEYS.map(key => majorComboInt(totalsByCombo[key])));
+  const topComboKeys = topComboCount > 0 ? SESSION_MAJOR_COMBO_KEYS.filter(key => majorComboInt(totalsByCombo[key]) === topComboCount) : [];
+  const topComboLabel = topComboKeys.length ? `${compactMajorComboLabels(topComboKeys.map(majorComboLabel), 2)} (${topComboCount})` : '—';
+  const topCombo = topComboKeys.length ? { keys: topComboKeys, label: topComboLabel, count: topComboCount } : null;
+
+  const topPlayerCount = Math.max(0, ...rows.map(row => majorComboInt(row.total)));
+  const featuredPlayers = topPlayerCount > 0 ? rows.filter(row => majorComboInt(row.total) === topPlayerCount) : [];
+  const featuredPlayerLabel = featuredPlayers.length ? `${compactMajorComboLabels(featuredPlayers.map(row => row.player), 3)} (${topPlayerCount})` : '—';
+  const sortedRows = rows.slice().sort((a, b) => {
+    const dt = majorComboInt(b.total) - majorComboInt(a.total);
+    if (dt) return dt;
+    const dr = majorComboInt(b.combos.royal_flush) - majorComboInt(a.combos.royal_flush);
+    if (dr) return dr;
+    const ds = majorComboInt(b.combos.straight_flush) - majorComboInt(a.combos.straight_flush);
+    if (ds) return ds;
+    const df = majorComboInt(b.combos.four_kind) - majorComboInt(a.combos.four_kind);
+    if (df) return df;
+    return String(a.player || '').localeCompare(String(b.player || ''), 'es', { sensitivity: 'base' });
+  });
+
+  return {
+    totalRegistradas,
+    hasData: totalRegistradas > 0,
+    rows: sortedRows,
+    rowsWithData: sortedRows.filter(row => majorComboInt(row.total) > 0),
+    totalsByCombo,
+    topCombo,
+    topComboLabel,
+    featuredPlayers,
+    featuredPlayerLabel,
+  };
+}
+
+function majorCombosArchiveTableHtml(summary){
+  const data = summary || {};
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const totals = normalizeMajorCombos(data.totalsByCombo);
+  return `
+    <div class="table-wrap major-combos-table-wrap" role="region" aria-label="Tabla de combinaciones mayores">
+      <table class="table major-combos-table">
+        <thead>
+          <tr>
+            <th>Jugador</th>
+            <th class="num">Escalera real</th>
+            <th class="num">Escalera de color</th>
+            <th class="num">Póker</th>
+            <th class="num">Full house</th>
+            <th class="num">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.length ? rows.map(row => `
+            <tr>
+              <td class="who">${escapeHtml(row.player || '—')}</td>
+              ${SESSION_MAJOR_COMBOS.map(item => `<td class="num">${escapeHtml(String(majorComboInt(row.combos && row.combos[item.key])))}</td>`).join('')}
+              <td class="num strong">${escapeHtml(String(majorComboInt(row.total)))}</td>
+            </tr>
+          `).join('') : `<tr><td colspan="6">Sin jugadores en la sesión.</td></tr>`}
+          <tr class="major-combos-total-row">
+            <td class="who">Total sesión</td>
+            ${SESSION_MAJOR_COMBOS.map(item => `<td class="num">${escapeHtml(String(majorComboInt(totals[item.key])))}</td>`).join('')}
+            <td class="num strong">${escapeHtml(String(majorComboInt(data.totalRegistradas)))}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function majorCombosSummaryCardsHtml(summary){
+  const data = summary || {};
+  return `
+    <div class="major-combos-summary-grid" aria-label="Resumen de combinaciones mayores">
+      <div class="major-combos-summary-card"><span class="k">Total registradas</span><span class="v">${escapeHtml(String(majorComboInt(data.totalRegistradas)))}</span></div>
+      <div class="major-combos-summary-card"><span class="k">Combinación más repetida</span><span class="v">${escapeHtml(data.topComboLabel || '—')}</span></div>
+      <div class="major-combos-summary-card"><span class="k">Jugador destacado</span><span class="v">${escapeHtml(data.featuredPlayerLabel || '—')}</span></div>
+    </div>
+  `;
+}
+
+function ensurePlayerMajorCombos(playerState){
+  if (!playerState || typeof playerState !== 'object') return majorComboDefaultState();
+  playerState.majorCombos = normalizeMajorCombos(playerState.majorCombos);
+  return playerState.majorCombos;
+}
+
+function majorCombosHtml(raw, canMutateSession){
+  const combos = normalizeMajorCombos(raw);
+  const disabled = canMutateSession ? '' : 'disabled';
+  return `
+    <div class="major-combo-block mesa-combo-block" data-role="majorComboBlock">
+      <div class="major-combo-head">
+        <div class="major-combo-title">Combinaciones Mayores</div>
+        <div class="major-combo-summary" data-role="majorComboSummary">${escapeHtml(majorCombosSummary(combos))}</div>
+      </div>
+      <div class="major-combo-grid">
+        ${SESSION_MAJOR_COMBOS.map(item => {
+          const value = majorComboInt(combos[item.key]);
+          return `
+            <div class="major-combo-row" data-combo-key="${escapeAttr(item.key)}">
+              <div class="major-combo-meta">
+                <div class="major-combo-label">${escapeHtml(item.label)}</div>
+                <div class="major-combo-count" data-role="majorComboCount">${escapeHtml(String(value))}</div>
+              </div>
+              <div class="major-combo-actions">
+                <button class="num-btn major-combo-step" type="button" data-act="comboDec" ${disabled}>−</button>
+                <input class="major-combo-input" data-combo-input="${escapeAttr(item.key)}" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" enterkeyhint="done" placeholder="0" value="${escapeAttr(value ? String(value) : '')}" ${disabled} />
+                <button class="num-btn major-combo-step" type="button" data-act="comboInc" ${disabled}>+</button>
+                <button class="btn small major-combo-accept" type="button" data-act="comboAccept" ${disabled}>Aceptar</button>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
 }
 
 function stableEntityId(entity){
@@ -613,6 +850,7 @@ function mergeSessionPlayerState(baseState, extraState, chipIds){
     buyIn: numOrZero(base.buyIn) + numOrZero(extra.buyIn),
     rebuys: [].concat(Array.isArray(base.rebuys) ? base.rebuys.map(numOrZero).filter(v => v > 0) : [], Array.isArray(extra.rebuys) ? extra.rebuys.map(numOrZero).filter(v => v > 0) : []),
     counts: mergedCounts,
+    majorCombos: mergeMajorCombos(base.majorCombos, extra.majorCombos),
   });
 }
 
@@ -1302,11 +1540,14 @@ function normalizeSessionGameState(rawGame, playerIds, chipIds, ctx){
     const counts = {};
     chipIds.forEach(cid => { counts[cid] = Math.max(0, Math.floor(numOrZero(countsSrc[cid]))); });
     const rebuys = (Array.isArray(src.rebuys) ? src.rebuys : []).map(v => numOrZero(v)).filter(v => v > 0);
+    const majorCombos = normalizeMajorCombos(src.majorCombos);
+    if (canonicalJson(majorCombos) !== canonicalJson(isPlainObject(src.majorCombos) ? src.majorCombos : null)) ctx.changed = true;
     return Object.assign({}, src, {
       id: pid,
       buyIn: numOrZero(src.buyIn),
       rebuys,
       counts,
+      majorCombos,
     });
   });
 
@@ -3000,7 +3241,7 @@ function setPlayerActive(id, active){
                   <div class="hist-item" data-id="${escapeAttr(s.id)}">
                     <div class="hist-main">
                       <div class="hist-title">${escapeHtml(String(s.date || ''))}</div>
-                      <div class="hist-sub">${escapeHtml(String(sum.playersCount))} jugadores · Invertido ${escapeHtml(formatMoney(sum.totalInvested))} · Fichas ${escapeHtml(formatMoney(sum.totalChipsValue))}</div>
+                      <div class="hist-sub">${escapeHtml(String(sum.playersCount))} jugadores · Invertido ${escapeHtml(formatMoney(sum.totalInvested))} · Fichas ${escapeHtml(formatMoney(sum.totalChipsValue))}${comboInfo}</div>
                     </div>
                     <div class="hist-right">
                       <div class="delta-pill ${deltaClass}">Δ ${escapeHtml(formatMoney(delta))}</div>
@@ -3186,7 +3427,7 @@ function setPlayerActive(id, active){
           let maxNet = -Infinity;
           const tmp = [];
           players.forEach(p => {
-            const st = pStateMap.get(p.id) || { id: p.id, buyIn: 0, rebuys: [], counts: {} };
+            const st = pStateMap.get(p.id) || { id: p.id, buyIn: 0, rebuys: [], counts: {}, majorCombos: majorComboDefaultState() };
             const t = calcPlayerTotals(st, chipValueMap);
             const mp = masterMap.get(p.id);
             const display = mp ? playerDisplayName(mp) : (p.display || p.nick || p.name || p.id);
@@ -3205,6 +3446,7 @@ function setPlayerActive(id, active){
 
       const items = sessions.map(s => {
         const sum = calcSessionSummary(s);
+        const comboSummary = buildSessionMajorCombosSummary(s);
         const winners = winnersForSearch(s);
         const winnersText = winners.join(' ');
 
@@ -3221,7 +3463,7 @@ function setPlayerActive(id, active){
         });
 
         const blob = normSearch([s.date || '', playersBits.join(' '), winnersText].join(' '));
-        return { id: s.id, s, sum, blob };
+        return { id: s.id, s, sum, comboSummary, blob };
       });
 
       const root = el(`
@@ -3271,6 +3513,7 @@ function setPlayerActive(id, active){
           const sum = it.sum;
           const delta = sum.delta;
           const deltaClass = Math.abs(delta) < 0.0001 ? 'ok' : (delta > 0 ? 'pos' : 'neg');
+          const comboInfo = it.comboSummary && it.comboSummary.hasData ? ` · Comb. mayores ${escapeHtml(String(it.comboSummary.totalRegistradas))}` : '';
           return `
             <div class="hist-item" data-id="${escapeAttr(s.id)}">
               <div class="hist-main">
@@ -3355,6 +3598,7 @@ function renderHistorialDetalle(){
 
     const analysis = analyzeSession(s);
     const sum = analysis.summary;
+    const comboSummary = buildSessionMajorCombosSummary(s, reportName);
     const deltaClass = Math.abs(sum.delta) < 0.0001 ? 'ok' : (sum.delta > 0 ? 'pos' : 'neg');
 
     const root = el(`
@@ -3385,6 +3629,19 @@ function renderHistorialDetalle(){
             </div>
           </div>
         </div>
+
+        ${comboSummary.hasData ? `
+        <div class="panel major-combos-history-panel" role="region" aria-label="Combinaciones Mayores" style="margin-top:14px">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title" style="margin:0">Combinaciones Mayores</div>
+              <div class="small-note">Lectura tomada desde la sesión cerrada. No son adornos: esto ya viene del histórico real.</div>
+            </div>
+          </div>
+          ${majorCombosSummaryCardsHtml(comboSummary)}
+          ${majorCombosArchiveTableHtml(comboSummary)}
+        </div>
+        ` : ''}
 
         <div class="panel" role="region" aria-label="Tabla" style="margin-top:14px">
           <div class="panel-title">Por jugador</div>
@@ -3632,6 +3889,25 @@ function renderHistorialDetalle(){
       && Math.abs(numOrZero(a.roiGlobal) - numOrZero(b.roiGlobal)) <= 0.0001
       && numOrZero(a.wins1) === numOrZero(b.wins1)
       && numOrZero(a.games) === numOrZero(b.games);
+  }
+
+
+  function compareMajorCombosRanking(a, b){
+    const dt = majorComboInt(b && b.majorCombosTotal) - majorComboInt(a && a.majorCombosTotal);
+    if (dt) return dt;
+    for (const key of SESSION_MAJOR_COMBO_KEYS){
+      const dk = majorComboInt(b && b.majorCombos && b.majorCombos[key]) - majorComboInt(a && a.majorCombos && a.majorCombos[key]);
+      if (dk) return dk;
+    }
+    const dg = numOrZero(b && b.games) - numOrZero(a && a.games);
+    if (dg) return dg;
+    return String(a && a.display || '').localeCompare(String(b && b.display || ''), 'es', { sensitivity: 'base' });
+  }
+
+  function sameMajorCombosRankingPosition(a, b){
+    if (!a || !b) return false;
+    if (majorComboInt(a.majorCombosTotal) !== majorComboInt(b.majorCombosTotal)) return false;
+    return SESSION_MAJOR_COMBO_KEYS.every(key => majorComboInt(a.majorCombos && a.majorCombos[key]) === majorComboInt(b.majorCombos && b.majorCombos[key]));
   }
 
 
@@ -3914,6 +4190,12 @@ function renderHistorialDetalle(){
       ? makeRecord('bestItmStreak', 'Mejor racha de cobros', itmStreakSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatRecordCount(itmStreakSet.value, 'cobro seguido', 'cobros seguidos'), compactRecordLabels(itmStreakSet.items.map(item => formatStreakContextLabel(item.bestItmStreak)), 3), itmStreakNote, itmStreakSet.value)
       : emptyRecord('bestItmStreak', 'Mejor racha de cobros', 'Todavía no hay rachas de cobro registradas.', itmStreakNote));
 
+    const majorCombosSet = collectRecordLeaders(players.filter(row => majorComboInt(row && row.majorCombosTotal) > 0), row => majorComboInt(row && row.majorCombosTotal), 'max');
+    const majorCombosNote = 'Suma Escalera real, Escalera de color, Póker y Full house desde sesiones cerradas.';
+    items.push(majorCombosSet.items.length
+      ? makeRecord('mostMajorCombos', 'Más Combinaciones Mayores', majorCombosSet.items.map(item => ({ playerLabel: item.display, playerId: item.id })), formatRecordCount(majorCombosSet.value, 'combinación mayor', 'combinaciones mayores'), 'Histórico acumulado al cierre', majorCombosNote, majorCombosSet.value)
+      : emptyRecord('mostMajorCombos', 'Más Combinaciones Mayores', 'Todavía no hay Combinaciones Mayores registradas en el histórico.', majorCombosNote));
+
     return {
       roiMinGames: ROI_RECORD_MIN_GAMES,
       items,
@@ -4077,6 +4359,12 @@ function renderHistorialDetalle(){
         subtitle: 'Rachas registradas',
         intro: 'Tramos consecutivos que dejaron huella dentro del archivo.',
         keys: ['bestWinStreak', 'bestItmStreak'],
+      },
+      {
+        title: 'Récords globales',
+        subtitle: 'Combinaciones Mayores',
+        intro: 'Marcas acumuladas de Escalera real, Escalera de color, Póker y Full house.',
+        keys: ['mostMajorCombos'],
       },
     ];
 
@@ -5083,6 +5371,107 @@ function renderHistorialDetalle(){
     })).join('');
   }
 
+
+  function buildPdfMajorCombosSection(session, reportName){
+    const summary = buildSessionMajorCombosSummary(session, reportName);
+    if (!summary.hasData) return '';
+    const totals = normalizeMajorCombos(summary.totalsByCombo);
+    const overview = `
+      <div class="print-major-combos-overview pdf-avoid-break">
+        <article class="print-major-combos-card">
+          <div class="k">Total registradas</div>
+          <div class="v">${escapeHtml(String(majorComboInt(summary.totalRegistradas)))}</div>
+          <div class="s">Suma de todas las combinaciones registradas en esta sesión.</div>
+        </article>
+        <article class="print-major-combos-card">
+          <div class="k">Combinación más repetida</div>
+          <div class="v">${escapeHtml(summary.topComboLabel || '—')}</div>
+          <div class="s">Detectada desde el detalle guardado por jugador.</div>
+        </article>
+        <article class="print-major-combos-card">
+          <div class="k">Jugador destacado</div>
+          <div class="v">${escapeHtml(summary.featuredPlayerLabel || '—')}</div>
+          <div class="s">Mayor total individual de Combinaciones Mayores.</div>
+        </article>
+      </div>
+    `;
+    const rowsHtml = summary.rows.map(row => `
+      <tr>
+        <td>${escapeHtml(row.player || '—')}</td>
+        <td class="num">${escapeHtml(String(majorComboInt(row.combos && row.combos.royal_flush)))}</td>
+        <td class="num">${escapeHtml(String(majorComboInt(row.combos && row.combos.straight_flush)))}</td>
+        <td class="num">${escapeHtml(String(majorComboInt(row.combos && row.combos.four_kind)))}</td>
+        <td class="num">${escapeHtml(String(majorComboInt(row.combos && row.combos.full_house)))}</td>
+        <td class="num strong">${escapeHtml(String(majorComboInt(row.total)))}</td>
+      </tr>
+    `).join('');
+    const table = `
+      <div class="print-table-wrap print-major-combos-table-wrap" role="region" aria-label="Combinaciones Mayores de la sesión">
+        <table class="print-table print-major-combos-table">
+          <thead>
+            <tr>
+              <th>Jugador</th>
+              <th class="num">Escalera real</th>
+              <th class="num">Escalera de color</th>
+              <th class="num">Póker</th>
+              <th class="num">Full house</th>
+              <th class="num">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+            <tr class="print-major-combos-total-row">
+              <td>Total sesión</td>
+              <td class="num">${escapeHtml(String(majorComboInt(totals.royal_flush)))}</td>
+              <td class="num">${escapeHtml(String(majorComboInt(totals.straight_flush)))}</td>
+              <td class="num">${escapeHtml(String(majorComboInt(totals.four_kind)))}</td>
+              <td class="num">${escapeHtml(String(majorComboInt(totals.full_house)))}</td>
+              <td class="num strong">${escapeHtml(String(majorComboInt(summary.totalRegistradas)))}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+    return buildPdfSection({
+      title: 'Combinaciones Mayores',
+      subtitle: 'Escalera real, Escalera de color, Póker y Full house registrados en mesa.',
+      body: `${overview}<div class="print-note">Este bloque sale de la sesión guardada: no usa memoria suelta ni cálculos inventados. Si una fila marca cero, es cero histórico.</div>${table}`,
+      className: 'print-section--major-combos',
+      avoidBreak: false,
+    });
+  }
+
+  function buildPdfMajorCombosRankingSections(ranking){
+    const list = Array.isArray(ranking) ? ranking.filter(row => majorComboInt(row && row.majorCombosTotal) > 0) : [];
+    if (!list.length) return '';
+    const chunks = chunkList(list, 8);
+    return chunks.map((chunk, idx) => buildPdfTableSection({
+      title: 'Ranking de Combinaciones Mayores',
+      subtitle: chunks.length > 1 ? `Bloque ${idx + 1} de ${chunks.length} · ranking adicional` : 'Ranking adicional por total y tipo de combinación.',
+      columns: [
+        { label: 'Pos' },
+        { label: 'Jugador' },
+        { label: 'Escalera real', className: 'num' },
+        { label: 'Escalera de color', className: 'num' },
+        { label: 'Póker', className: 'num' },
+        { label: 'Full house', className: 'num' },
+        { label: 'Total', className: 'num' },
+      ],
+      rows: chunk.map(row => [
+        `#${escapeHtml(String(row.majorCombosRankPos || '—'))}`,
+        escapeHtml(String(row.display || 'Sin nombre')),
+        escapeHtml(String(majorComboInt(row.majorCombos && row.majorCombos.royal_flush))),
+        escapeHtml(String(majorComboInt(row.majorCombos && row.majorCombos.straight_flush))),
+        escapeHtml(String(majorComboInt(row.majorCombos && row.majorCombos.four_kind))),
+        escapeHtml(String(majorComboInt(row.majorCombos && row.majorCombos.full_house))),
+        `<strong>${escapeHtml(String(majorComboInt(row.majorCombosTotal)))}</strong>`,
+      ]),
+      noteHtml: idx === 0 ? '<div class="print-note">Ranking adicional. El ranking global principal conserva su criterio oficial por neto, ROI, victorias y sesiones.</div>' : '',
+      className: idx === 0 ? 'print-section--major-combos-ranking' : 'print-section--major-combos-ranking-cont',
+      breakBefore: idx > 0,
+    })).join('');
+  }
+
   function buildPdfGlobalBaseSection(globalBase, fallbackCloseDateTime){
     const data = globalBase || {};
     const body = `
@@ -5123,17 +5512,19 @@ function renderHistorialDetalle(){
       executive: buildPdfSessionExecutiveSection(summary),
       podium: buildPdfSessionPodiumSection(summary),
       session: buildPdfPlayerDetailSections(playerRows),
+      majorCombos: buildPdfMajorCombosSection(s, reportName),
       impact: buildPdfImpactSections(impactData),
       globalBase: buildPdfGlobalBaseSection(globalBase, summary.closeDateTime),
       ranking: buildPdfRankingSections(analytics.ranking || []),
+      majorCombosRanking: buildPdfMajorCombosRankingSections(analytics.majorCombosRanking || []),
       records: buildPdfRecordsSections(analytics.records || {}),
     };
 
     const editorialGroups = [
       { ...PDF_EDITORIAL_GROUPS.OPENING, sections: [sections.opening] },
-      { ...PDF_EDITORIAL_GROUPS.SESSION, sections: [sections.executive, sections.podium, sections.session] },
+      { ...PDF_EDITORIAL_GROUPS.SESSION, sections: [sections.executive, sections.podium, sections.session, sections.majorCombos].filter(Boolean) },
       { ...PDF_EDITORIAL_GROUPS.IMPACT, sections: [sections.impact] },
-      { ...PDF_EDITORIAL_GROUPS.ARCHIVE, sections: [sections.globalBase, sections.ranking, sections.records] },
+      { ...PDF_EDITORIAL_GROUPS.ARCHIVE, sections: [sections.globalBase, sections.ranking, sections.majorCombosRanking, sections.records].filter(Boolean) },
     ];
 
     return {
@@ -5300,6 +5691,7 @@ function renderHistorialDetalle(){
 // ===== Etapa 7: Ranking global (sin tiempo) =====
   function renderRanking(){
     const a = computeAnalytics();
+    const majorComboRanking = Array.isArray(a.majorCombosRanking) ? a.majorCombosRanking : [];
     const root = el(`
       <section class="screen screen--ranking" aria-label="Ranking">
         <h1 class="screen-title">Ranking</h1>
@@ -5342,6 +5734,33 @@ function renderHistorialDetalle(){
             </div>
           ` : `<div class="empty">No hay datos todavía. Cierra una sesión y aquí empieza el drama.</div>`}
         </div>
+
+        ${majorComboRanking.length ? `
+        <div class="panel" role="region" aria-label="Ranking de Combinaciones Mayores" style="margin-top:14px">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title" style="margin:0">Ranking de Combinaciones Mayores</div>
+              <div class="small-note">Ranking adicional: no reemplaza el orden oficial por neto. Aquí mandan Escalera real, Escalera de color, Póker y Full house.</div>
+            </div>
+          </div>
+          <div class="rank-list major-combos-rank-list" aria-live="polite">
+            ${majorComboRanking.map((r, idx) => `
+              <article class="rank-item rank-item--major-combos" data-pid="${escapeAttr(r.id)}">
+                <div class="rank-left">
+                  <div class="rank-pos">#${escapeHtml(String(r.majorCombosRankPos || (idx + 1)))}</div>
+                  <div class="rank-who">
+                    <div class="rank-name">${escapeHtml(r.display)}</div>
+                    <div class="rank-sub">Total: ${escapeHtml(String(majorComboInt(r.majorCombosTotal)))} · Sesiones: ${escapeHtml(String(numOrZero(r.games)))}</div>
+                  </div>
+                </div>
+                <div class="rank-right major-combos-rank-right">
+                  ${SESSION_MAJOR_COMBOS.map(item => `<div class="rank-mini major-combos-rank-mini"><span>${escapeHtml(item.label)}</span><b>${escapeHtml(String(majorComboInt(r.majorCombos && r.majorCombos[item.key])))}</b></div>`).join('')}
+                </div>
+              </article>
+            `).join('')}
+          </div>
+        </div>
+        ` : ''}
 
         <div class="panel" role="region" aria-label="Records" style="margin-top:14px">
           <div class="panel-title">Records globales</div>
@@ -5481,6 +5900,8 @@ function renderHistorialDetalle(){
                       }).join('') : `<div class="empty">No hay fichas en el snapshot.</div>`}
                     </div>
 
+                    ${majorCombosHtml(st.majorCombos, canMutateSession)}
+
                     <div class="totals-block mesa-totals-block">
                       <div class="pillstat"><span class="k">Total fichas</span><span class="v" data-role="chipsValue">${escapeHtml(formatMoney(totals.totalChipsValue))}</span></div>
                       <div class="pillstat"><span class="k">Invertido</span><span class="v" data-role="invested">${escapeHtml(formatMoney(totals.totalBuyIn))}</span></div>
@@ -5585,6 +6006,16 @@ function renderHistorialDetalle(){
       });
     });
 
+    root.querySelectorAll('input.major-combo-input').forEach(inp => {
+      hardenNumericInput(inp, { selectOnFocus: true });
+      inp.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter') return;
+        const row = inp.closest('.major-combo-row');
+        const btn = row ? row.querySelector('button[data-act="comboAccept"]') : null;
+        if (btn && !btn.disabled) btn.click();
+      });
+    });
+
     // click actions
     const $grid = root.querySelector('.mesa-grid');
     if ($grid){
@@ -5627,6 +6058,24 @@ function renderHistorialDetalle(){
           } finally {
             sessionDialogBusy = false;
           }
+        }
+
+        if (act === 'comboAccept' || act === 'comboEditAccept' || act === 'comboInc' || act === 'comboDec'){
+          const comboRow = btn.closest('.major-combo-row');
+          const comboKey = comboRow ? comboRow.getAttribute('data-combo-key') : '';
+          if (!SESSION_MAJOR_COMBO_KEYS.includes(comboKey)) return;
+          const input = comboRow.querySelector('input.major-combo-input');
+          const st = ensurePlayerState(s, pid);
+          const combos = ensurePlayerMajorCombos(st);
+          const cur = majorComboInt(input ? input.value : combos[comboKey]);
+          const next = act === 'comboInc' ? (cur + 1) : (act === 'comboDec' ? Math.max(0, cur - 1) : cur);
+          combos[comboKey] = next;
+          if (input) input.value = next ? String(next) : '';
+          touchSession(s);
+          saveSession(s);
+          refreshMajorCombo(card, st);
+          if (act === 'comboAccept' || act === 'comboEditAccept') showToast({ tone: 'success', title: 'Combinación guardada', body: majorCombosSummary(combos) });
+          return;
         }
 
         const row = btn.closest('.chip-row');
@@ -5675,6 +6124,22 @@ function renderHistorialDetalle(){
             sessionDialogBusy = false;
           }
         }
+      });
+    }
+
+    function refreshMajorCombo(card, st){
+      if (!card) return;
+      const combos = ensurePlayerMajorCombos(st);
+      const $summary = card.querySelector('[data-role="majorComboSummary"]');
+      if ($summary) $summary.textContent = majorCombosSummary(combos);
+      SESSION_MAJOR_COMBOS.forEach(item => {
+        const row = card.querySelector(`.major-combo-row[data-combo-key="${item.key}"]`);
+        if (!row) return;
+        const value = majorComboInt(combos[item.key]);
+        const input = row.querySelector('input.major-combo-input');
+        const count = row.querySelector('[data-role="majorComboCount"]');
+        if (input) input.value = value ? String(value) : '';
+        if (count) count.textContent = String(value);
       });
     }
 
@@ -6307,7 +6772,9 @@ function renderAdministracion(){
   function getArchiveProfileRows(analytics){
     const byPlayer = analytics && analytics.byPlayer instanceof Map ? analytics.byPlayer : new Map();
     const ranking = Array.isArray(analytics && analytics.ranking) ? analytics.ranking : [];
+    const majorRanking = Array.isArray(analytics && analytics.majorCombosRanking) ? analytics.majorCombosRanking : [];
     const rankingMap = new Map(ranking.map(row => [safeTrim(row && row.id), row]));
+    const majorRankingMap = new Map(majorRanking.map(row => [safeTrim(row && row.id), row]));
     const masterMap = new Map(getPlayers().filter(p => stableEntityId(p)).map(p => [stableEntityId(p), p]));
     const ids = uniqStrings([
       ...getPlayers().map(stableEntityId),
@@ -6318,6 +6785,7 @@ function renderAdministracion(){
       const master = masterMap.get(id) || null;
       const hist = byPlayer.get(id) || null;
       const rankingRow = rankingMap.get(id) || null;
+      const majorRankingRow = majorRankingMap.get(id) || null;
       const display = safeTrim((master && playerDisplayName(master)) || (hist && hist.display) || id || 'Jugador');
       const legalName = safeTrim(master && master.name);
       const nick = safeTrim(master && master.nick);
@@ -6349,6 +6817,9 @@ function renderAdministracion(){
         avgNet: numOrZero(hist && hist.avgNet),
         roiGlobal: numOrZero(hist && hist.roiGlobal),
         rankPos: Math.floor(numOrZero(rankingRow && rankingRow.rankPos)),
+        majorCombos: normalizeMajorCombos(hist && hist.majorCombos),
+        majorCombosTotal: majorComboInt(hist && hist.majorCombosTotal),
+        majorCombosRankPos: Math.floor(numOrZero(majorRankingRow && majorRankingRow.majorCombosRankPos)),
         lastSessionDate: safeTrim(hist && hist.lastSession && hist.lastSession.date) || 'Sin sesiones cerradas',
         lastSessionRef: safeTrim(hist && hist.lastSession && hist.lastSession.sessionRef) || '',
         bestNet: numOrZero(hist && hist.best && hist.best.net),
@@ -6614,6 +7085,7 @@ function renderAdministracion(){
                   <div class="stat-mini"><span class="k">Neto</span><span class="v net ${netClass}">${escapeHtml(formatMoney(row.net))}</span></div>
                   <div class="stat-mini stack"><span class="k">Última sesión</span><span class="v">${escapeHtml(row.lastSessionDate)}</span><span class="sub">${escapeHtml(row.lastSessionRef || (row.rankPos ? ('Ranking #' + row.rankPos) : 'Sin ref.'))}</span></div>
                 </div>
+                ${majorComboInt(row.majorCombosTotal) > 0 ? `<div class="major-combos-profile-strip"><span>Combinaciones Mayores</span><b>${escapeHtml(String(row.majorCombosTotal))}</b>${row.majorCombosRankPos ? `<em>#${escapeHtml(String(row.majorCombosRankPos))}</em>` : ''}</div>` : ''}
                 <div class="small-note archive-profile-preview-foot">${escapeHtml(row.managed ? 'La ficha individual ya vive aquí. Para editar datos operativos, la puerta correcta sigue siendo Administración > Jugadores.' : 'Perfil detectado desde historial/importaciones. Puede leerse completo aunque todavía no exista ficha operativa en Gestión.')}</div>
                 <div class="archive-profile-actions">
                   <button class="btn" type="button" data-profile-open="${escapeAttr(row.id)}">Abrir perfil</button>
@@ -6725,6 +7197,25 @@ function renderAdministracion(){
             <div class="archive-summary-note">Mejor ranking histórico: ${row.bestHistoricalRank ? ('#' + escapeHtml(String(row.bestHistoricalRank))) : 'Sin dato'}.</div>
           </article>
         </div>
+
+        ${majorComboInt(row.majorCombosTotal) > 0 ? `
+        <article class="panel major-combos-profile-panel" role="region" aria-label="Combinaciones Mayores acumuladas" style="margin-top:14px">
+          <div class="panel-head">
+            <div>
+              <div class="archive-kicker">Combinaciones Mayores</div>
+              <div class="panel-title" style="margin:0">Acumulado histórico</div>
+            </div>
+            <span class="badge">${row.majorCombosRankPos ? ('Ranking #' + escapeHtml(String(row.majorCombosRankPos))) : 'Sin ranking'}</span>
+          </div>
+          <div class="stats-mini-grid stats-extended" style="margin-top:12px">
+            <div class="stat-mini"><span class="k">Escalera real</span><span class="v">${escapeHtml(String(majorComboInt(row.majorCombos && row.majorCombos.royal_flush)))}</span></div>
+            <div class="stat-mini"><span class="k">Escalera de color</span><span class="v">${escapeHtml(String(majorComboInt(row.majorCombos && row.majorCombos.straight_flush)))}</span></div>
+            <div class="stat-mini"><span class="k">Póker</span><span class="v">${escapeHtml(String(majorComboInt(row.majorCombos && row.majorCombos.four_kind)))}</span></div>
+            <div class="stat-mini"><span class="k">Full house</span><span class="v">${escapeHtml(String(majorComboInt(row.majorCombos && row.majorCombos.full_house)))}</span></div>
+            <div class="stat-mini"><span class="k">Total</span><span class="v">${escapeHtml(String(majorComboInt(row.majorCombosTotal)))}</span></div>
+          </div>
+        </article>
+        ` : ''}
 
         <div class="archive-map-grid archive-profile-detail-panels" aria-label="Lectura viva del jugador">
           <article class="panel archive-lane archive-lane--profile-momentum">
@@ -7474,6 +7965,7 @@ function formatMoney(n){
         buyIn: numOrZero(prev && prev.buyIn),
         rebuys: (Array.isArray(prev && prev.rebuys) ? prev.rebuys : []).map(numOrZero).filter(v => v > 0),
         counts: nextCounts,
+        majorCombos: normalizeMajorCombos(prev && prev.majorCombos),
       };
     });
 
@@ -7489,7 +7981,7 @@ function formatMoney(n){
     chipIds.forEach(cid => {
       counts[cid] = 0;
     });
-    return { id: pid, buyIn: 0, rebuys: [], counts };
+    return { id: pid, buyIn: 0, rebuys: [], counts, majorCombos: majorComboDefaultState() };
   }
 
   function getLateJoinEligiblePlayers(session){
@@ -7727,6 +8219,7 @@ function formatMoney(n){
     if (typeof st.buyIn !== 'number') st.buyIn = numOrZero(st.buyIn);
     if (!Array.isArray(st.rebuys)) st.rebuys = [];
     if (!st.counts || typeof st.counts !== 'object') st.counts = {};
+    ensurePlayerMajorCombos(st);
     return st;
   }
 
@@ -7742,7 +8235,7 @@ function formatMoney(n){
     const next = [];
     pids.forEach(pid => {
       let st = oldMap.get(pid);
-      if (!st || typeof st !== 'object') st = { id: pid, buyIn: 0, rebuys: [], counts: {} };
+      if (!st || typeof st !== 'object') st = { id: pid, buyIn: 0, rebuys: [], counts: {}, majorCombos: majorComboDefaultState() };
       if (typeof st.buyIn !== 'number') st.buyIn = numOrZero(st.buyIn);
       if (!Array.isArray(st.rebuys)) st.rebuys = [];
       st.rebuys = st.rebuys.map(x => numOrZero(x)).filter(x => x > 0);
@@ -7750,6 +8243,7 @@ function formatMoney(n){
       cids.forEach(cid => {
         st.counts[cid] = Math.max(0, Math.floor(numOrZero(st.counts[cid])));
       });
+      ensurePlayerMajorCombos(st);
       next.push(st);
     });
     s.game.players = next;
@@ -7801,8 +8295,10 @@ function formatMoney(n){
     const masterPlayers = new Map(getPlayers().map(p => [p.id, p]));
     const rows = playersSnap.map(p => {
       const pid = p.id;
-      const st = pStateMap.get(pid) || { id: pid, buyIn: 0, rebuys: [], counts: {} };
+      const st = pStateMap.get(pid) || { id: pid, buyIn: 0, rebuys: [], counts: {}, majorCombos: majorComboDefaultState() };
       const totals = calcPlayerTotals(st, chipValueMap);
+      const combos = normalizeMajorCombos(st.majorCombos);
+      const combosTotal = majorCombosTotal(combos);
       const mp = masterPlayers.get(pid);
       const display = mp ? playerDisplayName(mp) : (p.display || p.nick || p.name || pid);
       return {
@@ -7814,6 +8310,8 @@ function formatMoney(n){
         invested: totals.totalBuyIn,
         chips: totals.totalChipsValue,
         net: totals.neto,
+        majorCombos: combos,
+        majorCombosTotal: combosTotal,
         pos: 0,
       };
     });
@@ -7915,6 +8413,8 @@ function formatMoney(n){
           chips: r.chips,
           net: r.net,
           pos: r.pos,
+          majorCombos: normalizeMajorCombos(r.majorCombos),
+          majorCombosTotal: majorComboInt(r.majorCombosTotal),
         });
 
         const cur = byPlayer.get(r.id) || {
@@ -7939,6 +8439,8 @@ function formatMoney(n){
           lastSession: null,
           bestWinStreak: { length: 0, start: null, end: null },
           bestItmStreak: { length: 0, start: null, end: null },
+          majorCombos: majorComboDefaultState(),
+          majorCombosTotal: 0,
           timeline: [],
         };
         cur.display = pname;
@@ -7955,6 +8457,8 @@ function formatMoney(n){
         cur.investedTotal += r.invested;
         cur.chipsTotal += r.chips;
         cur.payoutsTotal += r.chips;
+        cur.majorCombos = addMajorCombos(cur.majorCombos, r.majorCombos);
+        cur.majorCombosTotal = majorCombosTotal(cur.majorCombos);
 
         if (!cur.best || r.net > cur.best.net) cur.best = { net: r.net, date, ts: sessionTs, sessionId: s.id, sessionRef };
         if (!cur.worst || r.net < cur.worst.net) cur.worst = { net: r.net, date, ts: sessionTs, sessionId: s.id, sessionRef };
@@ -7970,6 +8474,8 @@ function formatMoney(n){
           net: r.net,
           isWin: r.pos === 1,
           isItm: numOrZero(r.net) > eps,
+          majorCombos: normalizeMajorCombos(r.majorCombos),
+          majorCombosTotal: majorComboInt(r.majorCombosTotal),
         });
 
         byPlayer.set(r.id, cur);
@@ -7981,6 +8487,8 @@ function formatMoney(n){
       row.roiGlobal = calcGlobalRoi(row.netTotal, row.investedTotal);
       row.bestWinStreak = calcBestStreak(row.timeline, item => !!(item && item.isWin));
       row.bestItmStreak = calcBestStreak(row.timeline, item => !!(item && item.isItm));
+      row.majorCombos = normalizeMajorCombos(row.majorCombos);
+      row.majorCombosTotal = majorCombosTotal(row.majorCombos);
       return row;
     });
 
@@ -8001,9 +8509,23 @@ function formatMoney(n){
       }
     });
 
+    const majorCombosRanking = playersFlat
+      .filter(row => majorComboInt(row && row.majorCombosTotal) > 0)
+      .slice()
+      .sort(compareMajorCombosRanking);
+    majorCombosRanking.forEach((row, idx) => {
+      if (idx === 0){
+        row.majorCombosRankPos = 1;
+        return;
+      }
+      const prev = majorCombosRanking[idx - 1];
+      row.majorCombosRankPos = sameMajorCombosRankingPosition(row, prev) ? prev.majorCombosRankPos : (idx + 1);
+    });
+
     return {
       byPlayer,
       ranking,
+      majorCombosRanking,
       records: buildGlobalRecordItems({ players: playersFlat, detailed, summaryRows }),
       detailed,
       summaryRows,

@@ -4817,3 +4817,328 @@ html[data-vp-width="compact"] .admin-chip-summary-main .admin-compact-status-com
 #pwaUpdateBtn.success{
   font-weight: 950;
 }
+
+/* ===== Pokerito: Combinaciones Mayores en Mesa / Partida ===== */
+.major-combo-block,
+.mesa-combo-block{
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in oklab, var(--panel-2) 86%, transparent);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.major-combo-head{
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.major-combo-title{
+  font-size: 12px;
+  line-height: 1.15;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 950;
+}
+
+.major-combo-summary{
+  font-size: 12px;
+  line-height: 1.35;
+  color: color-mix(in oklab, var(--text) 86%, var(--muted));
+  font-weight: 850;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.major-combo-grid{
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.major-combo-row{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--panel) 93%, transparent);
+  padding: 9px 10px;
+  min-width: 0;
+}
+
+.major-combo-meta{
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.major-combo-label{
+  font-size: 13px;
+  line-height: 1.2;
+  font-weight: 950;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.major-combo-count{
+  width: max-content;
+  min-width: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel-2) 88%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 950;
+  text-align: center;
+  padding: 5px 8px;
+}
+
+.major-combo-actions{
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+}
+
+.major-combo-step{
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  border-radius: 14px;
+  flex: 0 0 auto;
+}
+
+.major-combo-input{
+  width: 58px;
+  min-width: 58px;
+  height: 40px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel) 96%, transparent);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 950;
+  text-align: center;
+  outline: none;
+}
+
+.major-combo-input:focus{
+  border-color: color-mix(in oklab, var(--accent) 70%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.major-combo-accept{
+  min-height: 40px;
+  padding-inline: 11px;
+  white-space: nowrap;
+}
+
+html[data-vp-width="compact"] .major-combo-row{
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+html[data-vp-width="compact"] .major-combo-actions{
+  justify-content: stretch;
+  width: 100%;
+}
+
+html[data-vp-width="compact"] .major-combo-input{
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+}
+
+html[data-vp-width="compact"] .major-combo-accept{
+  flex: 1 1 auto;
+}
+
+/* ===== Pokerito: Combinaciones Mayores en Archivo / Ranking / PDF ===== */
+.major-combos-summary-grid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  min-width: 0;
+}
+.major-combos-summary-card{
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--panel) 92%, transparent);
+  padding: 11px 12px;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.major-combos-summary-card .k{
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 950;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.major-combos-summary-card .v{
+  min-width: 0;
+  font-size: 17px;
+  line-height: 1.18;
+  font-weight: 1000;
+  overflow-wrap: anywhere;
+}
+.major-combos-table-wrap{ margin-top: 12px; }
+.major-combos-table th,
+.major-combos-table td{
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.major-combos-table .who{ min-width: 160px; white-space: normal; }
+.major-combos-table .strong{ font-weight: 1000; }
+.major-combos-total-row td{
+  font-weight: 1000;
+  background: color-mix(in oklab, var(--gold) 12%, transparent);
+}
+.major-combos-rank-list{ margin-top: 12px; }
+.rank-item--major-combos .major-combos-rank-right{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  min-width: min(360px, 100%);
+}
+.major-combos-rank-mini{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: color-mix(in oklab, var(--panel) 94%, transparent);
+  font-size: 11px;
+  line-height: 1.1;
+}
+.major-combos-rank-mini span{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-weight: 900;
+}
+.major-combos-rank-mini b{
+  font-variant-numeric: tabular-nums;
+  font-weight: 1000;
+}
+.major-combos-profile-strip{
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border: 1px solid color-mix(in oklab, var(--gold) 42%, var(--border));
+  border-radius: 999px;
+  width: max-content;
+  max-width: 100%;
+  padding: 6px 10px;
+  background: color-mix(in oklab, var(--gold) 10%, transparent);
+  font-size: 12px;
+  font-weight: 950;
+}
+.major-combos-profile-strip span{ color: var(--muted); }
+.major-combos-profile-strip b{ font-variant-numeric: tabular-nums; }
+.major-combos-profile-strip em{
+  font-style: normal;
+  color: var(--accent);
+  font-weight: 1000;
+}
+.major-combos-profile-panel .stats-mini-grid .stat-mini .v{
+  font-variant-numeric: tabular-nums;
+}
+
+.print-section--major-combos,
+.print-section--major-combos-ranking,
+.print-section--major-combos-ranking-cont{
+  gap: 12px;
+}
+.print-major-combos-overview{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.print-major-combos-card{
+  border: 1px solid rgba(0,0,0,0.14);
+  border-radius: 16px;
+  background: #fff;
+  padding: 11px 12px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.print-major-combos-card .k{
+  font-size: 10px;
+  line-height: 1.1;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: rgba(0,0,0,.56);
+}
+.print-major-combos-card .v{
+  font-size: 17px;
+  line-height: 1.15;
+  font-weight: 1000;
+  color: #111;
+  overflow-wrap: anywhere;
+}
+.print-major-combos-card .s{
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 800;
+  color: rgba(0,0,0,.62);
+}
+.print-major-combos-table{
+  table-layout: fixed;
+}
+.print-major-combos-table th,
+.print-major-combos-table td{
+  font-size: 12px;
+  padding: 8px 9px;
+  font-variant-numeric: tabular-nums;
+}
+.print-major-combos-table th:first-child,
+.print-major-combos-table td:first-child{
+  width: 28%;
+}
+.print-major-combos-table .strong,
+.print-major-combos-total-row td{
+  font-weight: 1000;
+}
+.print-major-combos-total-row td{
+  background: rgba(212,175,55,.12);
+}
+
+@media (max-width: 720px){
+  .major-combos-summary-grid{ grid-template-columns: 1fr; }
+  .rank-item--major-combos .major-combos-rank-right{ grid-template-columns: 1fr; min-width: 0; width: 100%; }
+  .rank-item--major-combos{ gap: 12px; }
+}
+
+@media print{
+  .print-major-combos-overview,
+  .print-major-combos-card,
+  .print-section--major-combos-ranking .print-table-wrap{
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-major-combos-table-wrap,
+  .print-major-combos-table{
+    overflow: visible !important;
+  }
+}
