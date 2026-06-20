@@ -568,6 +568,12 @@ body{
   background: color-mix(in oklab, #ff4d6d 14%, var(--panel));
 }
 
+.btn.success{
+  border-color: color-mix(in oklab, #2cbf6e 62%, var(--border));
+  background: color-mix(in oklab, #2cbf6e 20%, var(--panel));
+  color: var(--text);
+}
+
 .btn:disabled{
   opacity: 0.55;
   cursor: not-allowed;
@@ -4797,4 +4803,17 @@ html[data-vp-width="compact"] .admin-chip-summary-main{
 html[data-vp-width="compact"] .admin-chip-summary-main .admin-compact-status-compact{
   grid-column: 1 / -1;
   justify-self: start;
+}
+
+
+/* ===== Administración: actualización PWA ===== */
+.pwa-update-status{
+  border: 1px solid color-mix(in oklab, var(--accent) 22%, var(--border));
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: color-mix(in oklab, var(--panel) 88%, transparent);
+}
+
+#pwaUpdateBtn.success{
+  font-weight: 950;
 }

@@ -12,10 +12,10 @@
   const mqDark = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
   let themePref = loadThemePref();
 
-  const APP_VERSION = '0.1.43';
-  const APP_BUILD = 'admin-compactos-desplegable-v1';
-  const APP_CACHE_NAME = 'pokerito-v0.1.43-admin-compactos-desplegable-v1';
-  const SW_URL = './sw.js?v=0.1.43-admin-compactos-desplegable-v1';
+  const APP_VERSION = '0.1.44';
+  const APP_BUILD = 'pwa-update-admin-v1';
+  const APP_CACHE_NAME = 'pokerito-v0.1.44-pwa-update-admin-v1';
+  const SW_URL = './sw.js?v=0.1.44-pwa-update-admin-v1';
 
   const ICON_SUN = `
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -59,6 +59,17 @@
   const headerNavTrail = [];
   let currentHeaderRouteHref = '/inicio';
   let pendingHeaderNavIntent = null;
+
+  const PWA_UPDATE_IDLE_LABEL = 'Buscar actualización';
+  const PWA_UPDATE_READY_LABEL = 'Aplicar actualización';
+  let pwaRegistration = null;
+  let pwaWaitingWorker = null;
+  let pwaReloadingForUpdate = false;
+  const pwaUpdateListeners = new Set();
+  const pwaUpdateState = {
+    status: 'idle',
+    message: 'Busca si hay una versión nueva disponible para esta PWA.'
+  };
 
   const $themeToggle = createThemeToggle();
   if ($headerRight && $themeToggle) $headerRight.appendChild($themeToggle);
@@ -5700,6 +5711,158 @@ function renderHistorialDetalle(){
   }
 
   
+
+  function setPwaUpdateState(status, message){
+    pwaUpdateState.status = status || 'idle';
+    pwaUpdateState.message = message || '';
+    pwaUpdateListeners.forEach(fn => {
+      try{ fn(Object.assign({}, pwaUpdateState)); }catch(e){}
+    });
+  }
+
+  function onPwaUpdateStateChange(fn){
+    if (typeof fn !== 'function') return () => {};
+    pwaUpdateListeners.add(fn);
+    try{ fn(Object.assign({}, pwaUpdateState)); }catch(e){}
+    return () => pwaUpdateListeners.delete(fn);
+  }
+
+  function waitMs(ms){
+    return new Promise(resolve => setTimeout(resolve, Math.max(0, numOrZero(ms) || 0)));
+  }
+
+  function captureWaitingWorker(reg){
+    if (!reg) return null;
+    const worker = reg.waiting || pwaWaitingWorker || null;
+    if (worker) pwaWaitingWorker = worker;
+    return worker;
+  }
+
+  function markPwaUpdateReady(worker){
+    if (worker) pwaWaitingWorker = worker;
+    setPwaUpdateState('ready', 'Actualización disponible. Toca el botón verde para aplicarla.');
+  }
+
+  function watchPwaWorker(worker){
+    if (!worker) return;
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'installed') {
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          markPwaUpdateReady(worker);
+        } else {
+          setPwaUpdateState('idle', 'La PWA quedó lista para uso sin conexión.');
+        }
+      }
+    });
+  }
+
+  function bindPwaRegistration(reg){
+    if (!reg) return null;
+    pwaRegistration = reg;
+    const waiting = captureWaitingWorker(reg);
+    if (waiting && navigator.serviceWorker && navigator.serviceWorker.controller) markPwaUpdateReady(waiting);
+    reg.addEventListener('updatefound', () => {
+      const worker = reg.installing;
+      if (!worker) return;
+      setPwaUpdateState('checking', 'Descargando actualización disponible…');
+      watchPwaWorker(worker);
+    });
+    return reg;
+  }
+
+  async function getPwaRegistration(){
+    if (!('serviceWorker' in navigator)) return null;
+    if (pwaRegistration) return pwaRegistration;
+    const existing = await navigator.serviceWorker.getRegistration().catch(() => null);
+    return existing ? bindPwaRegistration(existing) : null;
+  }
+
+  async function checkPwaUpdateNow(){
+    if (!('serviceWorker' in navigator)) {
+      setPwaUpdateState('unsupported', 'Este navegador no soporta Service Worker/PWA.');
+      return false;
+    }
+
+    setPwaUpdateState('checking', 'Buscando actualización…');
+    let reg = await getPwaRegistration();
+    if (!reg) {
+      reg = await navigator.serviceWorker.register(SW_URL, { updateViaCache: 'none' }).then(bindPwaRegistration).catch(() => null);
+    }
+    if (!reg) {
+      setPwaUpdateState('error', 'No se pudo revisar la actualización PWA.');
+      return false;
+    }
+
+    try{
+      await reg.update();
+    } catch(e){
+      setPwaUpdateState('error', 'No se pudo buscar actualización. Revisa conexión e inténtalo otra vez.');
+      return false;
+    }
+
+    if (captureWaitingWorker(reg)) {
+      markPwaUpdateReady(captureWaitingWorker(reg));
+      return true;
+    }
+
+    // En algunos navegadores la instalación tarda unos instantes después de reg.update().
+    for (let i = 0; i < 12; i++){
+      await waitMs(250);
+      reg = await getPwaRegistration();
+      if (captureWaitingWorker(reg)) {
+        markPwaUpdateReady(captureWaitingWorker(reg));
+        return true;
+      }
+    }
+
+    setPwaUpdateState('idle', 'No hay actualización disponible por ahora.');
+    return false;
+  }
+
+  async function applyPwaUpdateNow(){
+    const reg = await getPwaRegistration();
+    const worker = captureWaitingWorker(reg);
+    if (!worker) {
+      setPwaUpdateState('idle', 'No hay actualización lista para aplicar. Primero busca actualización.');
+      return false;
+    }
+
+    setPwaUpdateState('applying', 'Aplicando actualización…');
+    pwaReloadingForUpdate = true;
+    try{
+      worker.postMessage({ type: 'SKIP_WAITING' });
+    } catch(e){
+      setPwaUpdateState('error', 'No se pudo aplicar la actualización. Cierra y abre la PWA para completar.');
+      return false;
+    }
+
+    setTimeout(() => {
+      if (pwaReloadingForUpdate) window.location.reload();
+    }, 1800);
+    return true;
+  }
+
+  function renderPwaUpdateButton(state){
+    const btn = document.getElementById('pwaUpdateBtn');
+    const note = document.getElementById('pwaUpdateStatusNote');
+    if (!btn && !note) return;
+    const status = state && state.status ? state.status : 'idle';
+    const message = state && state.message ? state.message : 'Busca si hay una versión nueva disponible para esta PWA.';
+
+    if (note) note.textContent = message;
+    if (!btn) return;
+
+    btn.disabled = status === 'checking' || status === 'applying' || status === 'unsupported';
+    btn.classList.toggle('success', status === 'ready');
+    btn.classList.toggle('primary', status === 'checking' || status === 'applying');
+    btn.setAttribute('data-pwa-update-state', status);
+
+    if (status === 'ready') btn.textContent = PWA_UPDATE_READY_LABEL;
+    else if (status === 'checking') btn.textContent = 'Buscando…';
+    else if (status === 'applying') btn.textContent = 'Actualizando…';
+    else btn.textContent = PWA_UPDATE_IDLE_LABEL;
+  }
+
 function renderAdministracion(){
     const analytics = computeAnalytics();
     const players = getPlayers();
@@ -5738,6 +5901,7 @@ function renderAdministracion(){
               <div class="row panel-actions module-hero__actions" style="gap:10px; flex-wrap:wrap; margin-top:14px">
                 <button class="btn" type="button" data-admin-jump="adminPlayersSection">Jugadores</button>
                 <button class="btn" type="button" data-admin-jump="adminChipsSection">Fichas</button>
+                <button class="btn" type="button" data-admin-jump="adminPwaUpdateSection">Actualización</button>
                 <button class="btn" type="button" data-admin-jump="adminBackupSection">Respaldo</button>
                 <button class="btn" type="button" data-admin-jump="adminAppearanceSection">Apariencia</button>
               </div>
@@ -5758,6 +5922,7 @@ function renderAdministracion(){
             <button class="btn" type="button" data-admin-jump="adminPlayersSection">Jugadores</button>
             <button class="btn" type="button" data-admin-jump="adminChipsSection">Fichas</button>
             <button class="btn" type="button" data-admin-jump="adminAppearanceSection">Apariencia</button>
+            <button class="btn" type="button" data-admin-jump="adminPwaUpdateSection">Actualización PWA</button>
             <button class="btn" type="button" data-admin-jump="adminBackupSection">Respaldo / Importación</button>
             <button class="btn" type="button" data-admin-jump="adminRecalcSection">Recalcular</button>
             <button class="btn danger" type="button" data-admin-jump="adminClearSection">Borrar</button>
@@ -5797,6 +5962,17 @@ function renderAdministracion(){
             <button class="seg" type="button" data-theme="dark" aria-checked="false" role="radio">Oscuro</button>
           </div>
           <div class="small-note" style="margin-top:10px">Automático sigue el tema del sistema. Claro/Oscuro lo fuerzan.</div>
+        </div>
+
+        <div class="panel admin-utility-panel" id="adminPwaUpdateSection" role="region" aria-label="Actualización PWA" style="margin-top:14px">
+          <div class="panel-head">
+            <div class="panel-title" style="margin:0">Actualización PWA</div>
+            <div class="row panel-actions admin-utility-actions" style="gap:10px; flex-wrap:wrap">
+              <button class="btn" type="button" id="pwaUpdateBtn">Buscar actualización</button>
+            </div>
+          </div>
+          <div class="small-note" style="margin-top:10px">Busca una nueva versión de Pokerito instalada como PWA. Si hay actualización disponible, el botón se activa en verde para aplicarla.</div>
+          <div class="small-note pwa-update-status" id="pwaUpdateStatusNote" style="margin-top:10px">Busca si hay una versión nueva disponible para esta PWA.</div>
         </div>
 
         <div class="panel admin-utility-panel" id="adminBackupSection" role="region" aria-label="Respaldo e importación" style="margin-top:14px">
@@ -8635,6 +8811,20 @@ function formatMoney(n){
     });
     syncSupportThemeUI();
 
+    // PWA update checker
+    const $pwaUpdateBtn = document.getElementById('pwaUpdateBtn');
+    onPwaUpdateStateChange(renderPwaUpdateButton);
+    if ($pwaUpdateBtn){
+      $pwaUpdateBtn.addEventListener('click', async () => {
+        const state = $pwaUpdateBtn.getAttribute('data-pwa-update-state') || pwaUpdateState.status;
+        if (state === 'ready') {
+          await applyPwaUpdateNow();
+          return;
+        }
+        await checkPwaUpdateNow();
+      });
+    }
+
     // Backup
     const $file = document.getElementById('importFile');
     const $import = document.getElementById('importJsonBtn');
@@ -9154,13 +9344,24 @@ La base local quedó intacta.`, okText: 'OK', cancelText: 'Cerrar', danger: true
     });
   }
 
-  // PWA: register Service Worker (offline mínimo)
+  // PWA: register Service Worker (offline mínimo + actualización manual)
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register(SW_URL, { updateViaCache: 'none' })
-        .then((reg) => reg.update().catch(() => {}))
+        .then((reg) => {
+          bindPwaRegistration(reg);
+          return reg.update().catch(() => {});
+        })
         .catch(() => {});
     });
+
+    if (navigator.serviceWorker && typeof navigator.serviceWorker.addEventListener === 'function') {
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!pwaReloadingForUpdate) return;
+        pwaReloadingForUpdate = false;
+        window.location.reload();
+      });
+    }
   }
 
   // If user is on Auto, keep meta + icon aligned when system theme changes

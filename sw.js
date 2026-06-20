@@ -1,5 +1,5 @@
-/* Pokerito SW — offline mínimo (cache core) — v0.1.43 admin-compactos-desplegable-v1 */
-const CACHE_NAME = 'pokerito-v0.1.43-admin-compactos-desplegable-v1';
+/* Pokerito SW — offline mínimo (cache core) — v0.1.44 pwa-update-admin-v1 */
+const CACHE_NAME = 'pokerito-v0.1.44-pwa-update-admin-v1';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -37,8 +37,14 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(CORE_ASSETS.map((u) => new Request(u, { cache: 'reload' }))))
-      .then(() => self.skipWaiting())
   );
+});
+
+self.addEventListener('message', (event) => {
+  const data = event.data || {};
+  if (data && data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {
